@@ -7,9 +7,12 @@ from collections import Counter
 from pathlib import Path
 
 from . import __version__
+from .agentscan import scan_context
+from .context import PROFILES, discover, home_dir
 from .corpus import load_corpus
 from .embed import get_embedder
 from .findings import SEVERITY_ORDER, at_least
+from .integrity import restore, snapshot, store_dir, verify
 from .scan import scan
 from .trace import trace
 
@@ -43,7 +46,31 @@ def main(argv: list[str] | None = None) -> int:
     p_trace.add_argument("--answer", "-a", required=True, help="the wrong answer the RAG system produced")
     p_trace.add_argument("--top-k", type=int, default=5, help="passages your RAG retrieves per query")
 
+    p_agent = sub.add_parser("agent", help="protect an agent's memory, rules, skills and config")
+    asub = p_agent.add_subparsers(dest="agent_command", required=True)
+
+    def agent_args(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--agent", action="append", choices=sorted(PROFILES),
+                       help="limit to these agents (repeatable; default: all known agents)")
+        p.add_argument("--project", type=Path, default=Path.cwd(),
+                       help="project root whose project-level files to include (default: current directory)")
+        p.add_argument("--user-only", action="store_true", help="skip project-level files")
+        p.add_argument("--format", choices=["text", "json"], default="text")
+
+    a_scan = asub.add_parser("scan", help="scan context files for planted instructions")
+    agent_args(a_scan)
+    a_scan.add_argument("--fail-on", choices=["low", "medium", "high", "none"], default="high")
+    a_snap = asub.add_parser("snapshot", help="record the current context files as trusted")
+    agent_args(a_snap)
+    a_verify = asub.add_parser("verify", help="report context files changed since the snapshot")
+    agent_args(a_verify)
+    a_verify.add_argument("--fail-on", choices=["low", "medium", "high", "none"], default="high")
+    a_restore = asub.add_parser("restore", help="put back the snapshotted version; the current one is quarantined")
+    a_restore.add_argument("paths", type=Path, nargs="+")
+
     args = parser.parse_args(argv)
+    if args.command == "agent":
+        return _agent(args)
     if not args.path.exists():
         parser.error(f"{args.path} does not exist")
     docs = load_corpus(args.path, args.text_field, args.id_field, args.chunk_chars)
@@ -65,6 +92,60 @@ def main(argv: list[str] | None = None) -> int:
     rows = trace(docs, embedder.encode(texts), embedder, args.question, args.answer, args.top_k)
     _print_trace(rows, args.format)
     return 0
+
+
+def _agent(args) -> int:
+    if args.agent_command == "restore":
+        for path in args.paths:
+            path = path.expanduser().absolute()
+            try:
+                moved = restore(path)
+            except KeyError as e:
+                print(f"error: {e.args[0]}", file=sys.stderr)
+                return 2
+            print(f"restored {path}" + (f" (previous version quarantined at {moved})" if moved else ""))
+        return 0
+
+    project = None if args.user_only else args.project.expanduser().absolute()
+    files = discover(args.agent, project)
+    roots = [home_dir()] + ([project] if project else [])
+
+    if args.agent_command == "snapshot":
+        n = snapshot(files, roots)
+        print(f"snapshot of {n} context file(s) saved to {store_dir()}")
+        return 0
+
+    if args.agent_command == "scan":
+        findings = scan_context(files)
+        header = f"agentdetox {__version__}: scanned {len(files)} context file(s)"
+        _print_findings(findings, header, args.format, extra={"files": [str(f.path) for f in files]})
+    else:
+        changes, findings = verify(files, roots)
+        header = f"agentdetox {__version__}: {len(changes)} context file(s) changed since snapshot"
+        for c in changes:
+            header += f"\n  {c.status:<8} {c.kind:<12} {c.path}"
+        _print_findings(findings, header, args.format,
+                        extra={"changes": [{"path": c.path, "status": c.status, "kind": c.kind} for c in changes]})
+    if args.fail_on != "none" and any(at_least(f.severity, args.fail_on) for f in findings):
+        return 1
+    return 0
+
+
+def _print_findings(findings, header: str, fmt: str, extra: dict) -> None:
+    findings = sorted(findings, key=lambda f: (-SEVERITY_ORDER[f.severity], f.doc_id))
+    if fmt == "json":
+        json.dump({"version": __version__, **extra, "findings": [f.to_dict() for f in findings]},
+                  sys.stdout, ensure_ascii=False, indent=2)
+        print()
+        return
+    print(header + "\n")
+    for f in findings:
+        print(f"{f.severity.upper():<6} {f.detector:<17} {f.source}")
+        print(f"       {f.message}")
+        if f.evidence:
+            print(f"       > {' '.join(f.evidence.split())[:160]}")
+    counts = Counter(f.severity for f in findings)
+    print(f"\n{counts['high']} high, {counts['medium']} medium, {counts['low']} low")
 
 
 def _print_scan(result, fmt: str) -> None:
