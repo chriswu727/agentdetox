@@ -184,8 +184,16 @@ def restore(path: Path) -> Path | None:
     if path.exists():
         _private_dir(store_dir() / "quarantine")
         qdir = _private_dir(store_dir() / "quarantine" / time.strftime("%Y%m%d-%H%M%S"))
-        quarantined = qdir / str(path).lstrip(os.sep).replace(os.sep, "__")
+        # Flattening the full path overflows the 255-byte name limit for deep paths
+        # such as Claude Code's per-project memory dirs, so use a short hashed name and
+        # record the original location in a manifest.
+        quarantined = qdir / f"{_sha(str(path).encode())[:12]}-{path.name}"
         shutil.move(str(path), quarantined)
+        os.chmod(quarantined, 0o600)
+        manifest = qdir / "manifest.json"
+        entries = json.loads(manifest.read_text()) if manifest.exists() else {}
+        entries[quarantined.name] = str(path)
+        _write_private(manifest, json.dumps(entries, indent=1).encode())
     path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(obj, path)
     return quarantined

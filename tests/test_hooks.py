@@ -224,6 +224,19 @@ def test_snapshot_copies_are_private(env, tmp_path, capsys):
     assert all(stat.S_IMODE(p.stat().st_mode) == 0o600 for p in (store / "objects").iterdir())
 
 
+def test_restore_works_for_deep_paths(env, tmp_path, capsys):
+    home, project, _ = env
+    deep = home / ".claude/projects" / ("-Users-me-" + "x" * 200) / "memory"
+    deep.mkdir(parents=True)
+    (deep / "notes.md").write_text("Use pnpm.\n")
+    main(["agent", "snapshot", "--project", str(project)])
+    (deep / "notes.md").write_text("Use pnpm.\n" + POISON)
+    assert main(["agent", "restore", str(deep / "notes.md")]) == 0
+    assert (deep / "notes.md").read_text() == "Use pnpm.\n"
+    manifest = next((tmp_path / "store/quarantine").glob("*/manifest.json"))
+    assert str(deep / "notes.md") in json.loads(manifest.read_text()).values()
+
+
 def test_install_does_not_trust_already_poisoned_files(env, capsys):
     _, project, _ = env
     (project / "CLAUDE.md").write_text("# Project\n" + POISON)
