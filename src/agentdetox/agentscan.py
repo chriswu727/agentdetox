@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .context import ContextFile
+from .consistency import find_contradictions, statements, store_statements
+from .context import ContextFile, related_files
 from .corpus import Doc
 from .findings import Finding, snippet
 from .hidden import normalize, scan_doc
@@ -32,6 +33,29 @@ def _scan_config(doc_id: str, source: str, text: str) -> list[Finding]:
         for severity, label, _ in text_findings(command):
             findings.append(Finding(doc_id, source, "config-command", severity, f"{label} ({where})", command[:200]))
     return findings
+
+
+def consistency_findings(files: list[ContextFile], project: Path | None, nli) -> list[Finding]:
+    """Contradictions inside each memory scope (one project's memory plus the instructions
+    that apply to it). Each conflicting pair is reported once."""
+    seen: set[frozenset] = set()
+    out: list[Finding] = []
+    for cf in files:
+        if cf.kind not in ("memory", "instructions"):
+            continue
+        own = statements(read_text(cf.path), str(cf.path))
+        if not own:
+            continue
+        others = store_statements(related_files(cf, project), skip={str(cf.path)})
+        for c in find_contradictions(own, own + others, nli):
+            key = frozenset((c.new.text, c.existing.text))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(Finding(str(cf.path), str(cf.path), "contradiction", "medium",
+                               f'contradicts "{c.existing.text[:120]}" ({c.existing.source}:{c.existing.line}), '
+                               f"p={c.probability:.2f}", c.new.text[:200]))
+    return out
 
 
 def scan_context(files: list[ContextFile]) -> list[Finding]:

@@ -8,9 +8,9 @@ cd "$(dirname "$0")/.."
 if [ ! -x .venv/bin/pytest ]; then
   echo "creating development environment in .venv"
   uv venv --quiet --python 3.12 .venv
-  uv pip install --quiet --python .venv/bin/python -e ".[dev]"
+  uv pip install --quiet --python .venv/bin/python -e ".[dev,nli]"
 fi
 
 .venv/bin/pytest -q -p no:warnings
-uv tool install --quiet --reinstall --python 3.12 .
+uv tool install --quiet --reinstall --python 3.12 ".[nli]"
 "$(uv tool dir --bin)/agentdetox" doctor

@@ -168,6 +168,11 @@ def _config_changes(doc_id: str, path: Path, new: str, old_sections: dict) -> li
     return findings
 
 
+def snapshot_text(path: str) -> str | None:
+    entry = _load_baseline()["files"].get(path)
+    return None if entry is None else _object_text(entry["sha256"])
+
+
 def _object_text(digest: str) -> str:
     obj = store_dir() / "objects" / digest
     return obj.read_text(encoding="utf-8", errors="replace") if obj.exists() else ""

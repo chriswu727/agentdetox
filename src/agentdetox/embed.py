@@ -9,6 +9,7 @@ import numpy as np
 from .hidden import normalize
 
 _WORD_RE = re.compile(r"\w+")
+_CJK_RUN_RE = re.compile(r"[一-鿿]{2,}")
 
 
 class HashingEmbedder:
@@ -42,6 +43,12 @@ class HashingEmbedder:
         for w in _WORD_RE.findall(t):
             key = "w:" + w
             feats[key] = feats.get(key, 0) + 1
+        # Chinese has no spaces and its words are mostly two characters, which the
+        # 3-5 char n-grams above miss ("用户", "回答"); add CJK bigrams.
+        for run in _CJK_RUN_RE.findall(t):
+            for i in range(len(run) - 1):
+                key = "c:" + run[i : i + 2]
+                feats[key] = feats.get(key, 0) + 1
         return feats
 
     def _raw(self, texts: list[str]) -> np.ndarray:

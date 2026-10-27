@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import __version__
+from .consistency import NLI, NLI_MODEL
 from .context import home_dir
 from .install import claude_code_settings, default_settings_path
 from .integrity import baseline_paths, is_self_hook, store_dir
@@ -26,6 +27,7 @@ class Check:
 def run(project: Path) -> list[Check]:
     checks = [Check("ok", f"agentdetox {__version__} (Python {sys.version.split()[0]})")]
     checks += _claude_code_hooks(project)
+    checks += _nli()
     checks += _store()
     checks += _other_agents(project)
     return checks
@@ -74,6 +76,16 @@ def _check_claude_settings(path: Path, settings: dict, command: str) -> Check:
     if hooked != __version__:
         return Check("warn", f"Claude Code: hooks run agentdetox {hooked}, this is {__version__} ({exe})")
     return Check("ok", f"Claude Code: hooks installed and current in {path}")
+
+
+def _nli() -> list[Check]:
+    # Reports on this interpreter; the hooks' own install is checked via its --version only.
+    nli = NLI()
+    if not NLI.installed():
+        return [Check("warn", "contradiction detection off: install 'agentdetox[nli]', then `agentdetox fetch-models`")]
+    if not nli.available():
+        return [Check("warn", "contradiction detection off: model not downloaded; run `agentdetox fetch-models`")]
+    return [Check("ok", f"contradiction detection on ({NLI_MODEL})")]
 
 
 def _store() -> list[Check]:

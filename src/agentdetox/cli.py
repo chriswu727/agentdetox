@@ -7,7 +7,8 @@ from collections import Counter
 from pathlib import Path
 
 from . import __version__, doctor
-from .agentscan import scan_context
+from .agentscan import consistency_findings, scan_context
+from .consistency import NLI, NLI_MODEL
 from .context import PROFILES, discover, home_dir
 from .corpus import load_corpus
 from .embed import get_embedder
@@ -62,6 +63,8 @@ def main(argv: list[str] | None = None) -> int:
     a_scan = asub.add_parser("scan", help="scan context files for planted instructions")
     agent_args(a_scan)
     a_scan.add_argument("--fail-on", choices=["low", "medium", "high", "none"], default="high")
+    a_scan.add_argument("--consistency", action="store_true",
+                        help="also look for memory entries that contradict each other (needs agentdetox[nli])")
     a_snap = asub.add_parser("snapshot", help="record the current context files as trusted")
     agent_args(a_snap)
     a_verify = asub.add_parser("verify", help="report context files changed since the snapshot")
@@ -87,7 +90,16 @@ def main(argv: list[str] | None = None) -> int:
     p_doctor = sub.add_parser("doctor", help="check that hooks are installed, current and runnable (read-only)")
     p_doctor.add_argument("--project", type=Path, default=Path.cwd())
 
+    sub.add_parser("fetch-models", help=f"download the contradiction-detection model ({NLI_MODEL}, ~560 MB)")
+
     args = parser.parse_args(argv)
+    if args.command == "fetch-models":
+        if not NLI.installed():
+            print("needs the optional extra: pip install 'agentdetox[nli]'", file=sys.stderr)
+            return 2
+        NLI(local_only=False).contradiction([("The sky is blue.", "The sky is green.")])
+        print(f"{NLI_MODEL} is ready; hooks now check memory writes for contradictions")
+        return 0
     if args.command == "doctor":
         checks = doctor.run(args.project.expanduser().absolute())
         print(doctor.render(checks))
@@ -182,6 +194,13 @@ def _agent(args) -> int:
 
     if args.agent_command == "scan":
         findings = scan_context(files)
+        if args.consistency:
+            nli = NLI()
+            if not nli.available():
+                print("contradiction check skipped: install 'agentdetox[nli]' and run `agentdetox fetch-models`",
+                      file=sys.stderr)
+            else:
+                findings += consistency_findings(files, project, nli)
         header = f"agentdetox {__version__}: scanned {len(files)} context file(s)"
         _print_findings(findings, header, args.format, extra={"files": [str(f.path) for f in files]})
     else:

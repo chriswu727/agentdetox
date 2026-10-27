@@ -19,6 +19,7 @@ classifiers = [
 
 [project.optional-dependencies]
 st = ["sentence-transformers>=2.2"]
+nli = ["transformers>=4.40", "torch>=2.1"]
 dev = ["pytest>=7"]
 
 [project.scripts]

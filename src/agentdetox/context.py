@@ -178,6 +178,38 @@ def classify(path: Path, agents: list[str] | None = None, project: Path | None =
     return None
 
 
+def claude_memory_dir(project: Path, home: Path | None = None) -> Path:
+    # Claude Code names a project's memory dir after its path with every
+    # non-alphanumeric character replaced by "-".
+    return (home or home_dir()) / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(project)) / "memory"
+
+
+def related_files(cf: ContextFile, project: Path | None, home: Path | None = None) -> list[Path]:
+    """Memory and instruction files that describe the same world as `cf`.
+
+    Claude Code keeps one memory dir per project, and project A using pnpm does not
+    contradict project B using npm, so other projects' memory dirs are left out."""
+    home = home or home_dir()
+    projects_root = home / ".claude" / "projects"
+    own_dir = cf.path.parent if _is_under(cf.path, projects_root) else (claude_memory_dir(project, home) if project else None)
+    out = []
+    for f in discover(project=project, home=home):
+        if f.kind not in ("memory", "instructions") or f.path == cf.path:
+            continue
+        if _is_under(f.path, projects_root) and f.path.parent != own_dir:
+            continue
+        out.append(f.path)
+    return out
+
+
+def _is_under(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 @lru_cache(maxsize=None)
 def _glob_regex(pattern: str) -> re.Pattern:
     out, i = "", 0
