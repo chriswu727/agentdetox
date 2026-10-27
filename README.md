@@ -167,6 +167,18 @@ log-probabilities for two of its signals. Treat its output as a ranked lead list
   passages to be meaningful; on tiny corpora only the deterministic detectors fire.
 - Brute-force kNN is O(n^2); it is fine for tens of thousands of passages, not millions.
 
+## Development
+
+```bash
+./scripts/update.sh      # run the tests, update the installed agentdetox, then `agentdetox doctor`
+```
+
+Installed hooks call a fixed executable, so updating it takes effect on the next hook call with
+no reinstall. Re-run `agentdetox install claude-code --apply` only when `agentdetox doctor` says
+the registered hooks are from an older version. To remove everything: `agentdetox uninstall
+claude-code`, then `uv tool uninstall agentdetox`, then delete `~/.agentdetox` (this also deletes
+quarantined files).
+
 ## License
 
 Apache-2.0

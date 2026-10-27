@@ -6,7 +6,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from . import __version__
+from . import __version__, doctor
 from .agentscan import scan_context
 from .context import PROFILES, discover, home_dir
 from .corpus import load_corpus
@@ -84,7 +84,14 @@ def main(argv: list[str] | None = None) -> int:
     p_uninstall.add_argument("--scope", choices=["user", "project"], default="user")
     p_uninstall.add_argument("--project", type=Path, default=Path.cwd())
 
+    p_doctor = sub.add_parser("doctor", help="check that hooks are installed, current and runnable (read-only)")
+    p_doctor.add_argument("--project", type=Path, default=Path.cwd())
+
     args = parser.parse_args(argv)
+    if args.command == "doctor":
+        checks = doctor.run(args.project.expanduser().absolute())
+        print(doctor.render(checks))
+        return 1 if any(c.status == "fail" for c in checks) else 0
     if args.command == "uninstall":
         target = default_settings_path(args.agent_name, args.scope, args.project.expanduser().absolute())
         removed, backup = uninstall_claude_code(target)
