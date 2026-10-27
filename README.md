@@ -4,7 +4,7 @@ Scan a RAG knowledge base for poisoned passages and planted prompt injections be
 they reach your retriever, and trace a bad answer back to the passages that caused it.
 
 ```bash
-pip install 'ragscan[st]'                # or plain `ragscan` for a numpy-only install
+pip install 'ragscan[st] @ git+https://github.com/chriswu727/ragscan'   # drop [st] for a numpy-only install
 ragscan scan ./knowledge_base            # directory of .txt/.md/.html, or a .jsonl export
 ragscan trace kb.jsonl -q "Who founded Acme?" -a "Bob Smith"
 ```
