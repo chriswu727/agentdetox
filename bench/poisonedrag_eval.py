@@ -1,4 +1,4 @@
-"""Evaluate ragscan against the published PoisonedRAG adversarial texts.
+"""Evaluate agentdetox against the published PoisonedRAG adversarial texts.
 
 Clean background: Wikipedia paragraphs (see fetch_squad.py). Poison: PoisonedRAG's
 released adv_texts (5 per target question), either with the target question prepended
@@ -15,10 +15,10 @@ import time
 
 import numpy as np
 
-from ragscan.corpus import Doc
-from ragscan.embed import get_embedder
-from ragscan.scan import scan
-from ragscan.trace import trace
+from agentdetox.corpus import Doc
+from agentdetox.embed import get_embedder
+from agentdetox.scan import scan
+from agentdetox.trace import trace
 
 
 def main() -> None:

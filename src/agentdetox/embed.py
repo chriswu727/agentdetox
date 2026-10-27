@@ -65,7 +65,7 @@ class SentenceTransformerEmbedder:
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError as e:
-            raise SystemExit("st:<model> needs the optional extra: pip install 'ragscan[st]'") from e
+            raise SystemExit("st:<model> needs the optional extra: pip install 'agentdetox[st]'") from e
         self.model = SentenceTransformer(model_name)
         self.name = f"st:{model_name}"
 

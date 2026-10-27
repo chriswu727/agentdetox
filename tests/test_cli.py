@@ -1,6 +1,6 @@
 import json
 
-from ragscan.cli import main
+from agentdetox.cli import main
 
 
 def _write_kb(tmp_path, docs):

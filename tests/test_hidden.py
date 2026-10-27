@@ -1,7 +1,7 @@
 import pytest
 
-from ragscan.corpus import Doc
-from ragscan.hidden import decode_tag_chars, scan_doc
+from agentdetox.corpus import Doc
+from agentdetox.hidden import decode_tag_chars, scan_doc
 
 
 def _scan(text: str):

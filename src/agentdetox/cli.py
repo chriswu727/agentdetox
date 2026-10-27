@@ -15,8 +15,8 @@ from .trace import trace
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="ragscan", description=__doc__)
-    parser.add_argument("--version", action="version", version=f"ragscan {__version__}")
+    parser = argparse.ArgumentParser(prog="agentdetox", description=__doc__)
+    parser.add_argument("--version", action="version", version=f"agentdetox {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     def corpus_args(p: argparse.ArgumentParser) -> None:
@@ -25,7 +25,7 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--id-field", default="id", help="JSONL field holding the passage id")
         p.add_argument("--chunk-chars", type=int, default=0, help="split files into ~N-char chunks (0 = whole file)")
         p.add_argument("--embedder", default="auto",
-                       help="'auto' (MiniLM if ragscan[st] is installed, else hashing), 'hashing', or 'st:<model>'")
+                       help="'auto' (MiniLM if agentdetox[st] is installed, else hashing), 'hashing', or 'st:<model>'")
         p.add_argument("--format", choices=["text", "json"], default="text")
 
     p_scan = sub.add_parser("scan", help="scan a knowledge base for poisoned or injected documents")
@@ -86,7 +86,7 @@ def _print_scan(result, fmt: str) -> None:
         print()
         return
 
-    print(f"ragscan {__version__}: scanned {result.n_docs} passages", end="")
+    print(f"agentdetox {__version__}: scanned {result.n_docs} passages", end="")
     print(f" (embedder: {result.embedder})" if result.embedder else " (clustering off)")
     c = result.cluster
     if c.tau is not None:

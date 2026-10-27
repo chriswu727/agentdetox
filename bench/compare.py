@@ -1,4 +1,4 @@
-"""Compare ragscan with per-document injection scanners on the same data.
+"""Compare agentdetox with per-document injection scanners on the same data.
 
 Two kinds of attack documents are mixed into a clean Wikipedia background:
   * knowledge poisoning: PoisonedRAG adv_texts (NQ, HotpotQA, MS MARCO), with and
@@ -9,7 +9,7 @@ Two kinds of attack documents are mixed into a clean Wikipedia background:
 Per-document tools are lenient-scored: any alert counts as a detection.
 
 Usage:
-  python bench/compare.py DATA_DIR [--tools ragscan,veritensor,protectai,promptguard2]
+  python bench/compare.py DATA_DIR [--tools agentdetox,veritensor,protectai,promptguard2]
 DATA_DIR must hold nq.json, hotpotqa.json, msmarco.json, squad_clean.jsonl, injections.jsonl.
 """
 
@@ -24,9 +24,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-from ragscan.corpus import Doc
-from ragscan.embed import get_embedder
-from ragscan.scan import scan
+from agentdetox.corpus import Doc
+from agentdetox.embed import get_embedder
+from agentdetox.scan import scan
 
 DATASETS = ("nq", "hotpotqa", "msmarco")
 VARIANTS = ("plain", "hidden-html", "unicode-tags", "zero-width")
@@ -124,7 +124,7 @@ class HFClassifier(CachedPerDocTool):
         return [r["label"].upper() not in self.BENIGN for r in clf(texts, batch_size=16)]
 
 
-def ragscan_flagged(clean: list[Doc], attack: list[Doc], embedder) -> tuple[set[str], set[str]]:
+def agentdetox_flagged(clean: list[Doc], attack: list[Doc], embedder) -> tuple[set[str], set[str]]:
     result = scan(clean + attack, embedder)
     high = {f.doc_id for f in result.findings if f.severity == "high"}
     medium = {f.doc_id for f in result.findings if f.severity in ("medium", "high")}
@@ -134,7 +134,7 @@ def ragscan_flagged(clean: list[Doc], attack: list[Doc], embedder) -> tuple[set[
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("data", type=Path)
-    ap.add_argument("--tools", default="ragscan,veritensor,protectai,promptguard2")
+    ap.add_argument("--tools", default="agentdetox,veritensor,protectai,promptguard2")
     args = ap.parse_args()
     tools = args.tools.split(",")
 
@@ -169,7 +169,7 @@ def main() -> None:
             continue
         rows[name] = row
 
-    if "ragscan" in tools:
+    if "agentdetox" in tools:
         embedder = get_embedder("auto")
         high_row: dict[str, float] = {}
         med_row: dict[str, float] = {}
@@ -178,15 +178,15 @@ def main() -> None:
         fp_med: list[float] = []
         for key, docs in attack_sets.items():
             ids = {d.id for d in docs}
-            high, med = ragscan_flagged(clean, docs, embedder)
+            high, med = agentdetox_flagged(clean, docs, embedder)
             high_row[key] = len(high & ids) / len(ids)
             med_row[key] = len(med & ids) / len(ids)
             fp_high.append(len(high & clean_ids) / len(clean_ids))
             fp_med.append(len(med & clean_ids) / len(clean_ids))
         high_row["clean FPR"] = max(fp_high)
         med_row["clean FPR"] = max(fp_med)
-        rows["ragscan 0.1 (high)"] = high_row
-        rows["ragscan 0.1 (medium+)"] = med_row
+        rows["AgentDetox 0.1 (high)"] = high_row
+        rows["AgentDetox 0.1 (medium+)"] = med_row
 
     cols = ["clean FPR"] + list(attack_sets)
     print("| tool | " + " | ".join(cols) + " |")
@@ -195,7 +195,7 @@ def main() -> None:
         cells = [f"{row[c] * 100:.1f}%" for c in cols]
         print(f"| {name} | " + " | ".join(cells) + " |")
     print(f"\nclean passages: {len(clean)}; poison sets: 500 each; injection sets: {len(payloads)} each.")
-    print("ragscan clean FPR is the worst case over all runs (it scans each attack set together with the clean corpus).")
+    print("agentdetox clean FPR is the worst case over all runs (it scans each attack set together with the clean corpus).")
 
 
 if __name__ == "__main__":

@@ -1,11 +1,11 @@
 import numpy as np
 import pytest
 
-from ragscan.cluster import detect_clusters, maximal_cliques
-from ragscan.corpus import Doc
-from ragscan.embed import HashingEmbedder, get_embedder
-from ragscan.scan import scan
-from ragscan.trace import trace
+from agentdetox.cluster import detect_clusters, maximal_cliques
+from agentdetox.corpus import Doc
+from agentdetox.embed import HashingEmbedder, get_embedder
+from agentdetox.scan import scan
+from agentdetox.trace import trace
 
 
 def test_maximal_cliques_small_graph():

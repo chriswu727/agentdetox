@@ -1,15 +1,29 @@
-# ragscan
+# AgentDetox
 
-Scan a RAG knowledge base for poisoned passages and planted prompt injections before
-they reach your retriever, and trace a bad answer back to the passages that caused it.
+Poisoning protection for what AI agents know. AgentDetox detects, blocks and cleans planted
+instructions and fabricated facts in the places agents trust and reload: memory files, rules and
+instruction files, and knowledge bases.
+
+> **Status: early development.** The knowledge-base scanner and its benchmark below work today.
+> Protection for the memory, rules and config files of Claude Code, Codex, Cursor, OpenClaw and
+> WorkBuddy is being built.
+
+Agents learn from web pages, files, emails and tool output, and some of it is written into memory
+or rules that every later session trusts. One poisoned write can steer an agent for weeks, as
+[MemoryTrap](https://blogs.cisco.com/ai/identifying-and-remediating-a-persistent-memory-compromise-in-claude-code)
+(Claude Code, April 2026) and MemGhost (arXiv 2607.05189, July 2026) showed. Per-document scanners
+look for attack strings; AgentDetox also compares entries against each other, because a fabricated
+fact contains no attack string at all.
+
+## Scan a knowledge base
 
 ```bash
-pip install 'ragscan[st] @ git+https://github.com/chriswu727/ragscan'   # drop [st] for a numpy-only install
-ragscan scan ./knowledge_base            # directory of .txt/.md/.html, or a .jsonl export
-ragscan trace kb.jsonl -q "Who founded Acme?" -a "Bob Smith"
+pip install 'agentdetox[st] @ git+https://github.com/chriswu727/agentdetox'   # drop [st] for a numpy-only install
+agentdetox scan ./knowledge_base            # directory of .txt/.md/.html, or a .jsonl export
+agentdetox trace kb.jsonl -q "Who founded Acme?" -a "Bob Smith"
 ```
 
-Try it on the bundled example: `ragscan scan examples/kb`.
+Try it on the bundled example: `agentdetox scan examples/kb`.
 
 ## What it detects
 
@@ -48,17 +62,17 @@ and German) into clean passages, in four forms.
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | Veritensor 1.9.4 | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 3.8% | 100.0% | 0.0% | 0.0% | 0.1% |
 | ProtectAI deberta-v3 PI v2 | 0.4% | 1.2% | 0.0% | 0.0% | 0.2% | 0.4% | 11.4% | 33.8% | 0.0% | 10.6% | 0.1% |
-| ragscan 0.1 (high) | 100.0% | 0.0% | 100.0% | 0.0% | 100.0% | 0.0% | 5.7% | 10.6% | 100.0% | 10.3% | 0.0% |
-| ragscan 0.1 (medium+) | 100.0% | 89.2% | 100.0% | 98.0% | 100.0% | 92.0% | 10.6% | 96.6% | 100.0% | 99.6% | 2.6% |
+| AgentDetox 0.1 (high) | 100.0% | 0.0% | 100.0% | 0.0% | 100.0% | 0.0% | 5.7% | 10.6% | 100.0% | 10.3% | 0.0% |
+| AgentDetox 0.1 (medium+) | 100.0% | 89.2% | 100.0% | 98.0% | 100.0% | 92.0% | 10.6% | 96.6% | 100.0% | 99.6% | 2.6% |
 
 What this shows:
 
 - Neither per-document tool detects knowledge poisoning: PoisonedRAG passages contain no attack
   string, only a fluent false claim. Detecting them takes cross-document analysis.
-- Plain-text injection phrased in ways no rule anticipates is hard for everyone, ragscan included.
+- Plain-text injection phrased in ways no rule anticipates is hard for everyone, AgentDetox included.
   The ProtectAI classifier flags 41.4% of the same prompts on their own, so burying a prompt in a
   benign passage dilutes it (only 2 of 263 documents exceed its 512-token window).
-- Veritensor flags any `display:none`, so it catches every hidden-HTML document; ragscan reports
+- Veritensor flags any `display:none`, so it catches every hidden-HTML document; AgentDetox reports
   hidden text as `medium` unless the hidden text itself matches an injection rule.
 - Llama Prompt Guard 2 is a gated model and was not evaluated; run
   `bench/compare.py DATA --tools promptguard2` after `huggingface-cli login`.
