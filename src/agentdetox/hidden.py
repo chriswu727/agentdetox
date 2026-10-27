@@ -32,16 +32,21 @@ _PATTERNS: list[tuple[str, str, re.Pattern]] = [
         "instruction override",
         re.compile(r"(忽略|无视|忘记|忘掉|不要理会)[^。\n]{0,10}(之前|以上|上面|前面|先前|所有|全部)[^。\n]{0,10}(指令|指示|提示|规则|说明|要求)"),
     ),
+    # "Don't tell the user to use X" instructs the user; concealment is about withholding
+    # something from them, so the rule needs "about/that/why..." or "to the user".
     (
         "high",
         "conceal from user",
         re.compile(
-            r"\b(do not|don't|never)\s+(tell|inform|mention|reveal|disclose|show)\b[^.\n]{0,20}\b(the )?user\b"
-            r"|\bwithout (telling|informing|alerting) the user\b",
+            r"\b(do not|don't|never)\s+(tell|inform|notify|alert)\s+(the\s+)?users?\s+(about|that|of|what|why|where|how|this|anything)\b"
+            r"|\b(do not|don't|never)\s+(mention|reveal|disclose|show)\b[^.\n]{0,40}\bto\s+the\s+user\b"
+            r"|\bwithout\s+(telling|informing|alerting|notifying)\s+the\s+user\b"
+            r"|\bkeep\s+(this|it)\s+(secret|hidden)\s+from\s+the\s+user\b",
             re.I,
         ),
     ),
-    ("high", "conceal from user", re.compile(r"(不要|切勿|别)(告诉|透露给|告知|让)[^。\n]{0,6}用户")),
+    # "不要让用户发现问题" means "check your work", so 发现 is deliberately not listed.
+    ("high", "conceal from user", re.compile(r"(不要|切勿|别|不得)(告诉|告知|透露给|通知)[^。\n]{0,6}用户|(不要|别|不得)让用户(知道|察觉|注意到|看到)")),
     (
         "high",
         "chat-template token",
@@ -78,7 +83,16 @@ _PATTERNS: list[tuple[str, str, re.Pattern]] = [
             re.I,
         ),
     ),
-    ("medium", "addresses the AI directly", re.compile(r"(如果你是|致|给)(一个)?\s*(AI|人工智能|大模型|语言模型|助手)|AI助手请")),
+    # Plain "给 AI" ("feed it to the AI") is everyday Chinese; require a salutation or "instructions for the AI".
+    (
+        "medium",
+        "addresses the AI directly",
+        re.compile(
+            r"如果你是(一个)?\s*(AI|人工智能|大模型|语言模型|AI助手)"
+            r"|(致|写给)\s*(AI|人工智能|大模型)(助手)?\s*[:：]"
+            r"|(给|致)\s*(AI|人工智能|大模型)(助手)?的(指令|说明|消息)|AI助手请"
+        ),
+    ),
     (
         "medium",
         "role reassignment",
@@ -110,13 +124,28 @@ def decode_tag_chars(text: str) -> str:
     return "".join(chr(ord(c) - 0xE0000) for c in text if 0xE0020 <= ord(c) <= 0xE007E)
 
 
+_OPEN_QUOTES = "\"'“‘「『«`"
+_CLOSE_QUOTES = "\"'”’」』»`"
+
+
+def _is_quoted(text: str, start: int, end: int) -> bool:
+    before = text[max(0, start - 3) : start].rstrip()
+    after = text[end : end + 4].lstrip(" ,.;:!?")
+    return bool(before) and before[-1] in _OPEN_QUOTES and bool(after) and after[0] in _CLOSE_QUOTES
+
+
 def match_injection(text: str) -> list[tuple[str, str, int]]:
     norm = normalize(text)
     hits = []
     for severity, label, pattern in _PATTERNS:
         m = pattern.search(norm)
         if m:
-            hits.append((severity, label, m.start()))
+            # Security docs and skills quote attack phrases as examples to watch for.
+            # A quoted phrase is still reported, but not at a level that blocks.
+            if severity == "high" and _is_quoted(norm, m.start(), m.end()):
+                hits.append(("medium", f"{label} (quoted, possibly describing an attack)", m.start()))
+            else:
+                hits.append((severity, label, m.start()))
     return hits
 
 

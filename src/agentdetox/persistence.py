@@ -40,15 +40,19 @@ TEXT_RULES: list[tuple[str, str, re.Pattern]] = [
         "loosens the agent's own guardrails",
         re.compile(r"(关闭|禁用|跳过|绕过)[^。\n]{0,10}(沙箱|审批|权限|安全检查)|(修改|改写|编辑)[^。\n]{0,20}(settings\.json|config\.toml|hooks\.json|mcp\.json)"),
     ),
+    # Mentioning a credential path is common in setup notes; touching it is not.
+    # Reading .env is ordinary dev work, so only sending it counts.
     (
         "high",
         "reads credentials",
         re.compile(
-            r"(~|\$HOME)/\.ssh/|\bid_(rsa|ed25519)\b|(~|\$HOME)/\.aws/credentials|(~|\$HOME)/\.config/gh/hosts"
-            r"|\b(cat|read|send|upload|copy)\b[^.\n]{0,40}(\.env\b|\.npmrc\b|\.netrc\b|keychain)",
+            r"\b(cat|read|open|copy|cp|print|dump|base64|send|upload|post|exfiltrate|curl|scp|rsync|tar|zip)\b[^\n]{0,60}"
+            r"((~|\$HOME)/\.ssh/|\bid_(rsa|ed25519)\b|(~|\$HOME)/\.aws/credentials|(~|\$HOME)/\.config/gh/hosts|keychain)"
+            r"|\b(send|upload|post|exfiltrate|curl|scp|rsync)\b[^\n]{0,60}(\.env\b|\.npmrc\b|\.netrc\b)",
             re.I,
         ),
     ),
+    ("high", "reads credentials", re.compile(r"(读取|复制|发送|上传|打印)[^。\n]{0,30}(\.ssh/|id_rsa|id_ed25519|\.aws/credentials|钥匙串)")),
     (
         "medium",
         "acts without the user's knowledge",

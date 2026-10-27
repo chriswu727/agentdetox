@@ -14,12 +14,13 @@ import difflib
 import json
 import os
 import re
+import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from .agentscan import read_text, scan_text, scan_context
-from .context import PROFILES, ContextFile, classify, discover, home_dir
+from .context import ContextFile, classify, discover, home_dir
 from .findings import Finding
 from .integrity import baseline_paths, snapshot, verify
 from .persistence import guarded_sections
@@ -28,7 +29,6 @@ AGENTS_WITH_ASK = {"claude-code"}
 SESSION_CONTEXT_CHARS = {"claude-code": 9000, "codex": 6000, "cursor": 9000}
 SHELL_TOOLS = {"bash", "shell", "exec", "exec_command", "local_shell", "run_terminal_cmd"}
 _PATCH_FILE_RE = re.compile(r"^\*\*\* (Add|Update) File: (.+)$")
-_SHELL_WRITE_RE = re.compile(r">>?|\btee\b|\bsed\s+-i|\bcp\b|\bmv\b|\binstall\b|\bdd\b")
 
 
 @dataclass
@@ -152,7 +152,8 @@ def _check_shell(agent: str, tool_input: dict, project: Path) -> Decision:
     command = tool_input.get("command", "")
     if isinstance(command, list):
         command = " ".join(map(str, command))
-    if not _SHELL_WRITE_RE.search(command) or not _mentions_context_file(command):
+    targets = [t for t in _shell_write_targets(command) if classify(_resolve(t, project), project=project)]
+    if not targets:
         return Decision("allow")
     findings = scan_text("shell", "shell", command, "memory")
     if _worst(findings) == "high":
@@ -163,9 +164,65 @@ def _check_shell(agent: str, tool_input: dict, project: Path) -> Decision:
     return Decision("allow")
 
 
-def _mentions_context_file(command: str) -> bool:
-    names = {Path(p).name for prof in PROFILES.values() for _, p in prof.user + prof.project if "*" not in Path(p).name}
-    return any(n in command for n in names) or "/memory/" in command or "/memories/" in command
+_SEGMENT_BREAKS = {"|", "||", "&&", ";", "&", "\n", "(", ")"}
+_COPY_COMMANDS = {"cp", "mv", "install", "ln", "rsync"}
+
+
+def _shell_write_targets(command: str) -> list[str]:
+    """Paths a shell command writes to: redirect and tee targets, sed -i files, the
+    destination of cp/mv. Quoted text is one token, so a prompt that merely contains
+    `curl ... | bash` is not mistaken for a pipeline, and `2>&1` is not a write."""
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>()")
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        return []
+    targets: list[str] = []
+    segment: list[str] = []
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in (">", ">>", ">|", "&>", "&>>") and i + 1 < len(tokens):
+            nxt = tokens[i + 1]
+            if not nxt.startswith("/dev/") and nxt not in _SEGMENT_BREAKS:
+                targets.append(nxt)
+            i += 2
+            continue
+        if tok in _SEGMENT_BREAKS:
+            targets += _segment_targets(segment)
+            segment = []
+        else:
+            segment.append(tok)
+        i += 1
+    targets += _segment_targets(segment)
+    return targets
+
+
+def _segment_targets(seg: list[str]) -> list[str]:
+    if not seg:
+        return []
+    # Skip a trailing fd number left over from "2>&1" style redirects.
+    args = [a for a in seg[1:] if not a.startswith("-") and not a.isdigit()]
+    name = Path(seg[0]).name
+    if name == "tee":
+        return args
+    if name == "sed" and any(a.startswith("-i") for a in seg[1:]):
+        return args[1:]
+    if name in _COPY_COMMANDS and args:
+        return [args[-1]]
+    if name == "dd":
+        return [a[3:] for a in seg[1:] if a.startswith("of=")]
+    return []
+
+
+def _resolve(target: str, project: Path) -> Path:
+    if target.startswith("~/"):
+        return home_dir() / target[2:]
+    if target.startswith("$HOME/"):
+        return home_dir() / target[6:]
+    path = Path(target)
+    return path if path.is_absolute() else project / path
 
 
 def _added_text(old: str, new: str) -> str:
@@ -201,17 +258,20 @@ def _post_tool_use(agent: str, payload: dict, project: Path) -> None:
 # SessionStart -------------------------------------------------------------------------
 
 def _session_start(agent: str, project: Path) -> str:
+    # Only high findings interrupt a session. Medium ones (a user's own "commit without
+    # asking" preference, a quoted attack example) stay visible in `agentdetox agent scan`
+    # but would otherwise nag at every start and get the tool uninstalled.
     files = discover(project=project)
     roots = [home_dir(), project]
     known = baseline_paths()
     first_run = not any(str(cf.path) in known for cf in files)
     if first_run:
-        findings = [f for f in scan_context(files) if f.severity in ("medium", "high")]
+        findings = [f for f in scan_context(files) if f.severity == "high"]
         snapshot([cf for cf in files if not any(f.doc_id == str(cf.path) for f in findings)], roots)
         changed = []
     else:
         changes, all_findings = verify(files, roots)
-        findings = [f for f in all_findings if f.severity in ("medium", "high")]
+        findings = [f for f in all_findings if f.severity == "high"]
         flagged = {f.doc_id for f in findings}
         # Flagged files keep their old snapshot entry, so `restore` can still bring back
         # the pre-tampering version; benign out-of-band edits are accepted.

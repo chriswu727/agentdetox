@@ -130,7 +130,7 @@ def _install(args) -> int:
             return 0
         # Scan before trusting, so content that is already poisoned never becomes the baseline.
         files = discover(project=project)
-        flagged = {f.doc_id for f in scan_context(files) if f.severity in ("medium", "high")}
+        flagged = {f.doc_id for f in scan_context(files) if f.severity == "high"}
         n = snapshot([cf for cf in files if str(cf.path) not in flagged], [home_dir(), project])
         print(f"wrote AgentDetox hooks to {target}" + (f" (backup: {backup})" if backup else ""))
         print(f"snapshot of {n} context file(s) taken; restart Claude Code to load the hooks")
