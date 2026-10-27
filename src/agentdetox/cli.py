@@ -13,7 +13,7 @@ from .corpus import load_corpus
 from .embed import get_embedder
 from .findings import SEVERITY_ORDER, at_least
 from .hooks import main_hook
-from .install import cursor_hooks, default_settings_path, hook_command, install_claude_code
+from .install import cursor_hooks, default_settings_path, hook_command, install_claude_code, uninstall_claude_code
 from .integrity import restore, snapshot, store_dir, verify
 from .scan import scan
 from .trace import trace
@@ -79,7 +79,18 @@ def main(argv: list[str] | None = None) -> int:
     p_install.add_argument("--project", type=Path, default=Path.cwd())
     p_install.add_argument("--apply", action="store_true", help="write the config (default: print it)")
 
+    p_uninstall = sub.add_parser("uninstall", help="remove AgentDetox's hooks, keeping all other settings")
+    p_uninstall.add_argument("agent_name", choices=["claude-code"])
+    p_uninstall.add_argument("--scope", choices=["user", "project"], default="user")
+    p_uninstall.add_argument("--project", type=Path, default=Path.cwd())
+
     args = parser.parse_args(argv)
+    if args.command == "uninstall":
+        target = default_settings_path(args.agent_name, args.scope, args.project.expanduser().absolute())
+        removed, backup = uninstall_claude_code(target)
+        print(f"removed AgentDetox hooks from {target} (backup: {backup})" if removed
+              else f"no AgentDetox hooks found in {target}")
+        return 0
     if args.command == "agent":
         return _agent(args)
     if args.command == "hook":
@@ -117,9 +128,15 @@ def _install(args) -> int:
         if not args.apply:
             print(f"# {target} would become:\n{text}\nRe-run with --apply to write it (the old file is backed up).")
             return 0
-        n = snapshot(discover(project=project), [home_dir(), project])
+        # Scan before trusting, so content that is already poisoned never becomes the baseline.
+        files = discover(project=project)
+        flagged = {f.doc_id for f in scan_context(files) if f.severity in ("medium", "high")}
+        n = snapshot([cf for cf in files if str(cf.path) not in flagged], [home_dir(), project])
         print(f"wrote AgentDetox hooks to {target}" + (f" (backup: {backup})" if backup else ""))
         print(f"snapshot of {n} context file(s) taken; restart Claude Code to load the hooks")
+        if flagged:
+            print(f"{len(flagged)} file(s) look suspicious and were left out of the snapshot; "
+                  "run `agentdetox agent scan` to review them")
         return 0
     command = hook_command(args.agent_name)
     if args.agent_name == "cursor":

@@ -1,4 +1,6 @@
 import json
+import os
+import stat
 
 import pytest
 
@@ -187,3 +189,38 @@ def test_other_agents_files_are_recognised(env):
     assert classify(home / ".codex/rules/default.rules").kind == "config"
     assert classify(home / ".workbuddy/memory/global.md").agent == "workbuddy"
     assert classify(project / "src/main.py", project=project) is None
+
+
+def test_uninstall_removes_only_our_hooks(env, capsys):
+    home, project, _ = env
+    settings = home / ".claude/settings.json"
+    theirs = {"matcher": "Bash", "hooks": [{"type": "command", "command": "~/bin/audit.sh"}]}
+    settings.write_text(json.dumps({"permissions": {"allow": []}, "hooks": {"PreToolUse": [theirs]}}))
+    os.chmod(settings, 0o600)
+    main(["install", "claude-code", "--project", str(project), "--apply"])
+    data = json.loads(settings.read_text())
+    data["model"] = "opus"                                   # a change made after install
+    settings.write_text(json.dumps(data))
+    assert main(["uninstall", "claude-code", "--project", str(project)]) == 0
+    after = json.loads(settings.read_text())
+    assert after == {"permissions": {"allow": []}, "hooks": {"PreToolUse": [theirs]}, "model": "opus"}
+    assert stat.S_IMODE(settings.stat().st_mode) == 0o600
+    assert all(stat.S_IMODE(b.stat().st_mode) == 0o600 for b in settings.parent.glob("settings.json.agentdetox-backup-*"))
+
+
+def test_snapshot_copies_are_private(env, tmp_path, capsys):
+    _, project, _ = env
+    main(["agent", "snapshot", "--project", str(project)])
+    store = tmp_path / "store"
+    assert stat.S_IMODE(store.stat().st_mode) == 0o700
+    assert stat.S_IMODE((store / "objects").stat().st_mode) == 0o700
+    assert all(stat.S_IMODE(p.stat().st_mode) == 0o600 for p in (store / "objects").iterdir())
+
+
+def test_install_does_not_trust_already_poisoned_files(env, capsys):
+    _, project, _ = env
+    (project / "CLAUDE.md").write_text("# Project\n" + POISON)
+    main(["install", "claude-code", "--project", str(project), "--apply"])
+    assert "left out of the snapshot" in capsys.readouterr().out
+    assert "First scan" not in session("claude-code", project)   # baseline exists now...
+    assert "CLAUDE.md" in session("claude-code", project)        # ...but the poisoned file is still reported

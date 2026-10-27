@@ -35,6 +35,20 @@ def store_dir() -> Path:
     return Path(os.environ.get("AGENTDETOX_HOME") or Path.home() / ".agentdetox")
 
 
+def _private_dir(path: Path) -> Path:
+    # Snapshots copy files such as ~/.claude.json and settings.json that can hold
+    # tokens or API keys; the copies must not be more readable than the originals.
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(path, 0o700)
+    return path
+
+
+def _write_private(path: Path, data: bytes) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+
+
 def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -49,9 +63,8 @@ def baseline_paths() -> set[str]:
 
 
 def _save_baseline(baseline: dict) -> None:
-    store_dir().mkdir(parents=True, exist_ok=True)
-    tmp = store_dir() / "baseline.json.tmp"
-    tmp.write_text(json.dumps(baseline, indent=1, sort_keys=True))
+    tmp = _private_dir(store_dir()) / "baseline.json.tmp"
+    _write_private(tmp, json.dumps(baseline, indent=1, sort_keys=True).encode())
     tmp.replace(store_dir() / "baseline.json")
 
 
@@ -59,8 +72,8 @@ def snapshot(files: list[ContextFile], roots: list[Path]) -> int:
     """Record the current state of `files` as trusted. Entries under `roots` that no
     longer exist are dropped; entries for other projects are kept."""
     baseline = _load_baseline()
-    objects = store_dir() / "objects"
-    objects.mkdir(parents=True, exist_ok=True)
+    _private_dir(store_dir())
+    objects = _private_dir(store_dir() / "objects")
     root_strs = [str(r) + os.sep for r in roots]
     baseline["files"] = {
         p: e for p, e in baseline["files"].items()
@@ -71,7 +84,7 @@ def snapshot(files: list[ContextFile], roots: list[Path]) -> int:
         digest = _sha(data)
         obj = objects / digest
         if not obj.exists():
-            obj.write_bytes(data)
+            _write_private(obj, data)
         text = data.decode("utf-8", errors="replace")
         baseline["files"][str(cf.path)] = {
             "sha256": digest,
@@ -169,8 +182,8 @@ def restore(path: Path) -> Path | None:
     obj = store_dir() / "objects" / entry["sha256"]
     quarantined = None
     if path.exists():
-        qdir = store_dir() / "quarantine" / time.strftime("%Y%m%d-%H%M%S")
-        qdir.mkdir(parents=True, exist_ok=True)
+        _private_dir(store_dir() / "quarantine")
+        qdir = _private_dir(store_dir() / "quarantine" / time.strftime("%Y%m%d-%H%M%S"))
         quarantined = qdir / str(path).lstrip(os.sep).replace(os.sep, "__")
         shutil.move(str(path), quarantined)
     path.parent.mkdir(parents=True, exist_ok=True)

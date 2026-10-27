@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import shutil
 import sys
@@ -46,19 +47,50 @@ def cursor_hooks(command: str) -> dict:
     }}
 
 
+def remove_claude_code_hooks(existing: dict) -> dict:
+    settings = json.loads(json.dumps(existing))
+    hooks = settings.get("hooks", {})
+    for event in list(hooks):
+        groups = [g for g in hooks[event] if not any(is_self_hook(h.get("command", "")) for h in g.get("hooks", []))]
+        if groups:
+            hooks[event] = groups
+        else:
+            del hooks[event]
+    if "hooks" in settings and not hooks:
+        del settings["hooks"]
+    return settings
+
+
 def install_claude_code(settings_path: Path, apply: bool) -> tuple[str, Path | None]:
     existing = json.loads(settings_path.read_text()) if settings_path.exists() else {}
     merged = claude_code_settings(existing, hook_command("claude-code"))
     text = json.dumps(merged, indent=2, ensure_ascii=False) + "\n"
-    if not apply:
-        return text, None
+    return text, (_write_with_backup(settings_path, text) if apply else None)
+
+
+def uninstall_claude_code(settings_path: Path) -> tuple[bool, Path | None]:
+    """Remove only AgentDetox's hook groups, leaving every other setting as it is now."""
+    if not settings_path.exists():
+        return False, None
+    existing = json.loads(settings_path.read_text())
+    cleaned = remove_claude_code_hooks(existing)
+    if cleaned == existing:
+        return False, None
+    return True, _write_with_backup(settings_path, json.dumps(cleaned, indent=2, ensure_ascii=False) + "\n")
+
+
+def _write_with_backup(path: Path, text: str) -> Path | None:
     backup = None
-    if settings_path.exists():
-        backup = settings_path.with_name(f"{settings_path.name}.agentdetox-backup-{time.strftime('%Y%m%d-%H%M%S')}")
-        shutil.copyfile(settings_path, backup)
-    settings_path.parent.mkdir(parents=True, exist_ok=True)
-    settings_path.write_text(text)
-    return text, backup
+    if path.exists():
+        backup = path.with_name(f"{path.name}.agentdetox-backup-{time.strftime('%Y%m%d-%H%M%S')}")
+        shutil.copy2(path, backup)  # copy2 keeps the original's permissions
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
+    tmp = path.with_name(path.name + ".agentdetox-tmp")
+    tmp.write_text(text)
+    os.chmod(tmp, mode)
+    tmp.replace(path)
+    return backup
 
 
 def default_settings_path(agent: str, scope: str, project: Path) -> Path:
