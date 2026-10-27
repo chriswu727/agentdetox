@@ -24,5 +24,8 @@ def at_least(severity: str, threshold: str) -> bool:
 
 
 def snippet(text: str, start: int = 0, width: int = 160) -> str:
-    s = text[max(0, start - 20) : start + width].replace("\n", " ")
-    return s.strip()
+    begin = max(0, start - 20)
+    if begin > 0:
+        space = text.find(" ", begin, start)
+        begin = space + 1 if space != -1 else begin
+    return text[begin : start + width].replace("\n", " ").strip()

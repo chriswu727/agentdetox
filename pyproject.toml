@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Poisoning protection for what AI agents know: detect, block and clean planted instructions and fabricated facts in agent memory, rules and knowledge bases."
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["numpy>=1.24"]
 keywords = ["ai-agents", "agent-memory", "rag", "llm", "security", "prompt-injection", "data-poisoning", "mcp"]
 classifiers = [

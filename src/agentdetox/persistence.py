@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import tomllib
 from pathlib import Path
 
 from .hidden import normalize
@@ -71,7 +72,7 @@ TEXT_RULES: list[tuple[str, str, re.Pattern]] = [
     ),
 ]
 
-_COMMAND_KEYS = {"command", "args", "url"}
+_COMMAND_KEYS = {"command", "args", "url", "notify"}
 
 
 def text_findings(text: str) -> list[tuple[str, str, int]]:
@@ -84,14 +85,32 @@ def text_findings(text: str) -> list[tuple[str, str, int]]:
     return hits
 
 
-def config_commands(path: Path, text: str) -> list[tuple[str, str]]:
-    """Return (json_path, string) for every command-like value in an agent config file."""
-    if path.suffix != ".json":
-        return []
+_GUARDED_KEYS = {
+    # Claude Code, Cursor, OpenClaw (JSON)
+    "hooks", "mcpServers", "mcp", "permissions", "enabledPlugins", "plugins", "statusLine",
+    # Codex config.toml
+    "mcp_servers", "approval_policy", "sandbox_mode", "sandbox_workspace_write", "features", "notify",
+}
+WHOLE_FILE = "(whole file)"
+
+
+def _parse_config(path: Path, text: str):
     try:
-        data = json.loads(text)
-    except ValueError:
-        return []
+        if path.suffix == ".json":
+            return json.loads(text)
+        if path.suffix == ".toml":
+            return tomllib.loads(text)
+    except (ValueError, tomllib.TOMLDecodeError):
+        return None
+    return None
+
+
+def config_commands(path: Path, text: str) -> list[tuple[str, str]]:
+    """Return (key_path, string) for every command-like value in an agent config file.
+    Files without structure (Codex .rules) are returned whole, as one command string."""
+    data = _parse_config(path, text)
+    if data is None:
+        return [] if path.suffix in (".json", ".toml") else [(WHOLE_FILE, text)]
     out: list[tuple[str, str]] = []
 
     def walk(node, where: str, under_command: bool) -> None:
@@ -109,13 +128,11 @@ def config_commands(path: Path, text: str) -> list[tuple[str, str]]:
 
 
 def guarded_sections(path: Path, text: str) -> dict[str, str]:
-    """Security-relevant subtrees of a config file (hooks, MCP servers, permissions), canonicalised."""
-    if path.suffix != ".json":
-        return {}
-    try:
-        data = json.loads(text)
-    except ValueError:
-        return {}
+    """Security-relevant subtrees of a config file (hooks, MCP servers, permissions),
+    canonicalised. Unparseable or unstructured files count as one whole section."""
+    data = _parse_config(path, text)
+    if not isinstance(data, dict):
+        return {WHOLE_FILE: text}
     sections: dict[str, str] = {}
 
     def walk(node, where: str) -> None:
@@ -123,8 +140,8 @@ def guarded_sections(path: Path, text: str) -> dict[str, str]:
             return
         for k, v in node.items():
             here = f"{where}.{k}".lstrip(".")
-            if k in ("hooks", "mcpServers", "permissions", "enabledPlugins", "statusLine"):
-                sections[here] = json.dumps(v, sort_keys=True, ensure_ascii=False)
+            if k in _GUARDED_KEYS:
+                sections[here] = json.dumps(v, sort_keys=True, ensure_ascii=False, default=str)
             elif isinstance(v, dict):
                 walk(v, here)
 

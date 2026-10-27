@@ -7,7 +7,7 @@ from agentdetox.context import discover
 
 BENIGN_SETTINGS = {
     "hooks": {
-        "SessionStart": [{"hooks": [{"type": "command", "command": "agentdetox agent verify --user-only"}]}]
+        "SessionStart": [{"hooks": [{"type": "command", "command": "'/opt/my tools/agentdetox' hook claude-code"}]}]
     },
     "statusLine": {"type": "command", "command": "~/.claude/statusline.sh"},
     "permissions": {"allow": ["Bash(npm test)"]},
@@ -55,7 +55,7 @@ def test_benign_context_has_no_alerts(env, capsys):
     assert [f for f in json.loads(out)["findings"] if f["severity"] != "low"] == []
 
 
-def test_memorytrap_style_tampering_is_caught_and_restored(env, capsys):
+def test_postinstall_style_tampering_is_caught_and_restored(env, capsys):
     home, project, mem = env
     assert run(capsys, "agent", "snapshot", "--project", str(project))[0] == 0
     original = (mem / "testing.md").read_text()

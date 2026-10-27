@@ -11,6 +11,7 @@ import difflib
 import hashlib
 import json
 import os
+import re
 import shutil
 import time
 from dataclasses import dataclass
@@ -21,7 +22,13 @@ from .context import ContextFile
 from .findings import Finding
 from .persistence import guarded_sections
 
-SELF_MARKER = "agentdetox"
+# Matches our hook command however the executable path was quoted
+# ("/x/agentdetox" hook, '/a b/agentdetox' hook, python -m agentdetox hook).
+_SELF_RE = re.compile(r"agentdetox['\"]?\s+hook\b")
+
+
+def is_self_hook(text: str) -> bool:
+    return bool(_SELF_RE.search(text))
 
 
 def store_dir() -> Path:
@@ -35,6 +42,10 @@ def _sha(data: bytes) -> str:
 def _load_baseline() -> dict:
     path = store_dir() / "baseline.json"
     return json.loads(path.read_text()) if path.exists() else {"files": {}}
+
+
+def baseline_paths() -> set[str]:
+    return set(_load_baseline()["files"])
 
 
 def _save_baseline(baseline: dict) -> None:
@@ -121,7 +132,7 @@ def verify(files: list[ContextFile], roots: list[Path]) -> tuple[list[Change], l
     for path, entry in baseline.items():
         if path not in current and any(path.startswith(r) for r in root_strs) and not Path(path).exists():
             changes.append(Change(path, "deleted", entry["kind"]))
-            if entry["kind"] == "config" and SELF_MARKER in json.dumps(entry.get("sections", {})):
+            if entry["kind"] == "config" and is_self_hook(json.dumps(entry.get("sections", {}))):
                 findings.append(Finding(path, path, "self-protection", "high",
                                         "a config file that registered AgentDetox hooks was deleted"))
     return changes, findings
@@ -134,7 +145,7 @@ def _config_changes(doc_id: str, path: Path, new: str, old_sections: dict) -> li
         before, after = old_sections.get(key), new_sections.get(key)
         if before == after:
             continue
-        if before and SELF_MARKER in before and (after is None or SELF_MARKER not in after):
+        if before and is_self_hook(before) and (after is None or not is_self_hook(after)):
             findings.append(Finding(doc_id, str(path), "self-protection", "high",
                                     f"AgentDetox hooks were removed from {key}", ""))
         else:

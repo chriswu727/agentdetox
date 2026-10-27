@@ -4,16 +4,56 @@ Poisoning protection for what AI agents know. AgentDetox detects, blocks and cle
 instructions and fabricated facts in the places agents trust and reload: memory files, rules and
 instruction files, and knowledge bases.
 
-> **Status: early development.** The knowledge-base scanner and its benchmark below work today.
-> Protection for the memory, rules and config files of Claude Code, Codex, Cursor, OpenClaw and
-> WorkBuddy is being built.
+> **Status: early development.** Claude Code protection and the knowledge-base scanner work
+> today. Codex and Cursor hooks are experimental; OpenClaw and WorkBuddy get tamper detection only.
 
 Agents learn from web pages, files, emails and tool output, and some of it is written into memory
 or rules that every later session trusts. One poisoned write can steer an agent for weeks, as
-[MemoryTrap](https://blogs.cisco.com/ai/identifying-and-remediating-a-persistent-memory-compromise-in-claude-code)
-(Claude Code, April 2026) and MemGhost (arXiv 2607.05189, July 2026) showed. Per-document scanners
+[Cisco's persistent-memory compromise of Claude Code](https://blogs.cisco.com/ai/identifying-and-remediating-a-persistent-memory-compromise-in-claude-code)
+(April 2026) and MemGhost (arXiv 2607.05189, July 2026) showed. Per-document scanners
 look for attack strings; AgentDetox also compares entries against each other, because a fabricated
 fact contains no attack string at all.
+
+## Protect an agent
+
+```bash
+pip install 'agentdetox @ git+https://github.com/chriswu727/agentdetox'
+agentdetox install claude-code            # prints the settings change; add --apply to write it
+agentdetox agent scan                     # scan memory, rules, skills and config now
+```
+
+Once installed, three hooks run inside Claude Code:
+
+- **Before a write** to memory, CLAUDE.md, rules, skills or config (via Write, Edit or a shell
+  redirect), the new content is checked. Planted instructions are denied with the reason sent to
+  the agent; an agent changing its own hooks, MCP servers or permissions needs your approval.
+- **After a checked write**, the file is re-trusted, so the snapshot only lags behind writes that
+  bypassed the agent.
+- **At session start**, files changed outside the agent (an npm postinstall script, another
+  process) are compared with the snapshot. Suspicious changes are reported to the agent, which is
+  told not to follow them and to tell you; benign edits you made yourself are accepted silently.
+  The first run scans everything before trusting it.
+
+Clean up with `agentdetox agent verify` (what changed, and why it is suspicious) and
+`agentdetox agent restore <file>` (put back the snapshot; the current file is quarantined under
+`~/.agentdetox/quarantine`, never deleted).
+
+| Agent | Files watched | Write blocking | Tamper detection |
+|---|---|---|---|
+| Claude Code | CLAUDE.md, CLAUDE.local.md, `.claude/rules`, AGENTS.md, auto memory, skills, subagents, commands, settings, `.mcp.json`, `~/.claude.json` | yes | yes |
+| Codex | AGENTS(.override).md, `~/.codex/memories`, `.agents/skills`, `config.toml`, `hooks.json`, `rules/*.rules` | experimental (`install codex` prints the hook) | yes |
+| Cursor | `.cursor/rules`, `.cursorrules`, AGENTS.md, `.cursor/skills`, `mcp.json`, `hooks.json` | experimental; Tab edits cannot be blocked | yes |
+| OpenClaw | AGENTS, SOUL, USER, IDENTITY, BOOT, MEMORY, daily memory, skills, `openclaw.json`, extensions | not yet (needs a plugin) | yes |
+| WorkBuddy | `~/.workbuddy` memory and identity files (paths unverified) | no public hook API | yes |
+
+Detection rules target what a benign memory almost never asks for: running code fetched from the
+network, reverse shells, loosening the agent's own approvals or sandbox, reading credentials,
+acting silently, standing orders to fetch a URL every session, plus the hidden-text and
+injection detectors below. English and Chinese.
+
+Hooks fail open: if AgentDetox itself errors, the agent's action proceeds. If an attacker deletes
+the hooks, the session-start check cannot run; `agentdetox agent verify` (by hand or in CI) still
+reports the removal.
 
 ## Scan a knowledge base
 

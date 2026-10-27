@@ -12,6 +12,8 @@ from .context import PROFILES, discover, home_dir
 from .corpus import load_corpus
 from .embed import get_embedder
 from .findings import SEVERITY_ORDER, at_least
+from .hooks import main_hook
+from .install import cursor_hooks, default_settings_path, hook_command, install_claude_code
 from .integrity import restore, snapshot, store_dir, verify
 from .scan import scan
 from .trace import trace
@@ -68,9 +70,22 @@ def main(argv: list[str] | None = None) -> int:
     a_restore = asub.add_parser("restore", help="put back the snapshotted version; the current one is quarantined")
     a_restore.add_argument("paths", type=Path, nargs="+")
 
+    p_hook = sub.add_parser("hook", help="hook entry point called by the agent (reads the event JSON on stdin)")
+    p_hook.add_argument("agent_name", choices=["claude-code", "codex", "cursor"])
+
+    p_install = sub.add_parser("install", help="register AgentDetox's hooks with an agent")
+    p_install.add_argument("agent_name", choices=["claude-code", "codex", "cursor"])
+    p_install.add_argument("--scope", choices=["user", "project"], default="user")
+    p_install.add_argument("--project", type=Path, default=Path.cwd())
+    p_install.add_argument("--apply", action="store_true", help="write the config (default: print it)")
+
     args = parser.parse_args(argv)
     if args.command == "agent":
         return _agent(args)
+    if args.command == "hook":
+        return main_hook(args.agent_name)
+    if args.command == "install":
+        return _install(args)
     if not args.path.exists():
         parser.error(f"{args.path} does not exist")
     docs = load_corpus(args.path, args.text_field, args.id_field, args.chunk_chars)
@@ -91,6 +106,32 @@ def main(argv: list[str] | None = None) -> int:
         embedder.fit(texts)
     rows = trace(docs, embedder.encode(texts), embedder, args.question, args.answer, args.top_k)
     _print_trace(rows, args.format)
+    return 0
+
+
+def _install(args) -> int:
+    project = args.project.expanduser().absolute()
+    target = default_settings_path(args.agent_name, args.scope, project)
+    if args.agent_name == "claude-code":
+        text, backup = install_claude_code(target, args.apply)
+        if not args.apply:
+            print(f"# {target} would become:\n{text}\nRe-run with --apply to write it (the old file is backed up).")
+            return 0
+        n = snapshot(discover(project=project), [home_dir(), project])
+        print(f"wrote AgentDetox hooks to {target}" + (f" (backup: {backup})" if backup else ""))
+        print(f"snapshot of {n} context file(s) taken; restart Claude Code to load the hooks")
+        return 0
+    command = hook_command(args.agent_name)
+    if args.agent_name == "cursor":
+        print(f"# Experimental. Add to {target} (merge with existing hooks):")
+        print(json.dumps(cursor_hooks(command), indent=2))
+    else:
+        print(f"# Experimental. Register this command for Codex's SessionStart, PreToolUse "
+              f"(matcher apply_patch|shell) and PostToolUse hooks in {target}:\n{command}")
+    if args.apply:
+        print("\n--apply is only supported for claude-code until these hook formats are verified on real installs.",
+              file=sys.stderr)
+        return 2
     return 0
 
 
