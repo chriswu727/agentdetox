@@ -89,7 +89,7 @@ Clean background: 5,225 Wikipedia paragraphs from SQuAD v1.1 (`bench/fetch_squad
 Poison: the adversarial texts released with PoisonedRAG (Zou et al., USENIX Security 2025),
 100 target questions x 5 passages = 500 per dataset. `prefix` is the black-box attack as published
 (target question prepended); `noprefix` drops the question, approximating an attacker who only
-paraphrases. Reproduce with `bench/poisonedrag_eval.py`.
+paraphrases. Reproduce with `bench/fetch_data.sh`, then `bench/compare.py bench/data`.
 
 ### Compared with per-document scanners
 
