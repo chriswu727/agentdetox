@@ -13,7 +13,7 @@ from pathlib import Path
 from . import __version__, allowlist, compat, daemon, settings
 from .consistency import NLI, NLI_MODEL
 from .context import home_dir
-from .install import claude_code_settings, default_settings_path
+from .install import claude_code_plugin, claude_code_settings, default_settings_path, plugin_command
 from .integrity import SCHEMA_VERSION, StoreError, is_self_hook, store_dir, usage
 
 
@@ -35,6 +35,7 @@ def run(project: Path) -> list[Check]:
 
 def _claude_code_hooks(project: Path) -> list[Check]:
     found = []
+    in_settings = False
     for scope in ("user", "project"):
         path = default_settings_path("claude-code", scope, project)
         if not path.exists():
@@ -47,10 +48,42 @@ def _claude_code_hooks(project: Path) -> list[Check]:
         commands = [h.get("command", "") for groups in settings.get("hooks", {}).values()
                     for g in groups for h in g.get("hooks", []) if is_self_hook(h.get("command", ""))]
         if commands:
+            in_settings = True
             found.append(_check_claude_settings(path, settings, commands[0]))
+    plugin = claude_code_plugin(project)
+    if plugin:
+        found.append(_check_plugin(plugin))
+        if in_settings:
+            found.append(Check("warn", f"Claude Code: the {plugin} plugin and settings both register AgentDetox's "
+                                       "hooks, so every check runs twice; remove the settings copy with "
+                                       "`agentdetox uninstall claude-code`"))
     if not found:
-        return [Check("fail", "Claude Code: hooks not installed (run `agentdetox install claude-code --apply`)")]
+        return [Check("fail", "Claude Code: hooks not installed (install the plugin, or run "
+                              "`agentdetox install claude-code --apply`)")]
     return found
+
+
+def _check_plugin(plugin: str) -> Check:
+    command = plugin_command()
+    if command is None:
+        return Check("fail", f"Claude Code: the {plugin} plugin is enabled but finds neither an agentdetox command "
+                             "nor uvx, so nothing is checked")
+    if len(command) > 1:  # uvx, which a read-only check must not make download anything
+        return Check("ok", f"Claude Code: hooks run by the {plugin} plugin, through uvx")
+    try:
+        hooked = _version(command[0])
+    except (OSError, subprocess.SubprocessError) as e:
+        return Check("fail", f"Claude Code: the {plugin} plugin runs {command[0]}, which failed: {e}")
+    if hooked != __version__:
+        return Check("warn", f"Claude Code: the {plugin} plugin runs agentdetox {hooked} ({command[0]}), "
+                             f"this is {__version__}")
+    return Check("ok", f"Claude Code: hooks run by the {plugin} plugin ({command[0]})")
+
+
+def _version(exe: str) -> str:
+    out = subprocess.run([exe, "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                         timeout=20).stdout.strip()
+    return out.split()[-1] if out else "?"
 
 
 def _ours(hooks: dict) -> dict:
@@ -69,11 +102,9 @@ def _check_claude_settings(path: Path, settings: dict, command: str) -> Check:
     if not Path(exe).exists():
         return Check("fail", f"Claude Code: hook command {exe} does not exist; every tool call will report a hook error")
     try:
-        out = subprocess.run([exe, "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace",
-                             timeout=20).stdout.strip()
+        hooked = _version(exe)
     except (OSError, subprocess.SubprocessError) as e:
         return Check("fail", f"Claude Code: hook command {exe} failed to run: {e}")
-    hooked = out.split()[-1] if out else "?"
     if hooked != __version__:
         return Check("warn", f"Claude Code: hooks run agentdetox {hooked}, this is {__version__} ({exe})")
     return Check("ok", f"Claude Code: hooks installed and current in {path}")

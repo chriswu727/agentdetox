@@ -19,6 +19,9 @@ instruction and skill files, and config.
   non-default registry need your approval. At session start, files changed outside
   the agent since the last snapshot are reported with the command that restores each one.
   `CLAUDE_CONFIG_DIR` is followed.
+- **Claude Code plugin** (`/plugin install agentdetox --marketplace chriswu727/agentdetox`), as an
+  alternative to `install claude-code`. It runs the installed `agentdetox`, or its own release
+  through `uvx`; `install` and `doctor` notice when both routes register the hooks.
 - **Snapshots, tamper detection and restore** (`agentdetox agent snapshot|verify|restore|scan`).
   The store in `~/.agentdetox` is private (0700/0600). A restore quarantines the current file
   instead of deleting it.

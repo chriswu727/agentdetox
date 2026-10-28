@@ -1,7 +1,9 @@
 import json
+import os
 
 import pytest
 
+from agentdetox import __version__
 from agentdetox.cli import main
 
 
@@ -76,3 +78,28 @@ def test_doctor_is_read_only(env, capsys):
     before = {p: p.read_bytes() for p in home.rglob("*") if p.is_file()}
     doctor(capsys, project)
     assert before == {p: p.read_bytes() for p in home.rglob("*") if p.is_file()}
+
+
+@pytest.mark.skipif(os.name != "posix", reason="stub executable is a shell script")
+def test_the_plugin_counts_as_installed_and_is_not_doubled(env, capsys):
+    home, project = env
+    exe = home / ".local/bin/agentdetox"
+    exe.parent.mkdir(parents=True)
+    exe.write_text(f"#!/bin/sh\necho agentdetox {__version__}\n", encoding="utf-8")
+    exe.chmod(0o755)
+    settings = home / ".claude/settings.json"
+    settings.write_text(json.dumps({"enabledPlugins": {"agentdetox@agentdetox": True}}), encoding="utf-8")
+    code, out = doctor(capsys, project)
+    assert code == 0 and "hooks run by the agentdetox@agentdetox plugin" in out, out
+    assert main(["install", "claude-code", "--project", str(project), "--apply"]) == 0
+    assert "already runs AgentDetox's hooks" in capsys.readouterr().out
+    assert "hooks" not in json.loads(settings.read_text(encoding="utf-8"))
+    settings.write_text(json.dumps({"enabledPlugins": {"agentdetox@agentdetox": True},
+                                    "hooks": {"SessionStart": [{"hooks": [{"type": "command",
+                                                                          "command": f"{exe} hook claude-code"}]}]}}),
+                        encoding="utf-8")
+    assert "every check runs twice" in doctor(capsys, project)[1]
+    (project / ".claude").mkdir()
+    (project / ".claude/settings.local.json").write_text(
+        json.dumps({"enabledPlugins": {"agentdetox@agentdetox": False}}), encoding="utf-8")
+    assert "agentdetox@agentdetox" not in doctor(capsys, project)[1]   # disabled for this project

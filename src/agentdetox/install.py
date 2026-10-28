@@ -102,3 +102,33 @@ def default_settings_path(agent: str, scope: str, project: Path) -> Path:
         "cursor": base / ".cursor" / "hooks.json",
         "codex": base / ".codex" / "hooks.json",
     }[agent]
+
+
+PLUGIN = "agentdetox"
+
+
+def claude_code_plugin(project: Path) -> str | None:
+    """The id of the AgentDetox plugin if Claude Code has it enabled for this project.
+    Its hooks run in addition to any in settings: Claude Code does not merge the two."""
+    enabled: dict = {}
+    for path in (claude_dir() / "settings.json", project / ".claude" / "settings.json",
+                 project / ".claude" / "settings.local.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and isinstance(data.get("enabledPlugins"), dict):
+            enabled.update(data["enabledPlugins"])
+    return next((k for k, v in enabled.items() if v is True and k.split("@")[0] == PLUGIN), None)
+
+
+def plugin_command() -> list[str] | None:
+    """What the plugin's hook script runs, looked up in the same order as the script."""
+    local = home_dir() / ".local" / "bin" / "agentdetox"
+    if os.access(local, os.X_OK):
+        return [str(local)]
+    if exe := shutil.which("agentdetox"):
+        return [exe]
+    if uvx := shutil.which("uvx"):
+        return [uvx, "--quiet", "--from", "agentdetox", "agentdetox"]
+    return None

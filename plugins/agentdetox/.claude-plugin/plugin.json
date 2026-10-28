@@ -1,0 +1,10 @@
+{
+  "name": "agentdetox",
+  "displayName": "AgentDetox",
+  "version": "0.2.0",
+  "description": "Checks what Claude Code writes to its memory, rules, skills and config, reports files changed behind its back, and puts them back.",
+  "homepage": "https://github.com/chriswu727/agentdetox",
+  "repository": "https://github.com/chriswu727/agentdetox",
+  "license": "Apache-2.0",
+  "keywords": ["security", "memory", "prompt-injection", "integrity", "hooks"]
+}

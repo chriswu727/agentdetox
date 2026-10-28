@@ -16,8 +16,8 @@ from .corpus import load_corpus
 from .embed import get_embedder
 from .findings import ID_LENGTH, SEVERITY_ORDER, at_least, finding_id
 from .hooks import main_hook
-from .install import (claude_code_settings, cursor_hooks, default_settings_path, hook_command, install_claude_code,
-                      uninstall_claude_code)
+from .install import (claude_code_plugin, claude_code_settings, cursor_hooks, default_settings_path, hook_command,
+                      install_claude_code, uninstall_claude_code)
 from .integrity import StoreError, gc, reset_baseline, restore, snapshot, store_dir, verify
 from .scan import scan
 from .trace import trace
@@ -211,6 +211,11 @@ def _install(args) -> int:
     project = args.project.expanduser().absolute()
     target = default_settings_path(args.agent_name, args.scope, project)
     if args.agent_name == "claude-code":
+        plugin = claude_code_plugin(project)
+        if plugin:
+            print(f"The {plugin} plugin is enabled in Claude Code and already runs AgentDetox's hooks. Adding "
+                  "them to settings as well would run every check twice, so nothing was changed.")
+            return 0
         _, backup = install_claude_code(target, args.apply)
         if not args.apply:
             added = claude_code_settings({}, hook_command("claude-code"))

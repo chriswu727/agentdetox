@@ -1,0 +1,15 @@
+{
+  "name": "agentdetox",
+  "description": "AgentDetox: protection for what AI coding agents remember and obey",
+  "owner": {
+    "name": "chriswu727",
+    "url": "https://github.com/chriswu727"
+  },
+  "plugins": [
+    {
+      "name": "agentdetox",
+      "source": "./plugins/agentdetox",
+      "description": "Checks what Claude Code writes to its memory, rules, skills and config, reports files changed behind its back, and puts them back."
+    }
+  ]
+}

@@ -32,14 +32,28 @@ it), and the file being restored. It runs the real hooks, so it doubles as a sel
 
 ```bash
 uv tool install agentdetox                # or: pipx install agentdetox
+```
+
+Then install the Claude Code plugin, from inside Claude Code:
+
+```text
+/plugin install agentdetox --marketplace chriswu727/agentdetox
+```
+
+or add the same hooks to your settings directly:
+
+```bash
 agentdetox install claude-code --apply    # adds three hooks to ~/.claude/settings.json, backed up first
 ```
 
-Restart Claude Code to load the hooks. Without `--apply`, `install` only shows what it would add.
-A tool install keeps AgentDetox in an environment of its own, which the hooks call by its full
-path; `pip install agentdetox` works too. If you move Claude Code's folder with
-`CLAUDE_CONFIG_DIR`, AgentDetox follows it. Installing scans what is already there before trusting
-it; `agentdetox agent scan` does the same at any time.
+Restart Claude Code to load the hooks. Use one route, not both: `install` declines when the plugin
+is enabled, and `agentdetox doctor` warns if the hooks are registered twice. The plugin runs the
+`agentdetox` you installed; without one it runs its own release through `uvx`, and with neither it
+says so at session start instead of failing on every tool call.
+
+A tool install keeps AgentDetox in an environment of its own; `pip install agentdetox` works too.
+If you move Claude Code's folder with `CLAUDE_CONFIG_DIR`, AgentDetox follows it. The first session
+scans what is already there before trusting it; `agentdetox agent scan` does the same at any time.
 
 ## What it does in Claude Code
 
@@ -209,8 +223,13 @@ Installed hooks call a fixed executable, so updating it takes effect on the next
 no reinstall; a model server still running the old build is stopped by `update.sh`, and otherwise
 replaces itself on its next job. Re-run `agentdetox install claude-code --apply` only when
 `agentdetox doctor` says the registered hooks are from an older version. To remove everything:
-`agentdetox uninstall claude-code`, `agentdetox daemon stop`, then `uv tool uninstall agentdetox`,
-then delete `~/.agentdetox` (this also deletes quarantined files).
+`/plugin uninstall agentdetox` or `agentdetox uninstall claude-code`, `agentdetox daemon stop`,
+then `uv tool uninstall agentdetox`, then delete `~/.agentdetox` (this also deletes quarantined
+files).
+
+The Claude Code plugin lives in `plugins/agentdetox` and the marketplace entry in
+`.claude-plugin/marketplace.json`; `claude plugin validate .` checks both. Its version, the version
+its hook script pins, and the package version must match (`tests/test_plugin.py`).
 
 ## License
 

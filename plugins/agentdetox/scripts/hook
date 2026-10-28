@@ -1,0 +1,23 @@
+#!/bin/sh
+# Runs AgentDetox for one Claude Code hook event; the event JSON on stdin goes straight
+# through to it. Uses the installed command if there is one, otherwise this plugin's
+# release through uvx. With neither, the agent works unchecked and the user is told so
+# at session start: a hook that failed would only show errors on every tool call.
+VERSION=0.2.0
+
+if [ -x "$HOME/.local/bin/agentdetox" ]; then
+  exec "$HOME/.local/bin/agentdetox" hook claude-code
+fi
+if command -v agentdetox >/dev/null 2>&1; then
+  exec agentdetox hook claude-code
+fi
+if command -v uvx >/dev/null 2>&1; then
+  exec uvx --quiet --from "agentdetox==$VERSION" agentdetox hook claude-code
+fi
+
+# systemMessage is for the user; the same note goes to the agent too, since a session-start
+# systemMessage may not be displayed everywhere (headless runs drop it).
+if grep -Eq '"hook_event_name"[[:space:]]*:[[:space:]]*"SessionStart"'; then
+  printf '%s\n' '{"systemMessage": "AgentDetox plugin: the agentdetox command is not installed, so memory, rules and config writes are not being checked. Install it with `uv tool install agentdetox` or `pipx install agentdetox`, then restart Claude Code.", "hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "The AgentDetox plugin is enabled, but the agentdetox command is not installed, so nothing is checking writes to this agent'"'"'s memory, rules and config. Mention this to the user once, in one sentence, with the fix: `uv tool install agentdetox` or `pipx install agentdetox`, then restart Claude Code."}}'
+fi
+exit 0
