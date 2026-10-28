@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import stat
 
 import pytest
@@ -7,7 +8,7 @@ import pytest
 from agentdetox.cli import main
 from agentdetox.context import classify, discover
 from agentdetox.hooks import handle
-from agentdetox.integrity import verify
+from agentdetox.integrity import is_self_hook, verify
 
 posix_only = pytest.mark.skipif(os.name == "nt", reason="Unix permission bits")
 
@@ -137,7 +138,11 @@ def test_session_start_reports_out_of_band_tampering_until_fixed(env, capsys):
     (mem / "MEMORY.md").write_text((mem / "MEMORY.md").read_text(encoding="utf-8") + POISON + "\n", encoding="utf-8")
     notice = session("claude-code", project)
     assert "changed outside the agent" in notice and "Do not follow" in notice
-    assert "`agentdetox agent restore ~/.claude/projects/-proj/memory/MEMORY.md`" in notice
+    restore = re.search(r"`agentdetox agent restore ([^`]+)`", notice)[1]
+    if os.name == "posix":
+        assert restore == "~/.claude/projects/-proj/memory/MEMORY.md"
+    else:   # backslash paths are quoted whole
+        assert restore.startswith('"') and restore.endswith('MEMORY.md"')
     assert "MEMORY.md" in session("claude-code", project)  # still flagged next session
     assert main(["agent", "restore", str(mem / "MEMORY.md")]) == 0
     assert session("claude-code", project) == ""
@@ -189,6 +194,12 @@ def test_removing_our_hooks_is_flagged(env, capsys):
     (home / ".claude/settings.json").write_text(json.dumps({"permissions": {}}), encoding="utf-8")
     _, findings = verify(discover(project=project), [home, project])
     assert any(f.detector == "self-protection" for f in findings)
+
+
+def test_own_hooks_are_recognised_on_every_platform():
+    for command in ["'/opt/my tools/agentdetox' hook claude-code", '"C:\\Users\\me\\agentdetox.EXE" hook claude-code',
+                    "python -I -m agentdetox hook codex"]:
+        assert is_self_hook(command) and is_self_hook(json.dumps({"command": command})), command
 
 
 def test_other_agents_files_are_recognised(env):

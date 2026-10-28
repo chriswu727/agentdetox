@@ -27,7 +27,9 @@ from .persistence import guarded_sections
 
 # Matches our hook command however the executable path was quoted
 # ("/x/agentdetox" hook, '/a b/agentdetox' hook, "C:\x\agentdetox.EXE" hook, python -m agentdetox hook).
-_SELF_RE = re.compile(r"agentdetox(?:\.exe)?['\"]?\s+hook\b", re.IGNORECASE)
+# The optional backslash: snapshots keep config sections JSON-encoded, where a Windows hook
+# command's double quote around the executable becomes \".
+_SELF_RE = re.compile(r"agentdetox(?:\.exe)?\\?['\"]?\s+hook\b", re.IGNORECASE)
 
 
 def is_self_hook(text: str) -> bool:

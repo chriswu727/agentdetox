@@ -29,6 +29,24 @@ real agent session. `agentdetox demo` is the quick smoke test of the whole hook 
 - The package version (`src/agentdetox/__init__.py`), the plugin manifest and the version the
   plugin's hook script pins must match; `tests/test_plugin.py` enforces it.
 
+## Continuous integration and releases
+
+CI (`.github/workflows/ci.yml`) runs on every pull request and push to `main`: Ubuntu with Python
+3.11 and 3.12, and macOS with 3.12, each installing the package, running `agentdetox demo`,
+auditing dependencies, lint, types, the tests, and building and checking the distributions
+(`scripts/check_dist.py`). A Windows job runs the demo and the tests without blocking, since
+Windows support is still young.
+
+To release:
+
+1. Set the version in `src/agentdetox/__init__.py`, `plugins/agentdetox/.claude-plugin/plugin.json`
+   and `VERSION=` in `plugins/agentdetox/scripts/hook`.
+2. Date the version's `CHANGELOG.md` heading (`## [0.3.0] - 2026-11-20`) and merge.
+3. Publish a GitHub release tagged `v0.3.0`. The release workflow checks that the tag, the three
+   versions and the dated changelog agree (`scripts/check_release.py`), runs the checks and tests,
+   smoke-tests the built wheel in a clean environment, attaches the distributions to the release,
+   and publishes to PyPI through trusted publishing. Nothing is uploaded if any step fails.
+
 ## Where changes belong
 
 See [docs/architecture.md](docs/architecture.md) for how the pieces fit.
