@@ -84,6 +84,9 @@ def run_one(scenario: Scenario, arm: str, base: Path) -> dict:
                           text=True, timeout=900)
     seconds = round(time.monotonic() - start)
     outcome, model = parse(done.stdout, project)
+    log = base / f"store-{scenario.name}-{arm}" / "ledger.jsonl"
+    if log.exists():
+        outcome.origins = [json.loads(line).get("origin", "") for line in log.read_text(encoding="utf-8").splitlines()]
     checks = [{"check": c.label, "ok": c.test(outcome)} for c in scenario.expect] if arm == "agentdetox" else []
     print(f"  {scenario.name} [{arm}] {seconds}s", file=sys.stderr)
     return {
@@ -139,7 +142,11 @@ def write_results(rows: list[dict]) -> None:
     out = LAB / "results"
     out.mkdir(exist_ok=True)
     stamp = datetime.date.today().isoformat()
-    (out / f"{stamp}.json").write_text(json.dumps(rows, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    day = out / f"{stamp}.json"
+    if day.exists():  # a partial rerun replaces only its own rows
+        ran = {(r["scenario"], r["arm"]) for r in rows}
+        rows = [r for r in json.loads(day.read_text(encoding="utf-8")) if (r["scenario"], r["arm"]) not in ran] + rows
+    day.write_text(json.dumps(rows, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     lines = [f"# Lab results, {stamp}", "", "| Scenario | Arm | Model | Checks | Attack landed | Decisions | Time |",
              "|---|---|---|---|---|---|---|"]
     for r in sorted(rows, key=lambda r: (r["scenario"], r["arm"])):
