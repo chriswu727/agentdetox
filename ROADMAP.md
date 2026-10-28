@@ -43,6 +43,35 @@ Why this rather than better detection:
 The risk is that agent vendors add memory protection themselves. The answer is depth (origin,
 history, recovery, not a permission prompt) and covering more than one agent.
 
+## How AgentDetox stands out
+
+Detecting injected text and gating tool calls is a crowded field, with large vendors and the models
+themselves improving at it. AgentDetox competes on what that field does not do.
+
+1. **Every line has a known origin.** `agentdetox blame MEMORY.md` says, line by line, "you, in
+   session 3", "copied by the agent from this page in session 7", or "appeared at 14:02 while
+   `npm install` ran, outside any session". Origin also sets how strict the content checks are:
+   text you wrote is trusted, text that arrived from web pages or MCP data gets the strictest
+   checks. A memory write that follows untrusted reading in the same stretch of a session, without
+   you asking to remember anything, is marked as tainted, which covers what the model rewrites in
+   its own words and copy detection misses. The hard part is precision: reading the project's own
+   files must not count the way a web page does.
+2. **It cleans up, not just warns.** When something is found, one flow covers what changed, where
+   it came from, how far it reached (which sessions loaded it and what ran in them), restoring
+   everything it touched, and what to rotate if credentials were within reach.
+3. **Worth opening when nothing is wrong.** A weekly "what your agent learned" review: new
+   memories, where each came from, stale or contradicting entries to tidy. Users get memory hygiene
+   every week, and security comes with it. This is also where contradiction detection pays off.
+4. **Across agents and repositories.** People run Claude Code, Codex and Cursor on the same
+   repository, sharing AGENTS.md and CLAUDE.md, so poison written by one agent reaches all of them.
+   Each vendor protects only its own agent; one neutral ledger covers them all. Origin also
+   travels with commits, so a pull-request reviewer can see that an instruction line was written by
+   an agent after it read an issue body.
+5. **Proof anyone can rerun.** A public gallery replays documented real-world attacks (the npm
+   postinstall memory compromise, settings-file worms, rules-file backdoors, memory-poisoning
+   papers, malicious skills) against real agent sessions, without and with AgentDetox, next to an
+   honest list of what it does not catch.
+
 ## Principles
 
 - **Quiet when nothing is wrong.** When AgentDetox speaks, it says what changed, why it matters
@@ -77,35 +106,52 @@ a week of the maintainer's daily use produces no block that cannot be explained.
   changes the hooks did not see.
 - A check right after each shell command the agent runs, so a change made during the session by
   another program (an install script, say) is reported on the spot rather than at the next session.
-- `agentdetox log`, `agentdetox blame <file>`, `agentdetox review` (one inbox replacing today's
-  separate event log and allow list), and rollback to a point in time.
-- Rules, provenance and contradiction findings attached to ledger entries as signals.
+- `agentdetox log`, `agentdetox blame <file>` and rollback to a point in time.
+- Checks weighted by origin, and memory written after untrusted reading marked as tainted.
+- `agentdetox review`: one inbox for everything recorded but not blocked, replacing today's
+  separate event log and allow list, and the weekly "what your agent learned" summary.
+- An incident flow: what changed, its origin, which later sessions loaded it and what ran in them,
+  one restore for all of it, and what to rotate. How far back sessions can be traced depends on
+  each agent's transcripts; to be designed against Claude Code's first.
 
-Done when: every change in a real store has an origin, and a week's review takes the user a minute.
+Done when: every change in a real store has an origin, a week's review takes the user a minute,
+and the maintainer opens the weekly summary because it is useful, not because something fired.
 
 ### 0.4: Teams and CI
 
 - A policy file kept in the repository.
 - `agentdetox ci`: checks a pull request's changes to CLAUDE.md, AGENTS.md, rules, skills and MCP
   config, with SARIF output, a pre-commit hook and a GitHub Action.
-- A scan of skills and MCP servers before they are installed.
+- Origin that travels with commits, so `ci` and reviewers see who or what wrote each instruction
+  line. Git notes or commit trailers are the candidates; to be designed.
+- A scan of skills and MCP servers before they are installed, calling Cisco's or Snyk's scanner
+  when one is installed rather than rebuilding them.
 
 Done when: it runs on at least one real team's repository.
 
 ### 0.5: Judgement and reach
 
 - An LLM judge for contradictions and fabricated facts, replacing the NLI model as the recommended
-  path. Whether this can use the agent's own model depends on what each agent's hooks allow; to be
-  checked first.
+  path. Sending memory text to a model is a step away from "local only", so it is opt-in and uses
+  either a local model or the provider the agent already sends that text to. Whether hooks can use
+  the agent's own model depends on each agent; to be checked first.
 - Detection rules shipped as rule packs that update independently of releases.
-- Codex and Cursor verified on real installs; Gemini CLI.
+- Codex and Cursor verified on real installs, sharing one ledger with Claude Code; Gemini CLI.
+  Codex writes memories in a background pass no hook sees, so there the ledger relies on diffs.
 
 ### 1.0: Stable
 
 - A frozen store format, with migrations from every earlier version.
-- A published latency budget for hooks, met on ordinary laptops.
+- The 100 ms latency budget for hook checks, met on ordinary laptops.
 - Windows verified on real machines.
 - A threat model, a security policy and a documentation site.
+
+### Throughout: the attack gallery
+
+Each documented real-world persistence attack becomes a scripted replay against real agent
+sessions, run without and with AgentDetox, published with the results. A release that stops
+catching a replayed attack it used to catch does not ship. The list of what AgentDetox does not
+catch is kept next to it.
 
 ### After 1.0
 
@@ -119,13 +165,25 @@ organisation-wide policy, central reporting and managed deployment.
 - More work on the NLI contradiction model; the LLM judge replaces it.
 - A prompt-injection classifier for tool output as the agent reads it. Others do this; AgentDetox
   uses where text came from instead.
+- A firewall for every tool call the agent makes. That field is crowded and not where AgentDetox
+  adds anything.
+- Its own skill or MCP marketplace scanner; it calls existing ones instead.
 - More agents before the ones already claimed are verified on real installs.
 
 ## How progress is measured
 
-- Real users, and how many keep it installed.
+What AgentDetox should be able to say on its front page, and keep true:
+
+- Every line in a watched file has a known origin.
+- No wrong blocks in weeks of daily use, first on the maintainer's machine, then on users'.
+- Every attack in the gallery is caught when replayed; one that is not is listed among the known
+  gaps until it is.
+- Each hook check finishes in under 100 ms at the slowest 5%.
+
+And behind those:
+
+- Real users, and how many keep it installed and open the weekly summary.
 - Wrong blocks and needless questions per user per week, counted locally and shared only if the
   user chooses.
-- Hook latency at the slowest 5%.
 - Data lost by a restore: must stay at zero.
 - Time from install to seeing protection work for the first time.
