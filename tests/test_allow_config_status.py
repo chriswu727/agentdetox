@@ -264,15 +264,16 @@ def test_events_say_what_each_check_was_about(env, capsys):
     pre(project, "Write", {"file_path": str(mem / "sync.md"), "content": POISON})
     command, path = [r["target"] for r in events.read(None)][-2:]
     assert command == "agentdetox allow 0123456789"
+    path = path.replace(os.sep, "/")
     assert path.startswith("~/.claude/projects/") and path.endswith("/memory/sync.md")
     main(["events"])
     out = capsys.readouterr().out
-    assert "agentdetox allow 0123456789: " in out and "memory/sync.md: " in out
+    assert "agentdetox allow 0123456789: " in out and f"memory{os.sep}sync.md: " in out
 
 
 def test_shell_writes_and_deletes_in_the_store_need_approval(env):
     _, project, _ = env
-    store = store_dir()
+    store = store_dir().as_posix()   # bash reads backslashes as escapes; Git Bash users write C:/...
     assert pre(project, "Bash", {"command": f"echo '{{}}' > {store}/allowlist.json"})[0] == "ask"
     assert pre(project, "Bash", {"command": f"rm -rf {store}"})[0] == "ask"
     assert pre(project, "Bash", {"command": f"rm -rf {store}"}, agent="codex")[0] == "deny"

@@ -21,7 +21,7 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - name: Install build and test dependencies
-        run: python -m pip install --upgrade pip && python -m pip install build twine -e '.[dev]'
+        run: python -m pip install --upgrade pip 'setuptools>=84.1' certifi && python -m pip install build twine -e '.[dev]'
       - name: Verify release metadata
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}

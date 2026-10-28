@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -76,11 +77,11 @@ def test_long_project_paths_get_claude_codes_hash_suffix(tmp_path):
         return h - 2**32 if h >= 2**31 else h
 
     assert (java_hash("hello"), java_hash("polygenelubricants")) == (99162322, -2**31)   # Java's own values
-    project = "/Users/me/" + "deeply/nested/" * 20 + "app"
-    name = claude_memory_dir(Path(project), tmp_path).parent.name
+    project = Path("/Users/me/" + "deeply/nested/" * 20 + "app")   # Claude Code hashes the native form
+    name = claude_memory_dir(project, tmp_path).parent.name
     prefix, suffix = name[:200], name[201:]
-    assert prefix == project.replace("/", "-")[:200] and name[200] == "-"
-    assert int(suffix, 36) == abs(java_hash(project))
+    assert prefix == re.sub(r"[^A-Za-z0-9]", "-", str(project))[:200] and name[200] == "-"
+    assert int(suffix, 36) == abs(java_hash(str(project)))
     assert claude_memory_dir(Path("/Users/me/app"), tmp_path).parent.name == "-Users-me-app"
 
 

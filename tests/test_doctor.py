@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-from agentdetox import __version__
+from agentdetox import __version__, compat
 from agentdetox.cli import main
 
 
@@ -64,9 +64,13 @@ def test_missing_hook_executable_fails(env, capsys):
     home, project = env
     main(["install", "claude-code", "--project", str(project), "--apply"])
     settings = home / ".claude/settings.json"
-    text = settings.read_text(encoding="utf-8")
-    exe = json.loads(text)["hooks"]["SessionStart"][0]["hooks"][0]["command"].split(" hook ")[0].strip("'")
-    settings.write_text(text.replace(exe, "/nonexistent/agentdetox"), encoding="utf-8")
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    for groups in data["hooks"].values():
+        for group in groups:
+            for hook in group["hooks"]:
+                exe = compat.hook_executable(hook["command"])
+                hook["command"] = hook["command"].replace(exe, "/nonexistent/agentdetox")
+    settings.write_text(json.dumps(data), encoding="utf-8")
     capsys.readouterr()
     code, out = doctor(capsys, project)
     assert code == 1 and "does not exist" in out

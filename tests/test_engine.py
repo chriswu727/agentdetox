@@ -2,6 +2,7 @@
 events turned into what the engine takes."""
 
 import json
+from pathlib import Path
 
 from agentdetox import adapters
 from agentdetox.context import claude_memory_dir
@@ -37,7 +38,7 @@ def test_guardrail_changes_say_what_they_add(tmp_path, monkeypatch):
     new = json.dumps({"permissions": {"allow": ["Bash(ls)", "Bash(pnpm test)"]}, "model": "opus",
                       "mcpServers": {"x": {"command": "npx"}}})
     [s] = check_write(Write(tmp_path / "home/.claude/settings.json", old, new), project, run=set())
-    assert s.check == GUARDRAILS and "~/.claude/settings.json" in s.reason
+    assert s.check == GUARDRAILS and str(Path("~/.claude/settings.json")) in s.reason
     assert 'adds mcpServers.x.command "npx"; adds permissions.allow "Bash(pnpm test)"' in s.reason
     [s] = check_write(Write(project / ".claude/settings.json", "", new), project, run=set())   # a new file
     assert 'adds permissions.allow "Bash(ls)"' in s.reason
@@ -45,8 +46,9 @@ def test_guardrail_changes_say_what_they_add(tmp_path, monkeypatch):
 
 def test_shell_commands(tmp_path, monkeypatch):
     project, mem = setup(tmp_path, monkeypatch)
-    assert [s.check for s in check_command(f"echo note >> {mem / 'MEMORY.md'}", project)] == [SHELL_WRITE]
-    assert [s.check for s in check_command(f"echo '{POISON}' >> {mem / 'MEMORY.md'}", project)] == [PLANTED]
+    target = (mem / "MEMORY.md").as_posix()   # bash reads backslashes as escapes; Git Bash users write C:/...
+    assert [s.check for s in check_command(f"echo note >> {target}", project)] == [SHELL_WRITE]
+    assert [s.check for s in check_command(f"echo '{POISON}' >> {target}", project)] == [PLANTED]
     assert [s.check for s in check_command("agentdetox allow 0123456789", project)] == [OWN_STATE]
     assert check_command("pytest -q 2>&1 | tail -3", project) == []
 
