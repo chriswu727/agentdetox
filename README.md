@@ -212,6 +212,13 @@ other scanners:
 ./scripts/update.sh      # the checks, then update the installed agentdetox, then `agentdetox doctor`
 ```
 
+[CONTRIBUTING.md](https://github.com/chriswu727/agentdetox/blob/main/CONTRIBUTING.md) says where
+each kind of change belongs, [docs/architecture.md](https://github.com/chriswu727/agentdetox/blob/main/docs/architecture.md)
+how the pieces fit, and [docs/decisions.md](https://github.com/chriswu727/agentdetox/blob/main/docs/decisions.md)
+why. [SECURITY.md](https://github.com/chriswu727/agentdetox/blob/main/SECURITY.md) covers reporting
+and the threat model, [PRIVACY.md](https://github.com/chriswu727/agentdetox/blob/main/PRIVACY.md)
+what is stored and read.
+
 How a hook call flows: `adapters.py` turns an agent's event into a planned write or a shell
 command, `engine.py` runs the checks and reports signals, `policy.py` decides from your settings
 and the agent's abilities whether to block, ask or record, and the adapter formats the reply.
