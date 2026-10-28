@@ -1,6 +1,8 @@
 """The ledger: each change to an agent's context, recorded with where it came from."""
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -8,7 +10,7 @@ import pytest
 from agentdetox import hooks, ledger
 from agentdetox.cli import main
 from agentdetox.context import claude_memory_dir
-from agentdetox.integrity import gc
+from agentdetox.integrity import gc, store_dir
 
 PAGE = ("Release 4.2 improves cold start time and fixes the login timeout on slow networks. The vendor "
         "recommends pinning the SDK to 4.2.1 and enabling request retries with a two second backoff.")
@@ -113,3 +115,46 @@ def test_blame_tells_each_line_where_it_came_from(env, capsys):
     assert main(["log", str(notes)]) == 0
     out = capsys.readouterr().out
     assert "agent" in out and "external" in out and "changed outside the agent's edit tools" in out
+
+
+def edit(project, path, addition):
+    """The agent's Edit tool appends `addition`: checked first, then written, then the post-write hook."""
+    pre = {"hook_event_name": "PreToolUse", "cwd": str(project), "tool_name": "Edit",
+           "tool_input": {"file_path": str(path), "old_string": "", "new_string": addition}}
+    _, out = hooks.handle("claude-code", pre)
+    assert out == ""                                   # allowed
+    written(project, path, path.read_text(encoding="utf-8") + addition)
+
+
+def test_an_outside_change_mid_session_is_not_credited_to_the_agent(env):
+    _, project, mem = env
+    notes = mem / "notes.md"
+    notes.write_text("a\n", encoding="utf-8")
+    session(project)
+    notes.write_text("a\n" + POISON, encoding="utf-8")   # an install script, mid-session
+    edit(project, notes, "b\n")                           # the agent then makes a benign edit
+    got = [(e.origin, e.flagged) for e in ledger.entries()]
+    assert got == [("external", True), ("agent", False)]
+    causes = [cause if isinstance(cause, str) else cause.origin for _, cause in ledger.blame(notes)]
+    assert causes == [ledger.EARLIER, "external", "agent"]
+    assert "notes.md" in session(project)                 # still flagged, not recorded again
+    assert len(ledger.entries()) == 2
+
+
+def test_the_store_stays_locked_until_the_change_is_recorded(env, monkeypatch):
+    _, project, mem = env
+    notes = mem / "notes.md"
+    notes.write_text("a\n", encoding="utf-8")
+    session(project)
+    probe = ("import os, sys; from agentdetox.compat import try_lock; "
+             "print(try_lock(os.open(sys.argv[1], os.O_RDWR)))")
+    seen, real = [], ledger.record
+
+    def record(*args, **kwargs):   # another process tries the lock, as a daily cleanup would
+        seen.append(subprocess.run([sys.executable, "-c", probe, str(store_dir() / "store.lock")],
+                                   capture_output=True, text=True).stdout.strip())
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(ledger, "record", record)
+    written(project, notes, "a\nb\n")
+    assert seen == ["False"]

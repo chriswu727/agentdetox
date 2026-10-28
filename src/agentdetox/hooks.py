@@ -65,8 +65,10 @@ def _pre_tool_use(adapter: adapters.Adapter, payload: dict, project: Path) -> po
     if command is not None:
         return policy.decide(engine.check_command(command, project), adapter.can_ask, modes)
     run, transcript = policy.checks_to_run(modes), adapter.transcript(payload)
+    writes = adapter.writes(payload, project)
+    engine.before_write([w.path for w in writes], project)
     return policy.combine([policy.decide(engine.check_write(w, project, run, transcript), adapter.can_ask, modes)
-                           for w in adapter.writes(payload, project)])
+                           for w in writes])
 
 
 def main_hook(agent: str) -> int:

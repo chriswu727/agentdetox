@@ -15,7 +15,7 @@ from .allowlist import contradiction_flag
 from .consistency import Contradiction
 from .context import discover, home_dir, short_path
 from .findings import finding_id
-from .integrity import Change, StoreError, baseline_paths, gc, snapshot, snapshot_digest, snapshot_text, verify
+from .integrity import Change, StoreError, baseline_paths, gc, snapshot, snapshot_text, verify
 
 
 def notice(project: Path, contradiction_mode: str) -> str:
@@ -103,7 +103,7 @@ def _record_external(changes: list[Change], flagged: set[str]) -> None:
         after = path.read_bytes() if c.status != "deleted" and path.is_file() else None
         if after is not None and ledger.last_version(c.path) == hashlib.sha256(after).hexdigest():
             continue
-        ledger.record(c.path, "external", snapshot_digest(c.path), after, flagged=c.path in flagged)
+        ledger.record(c.path, "external", engine.previous_version(c.path), after, flagged=c.path in flagged)
 
 
 def _shell_path(path: str) -> str:
