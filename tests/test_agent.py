@@ -78,12 +78,15 @@ def test_long_project_paths_get_claude_codes_hash_suffix(tmp_path):
         return h - 2**32 if h >= 2**31 else h
 
     assert (java_hash("hello"), java_hash("polygenelubricants")) == (99162322, -2**31)   # Java's own values
-    project = Path("/Users/me/" + "deeply/nested/" * 20 + "app")   # Claude Code hashes the native form
+    # Claude Code hashes the physical path, which on Windows starts with the drive.
+    project = Path("/Users/me/" + "deeply/nested/" * 20 + "app")
+    physical = os.path.realpath(project)
     name = claude_memory_dir(project, tmp_path).parent.name
     prefix, suffix = name[:200], name[201:]
-    assert prefix == re.sub(r"[^A-Za-z0-9]", "-", str(project))[:200] and name[200] == "-"
-    assert int(suffix, 36) == abs(java_hash(str(project)))
-    assert claude_memory_dir(Path("/Users/me/app"), tmp_path).parent.name == "-Users-me-app"
+    assert prefix == re.sub(r"[^A-Za-z0-9]", "-", physical)[:200] and name[200] == "-"
+    assert int(suffix, 36) == abs(java_hash(physical))
+    short = Path("/Users/me/app")
+    assert claude_memory_dir(short, tmp_path).parent.name == re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(short))
 
 
 def test_benign_context_has_no_alerts(env, capsys):
