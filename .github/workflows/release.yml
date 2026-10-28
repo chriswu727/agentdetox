@@ -32,7 +32,7 @@ jobs:
           python -m pip_audit --vulnerability-service osv --progress-spinner off --skip-editable
       - name: Static checks and tests
         run: |
-          ruff check src tests bench scripts
+          ruff check src tests bench scripts lab
           mypy
           python -m pytest -q
       - name: Build and check distributions
