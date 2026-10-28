@@ -201,8 +201,9 @@ _SLUG_MAX = 200
 def claude_memory_dir(project: Path, home: Path | None = None) -> Path:
     # Claude Code names a project's dir after its path with every non-alphanumeric
     # UTF-16 unit replaced by "-"; names over 200 characters are cut to 200 and given
-    # "-" plus the base-36 absolute value of the path's Java-style string hash.
-    data = str(project).encode("utf-16-le")
+    # "-" plus the base-36 absolute value of the path's Java-style string hash. The path is
+    # the physical one Claude Code runs in (macOS's /var is /private/var).
+    data = os.path.realpath(project).encode("utf-16-le")
     units = [int.from_bytes(data[i:i + 2], "little") for i in range(0, len(data), 2)]
     slug = "".join(chr(u) if chr(u).isascii() and chr(u).isalnum() else "-" for u in units)
     if len(slug) > _SLUG_MAX:

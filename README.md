@@ -219,6 +219,10 @@ why. [SECURITY.md](https://github.com/chriswu727/agentdetox/blob/main/SECURITY.m
 and the threat model, [PRIVACY.md](https://github.com/chriswu727/agentdetox/blob/main/PRIVACY.md)
 what is stored and read.
 
+`lab/` replays attacks and everyday use against real Claude Code sessions, with and without
+AgentDetox ([lab/README.md](https://github.com/chriswu727/agentdetox/blob/main/lab/README.md));
+its latest results are in `lab/results/latest.md`.
+
 How a hook call flows: `adapters.py` turns an agent's event into a planned write or a shell
 command, `engine.py` runs the checks and reports signals, `policy.py` decides from your settings
 and the agent's abilities whether to block, ask or record, and the adapter formats the reply.

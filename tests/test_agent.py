@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from pathlib import Path
 
@@ -172,3 +173,11 @@ def test_planted_instructions_in_rules_files(env, capsys, text):
 def test_registry_redirects(text, flagged):
     labels = [label for _, label, _ in text_findings(text)]
     assert ("points package installs at a non-default registry" in labels) == flagged
+
+
+@pytest.mark.skipif(os.name != "posix", reason="symlinks need privileges on Windows")
+def test_memory_dir_follows_the_physical_path(tmp_path):
+    real = tmp_path / "real" / "shop"
+    real.mkdir(parents=True)
+    (tmp_path / "link").symlink_to(tmp_path / "real")
+    assert claude_memory_dir(tmp_path / "link" / "shop", tmp_path) == claude_memory_dir(real, tmp_path)
