@@ -20,7 +20,7 @@ import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from . import allowlist, daemon, events, settings
+from . import allowlist, compat, daemon, events, settings
 from .agentscan import read_text, scan_text, scan_context
 from .allowlist import Flag, contradiction_flag, copy_flag, finding_flag, source_id
 from .consistency import (NLI, Contradiction, Statement, candidate_pairs, find_contradictions, statements,
@@ -270,7 +270,8 @@ def _nli():
     server's, so only its first use pays the load. None when the extra or model is
     missing. A process that set _NLI_INSTANCE (a benchmark) uses its own model."""
     if not _NLI_INSTANCE:
-        _NLI_INSTANCE.append(_ServerNLI() if NLI().available() else None)
+        nli = NLI()
+        _NLI_INSTANCE.append(None if not nli.available() else _ServerNLI() if daemon.SERVER else nli)
     return _NLI_INSTANCE[0]
 
 
@@ -338,8 +339,8 @@ def _changes_agentdetox(tokens: list[str]) -> bool:
     setting, (un)installing, snapshot or restore. Reading commands stay free."""
     for i, tok in enumerate(tokens):
         prev = tokens[i - 1] if i else ""
-        if Path(tok).name != "agentdetox" or not (
-                not prev or prev in _SEGMENT_BREAKS or Path(prev).name in _LAUNCHERS or "=" in prev):
+        if compat.program(tok) != "agentdetox" or not (
+                not prev or prev in _SEGMENT_BREAKS or compat.program(prev) in _LAUNCHERS or "=" in prev):
             continue
         args: list[str] = []
         for t in tokens[i + 1:]:
@@ -386,7 +387,7 @@ def _segment_targets(seg: list[str]) -> list[str]:
         return []
     # Skip a trailing fd number left over from "2>&1" style redirects.
     args = [a for a in seg[1:] if not a.startswith("-") and not a.isdigit()]
-    name = Path(seg[0]).name
+    name = compat.program(seg[0])
     if name == "tee":
         return args
     if name == "sed" and any(a.startswith("-i") for a in seg[1:]):
@@ -405,7 +406,7 @@ def _resolve(target: str, project: Path) -> Path:
         return home_dir() / target[2:]
     if target.startswith("$HOME/"):
         return home_dir() / target[6:]
-    path = Path(target)
+    path = Path(compat.native_path(target))
     return path if path.is_absolute() else project / path
 
 
@@ -572,7 +573,8 @@ def _render_allow(agent: str) -> str:
 
 def main_hook(agent: str) -> int:
     try:
-        payload = json.loads(sys.stdin.read() or "{}")
+        # Bytes, so the event is read as UTF-8 whatever the locale (cp1252 on many Windows setups).
+        payload = json.loads(sys.stdin.buffer.read() or b"{}")
     except ValueError:
         payload = {}
     code, out = handle(agent, payload)

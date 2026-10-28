@@ -26,7 +26,7 @@ def transcript(path: Path, turns: list) -> Path:
                 {"type": "tool_use", "id": f"toolu_{n}", "name": t[1], "input": {}}]}})
             lines.append({"type": "user", "message": {"role": "user", "content": [
                 {"type": "tool_result", "tool_use_id": f"toolu_{n}", "content": t[2]}]}})
-    path.write_text("\n".join(json.dumps(l, ensure_ascii=False) for l in lines) + "\n")
+    path.write_text("\n".join(json.dumps(l, ensure_ascii=False) for l in lines) + "\n", encoding="utf-8")
     return path
 
 

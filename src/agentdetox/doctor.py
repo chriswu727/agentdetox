@@ -4,14 +4,13 @@ a tool that rewrites its own hook config is the behaviour AgentDetox flags in ot
 from __future__ import annotations
 
 import json
-import shlex
 import stat
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import __version__, allowlist, daemon, settings
+from . import __version__, allowlist, compat, daemon, settings
 from .consistency import NLI, NLI_MODEL
 from .context import home_dir
 from .install import claude_code_settings, default_settings_path
@@ -41,7 +40,7 @@ def _claude_code_hooks(project: Path) -> list[Check]:
         if not path.exists():
             continue
         try:
-            settings = json.loads(path.read_text())
+            settings = json.loads(path.read_text(encoding="utf-8"))
         except ValueError:
             found.append(Check("fail", f"Claude Code: {path} is not valid JSON"))
             continue
@@ -66,11 +65,12 @@ def _check_claude_settings(path: Path, settings: dict, command: str) -> Check:
     if expected != actual:
         return Check("warn", f"Claude Code: hooks in {path} are from an older version; "
                              "re-run `agentdetox install claude-code --apply`")
-    exe = shlex.split(command)[0]
+    exe = compat.hook_executable(command)
     if not Path(exe).exists():
         return Check("fail", f"Claude Code: hook command {exe} does not exist; every tool call will report a hook error")
     try:
-        out = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=20).stdout.strip()
+        out = subprocess.run([exe, "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             timeout=20).stdout.strip()
     except (OSError, subprocess.SubprocessError) as e:
         return Check("fail", f"Claude Code: hook command {exe} failed to run: {e}")
     hooked = out.split()[-1] if out else "?"
@@ -103,6 +103,9 @@ def _nli() -> list[Check]:
     how = {"ask": "asks on conflicts", "off": "turned off"}.get(settings.mode("contradiction"),
                                                                "records conflicts in the background")
     checks = [Check("ok", f"contradiction detection {how} ({NLI_MODEL})")]
+    if not daemon.SERVER:
+        checks.append(Check("warn", "no model server on Windows yet: each contradiction check loads the model "
+                                    "(about 6 s and 1 GB; record jobs run in one background worker at a time)"))
     info = daemon.ping()
     if info and info["code"] != daemon.code_id():
         checks.append(Check("warn", f"model server (pid {info['pid']}) runs an older build; it is replaced on its "
@@ -122,7 +125,8 @@ def _store() -> list[Check]:
     except StoreError as e:
         return [Check("fail", str(e))]
     checks = [Check("ok", f"snapshot store {store}: {tracked} file(s) tracked (store version {SCHEMA_VERSION})")]
-    for p in (store, store / "objects"):
+    # Windows reports 0o777 for every directory; access there comes from the profile's ACLs.
+    for p in (store, store / "objects") if not compat.WINDOWS else ():
         if p.exists() and stat.S_IMODE(p.stat().st_mode) & 0o077:
             checks.append(Check("fail", f"{p} is readable by other users; run `chmod 700 {p}`"))
     return checks
@@ -132,7 +136,7 @@ def _other_agents(project: Path) -> list[Check]:
     checks = []
     for agent in ("codex", "cursor"):
         hooked = [p for scope in ("user", "project")
-                  if (p := default_settings_path(agent, scope, project)).exists() and is_self_hook(p.read_text())]
+                  if (p := default_settings_path(agent, scope, project)).exists() and is_self_hook(p.read_text(encoding="utf-8"))]
         if hooked:
             checks.append(Check("ok", f"{agent}: AgentDetox hook registered in {hooked[0]} (experimental)"))
     return checks

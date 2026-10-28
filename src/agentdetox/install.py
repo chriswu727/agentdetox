@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 import os
-import shlex
 import shutil
 import sys
 import time
 from pathlib import Path
 
+from . import compat
 from .context import home_dir
 from .integrity import is_self_hook
 
@@ -17,13 +17,13 @@ from .integrity import is_self_hook
 def hook_command(agent: str) -> str:
     # Prefer the executable from the environment AgentDetox is running in, so the hook
     # keeps working when that environment is not on the agent's PATH.
-    sibling = Path(sys.executable).with_name("agentdetox")
+    sibling = Path(sys.executable).with_name("agentdetox.exe" if compat.WINDOWS else "agentdetox")
     exe = str(sibling) if sibling.exists() else shutil.which("agentdetox")
     if exe:
-        return f"{shlex.quote(exe)} hook {agent}"
+        return f"{compat.quote_executable(exe)} hook {agent}"
     # -I: hooks run in the project directory, and plain -m would import an `agentdetox`
     # package planted at the top of a cloned repository.
-    return f"{shlex.quote(sys.executable)} -I -m agentdetox hook {agent}"
+    return f"{compat.quote_executable(sys.executable)} -I -m agentdetox hook {agent}"
 
 
 def claude_code_settings(existing: dict, command: str) -> dict:
@@ -64,7 +64,7 @@ def remove_claude_code_hooks(existing: dict) -> dict:
 
 
 def install_claude_code(settings_path: Path, apply: bool) -> tuple[str, Path | None]:
-    existing = json.loads(settings_path.read_text()) if settings_path.exists() else {}
+    existing = json.loads(settings_path.read_text(encoding="utf-8")) if settings_path.exists() else {}
     merged = claude_code_settings(existing, hook_command("claude-code"))
     text = json.dumps(merged, indent=2, ensure_ascii=False) + "\n"
     return text, (_write_with_backup(settings_path, text) if apply else None)
@@ -74,7 +74,7 @@ def uninstall_claude_code(settings_path: Path) -> tuple[bool, Path | None]:
     """Remove only AgentDetox's hook groups, leaving every other setting as it is now."""
     if not settings_path.exists():
         return False, None
-    existing = json.loads(settings_path.read_text())
+    existing = json.loads(settings_path.read_text(encoding="utf-8"))
     cleaned = remove_claude_code_hooks(existing)
     if cleaned == existing:
         return False, None
@@ -89,7 +89,7 @@ def _write_with_backup(path: Path, text: str) -> Path | None:
     path.parent.mkdir(parents=True, exist_ok=True)
     mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
     tmp = path.with_name(path.name + ".agentdetox-tmp")
-    tmp.write_text(text)
+    tmp.write_text(text, encoding="utf-8", newline="\n")  # as Claude Code writes it, also on Windows
     os.chmod(tmp, mode)
     tmp.replace(path)
     return backup

@@ -1,4 +1,5 @@
 import json
+import os
 import stat
 
 import pytest
@@ -23,8 +24,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.chdir(project)
     mem = claude_memory_dir(project, home)
     mem.mkdir(parents=True)
-    (mem / "MEMORY.md").write_text("- [Testing](testing.md) — run tests before commits\n")
-    (project / "CLAUDE.md").write_text("# Project\nUse pnpm.\n")
+    (mem / "MEMORY.md").write_text("- [Testing](testing.md) — run tests before commits\n", encoding="utf-8")
+    (project / "CLAUDE.md").write_text("# Project\nUse pnpm.\n", encoding="utf-8")
     return tmp_path, project, mem
 
 
@@ -59,7 +60,7 @@ def web_transcript(path, url, page):
                 {"type": "tool_use", "id": "toolu_1", "name": "WebFetch", "input": {"url": url, "prompt": "summary"}}]}},
             {"type": "user", "message": {"role": "user", "content": [
                 {"type": "tool_result", "tool_use_id": "toolu_1", "content": page}]}}]
-    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
     return path
 
 
@@ -75,9 +76,9 @@ def test_defaults_without_a_config_file():
 def test_config_command_creates_a_private_commented_file(capsys):
     assert main(["config", "copied", "record"]) == 0
     path = settings.config_path()
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     assert 'copied = "record"' in text and "# Memory copied from" in text
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert os.name == "nt" or stat.S_IMODE(path.stat().st_mode) == 0o600   # Windows protects it with ACLs
     capsys.readouterr()
     assert main(["config"]) == 0
     out = capsys.readouterr().out
@@ -87,9 +88,9 @@ def test_config_command_creates_a_private_commented_file(capsys):
 
 def test_setting_one_value_keeps_the_rest_of_the_file():
     store_dir().mkdir(parents=True)
-    settings.config_path().write_text('# mine\n[checks]\nsuspicious = "record"  # too noisy for me\n')
+    settings.config_path().write_text('# mine\n[checks]\nsuspicious = "record"  # too noisy for me\n', encoding="utf-8")
     settings.set_mode("contradiction", "off")
-    text = settings.config_path().read_text()
+    text = settings.config_path().read_text(encoding="utf-8")
     assert text.startswith("# mine\n") and 'suspicious = "record"' in text and 'contradiction = "off"' in text
     assert settings.mode("suspicious") == "record" and settings.mode("contradiction") == "off"
 
@@ -102,11 +103,11 @@ def test_environment_overrides_the_file(monkeypatch):
 
 def test_broken_config_falls_back_to_defaults_and_doctor_says_so(env, capsys):
     store_dir().mkdir(parents=True)
-    settings.config_path().write_text('[checks]\ncopied = "never"\nsuspicous = "off"\n')
+    settings.config_path().write_text('[checks]\ncopied = "never"\nsuspicous = "off"\n', encoding="utf-8")
     current, problems = settings.load()
     assert settings.mode("copied") == "ask"
     assert any("never" in p for p in problems) and any("suspicous" in p for p in problems)
-    settings.config_path().write_text("[checks\n")
+    settings.config_path().write_text("[checks\n", encoding="utf-8")
     assert settings.mode("suspicious") == "ask"
     main(["doctor"])
     assert "WARN" in capsys.readouterr().out
@@ -163,9 +164,9 @@ def test_allowing_a_blocked_write_lets_the_retry_through(env, capsys):
 def test_one_id_covers_the_write_check_session_notice_and_scan(env, capsys):
     _, project, mem = env
     assert session(project) == ""
-    _, reason = write(project, mem / "MEMORY.md", (mem / "MEMORY.md").read_text() + POISON + "\n")
+    _, reason = write(project, mem / "MEMORY.md", (mem / "MEMORY.md").read_text(encoding="utf-8") + POISON + "\n")
     hook_ids = set(ids_in(reason))
-    (mem / "MEMORY.md").write_text((mem / "MEMORY.md").read_text() + POISON + "\n")   # out of band
+    (mem / "MEMORY.md").write_text((mem / "MEMORY.md").read_text(encoding="utf-8") + POISON + "\n", encoding="utf-8")   # out of band
     notice = session(project)
     assert all(f"[id {i}]" in notice for i in hook_ids) and "agentdetox allow <id>" in notice
     assert "MEMORY.md" in session(project)                 # nags until fixed or allowed
@@ -194,7 +195,7 @@ def test_trusting_one_source_does_not_trust_others(env):
 
 def test_scan_shows_ids_and_json_marks_allowed(env, capsys):
     _, project, mem = env
-    (mem / "sync.md").write_text(POISON)
+    (mem / "sync.md").write_text(POISON, encoding="utf-8")
     assert main(["agent", "scan", "--project", str(project), "--format", "json"]) == 1
     data = json.loads(capsys.readouterr().out)
     ids = {f["id"] for f in data["findings"]}
@@ -218,11 +219,11 @@ def test_a_corrupt_allowlist_allows_nothing_and_is_not_overwritten(env):
     _, project, mem = env
     _, reason = write(project, mem / "sync.md", POISON)
     allowlist.add(ids_in(reason)[0])
-    allowlist.path().write_text("{oops")
+    allowlist.path().write_text("{oops", encoding="utf-8")
     assert write(project, mem / "sync.md", POISON)[0] == "deny"
     with pytest.raises(ValueError):
         allowlist.add("0123456789")
-    assert allowlist.path().read_text() == "{oops"
+    assert allowlist.path().read_text(encoding="utf-8") == "{oops"
 
 
 # Agents may not change AgentDetox's own state without approval ------------------------

@@ -106,7 +106,8 @@ def render(data: dict) -> str:
         s = data["model_server"]
         row("Model server", f"running, pid {s['pid']}, model {'loaded' if s['model_loaded'] else 'not loaded yet'}, "
                             f"{s['jobs']} job(s), idle {s['idle_seconds'] // 60} min" if s else
-                            "not running; starts on the next memory write with something to compare")
+                            "not running; starts on the next memory write with something to compare"
+                            if daemon.SERVER else "not available on Windows yet; each check loads the model")
     st = data["store"]
     if st:
         row("Store", f"{st['bytes'] / 1e6:.1f} MB in {st['objects']} snapshot copies"

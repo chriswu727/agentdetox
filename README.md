@@ -6,6 +6,7 @@ instruction files, and knowledge bases.
 
 > **Status: early development.** Claude Code protection and the knowledge-base scanner work
 > today. Codex and Cursor hooks are experimental; OpenClaw and WorkBuddy get tamper detection only.
+> Developed and tested on macOS. Windows support is new and so far tested only in simulation.
 
 Agents learn from web pages, files, emails and tool output, and some of it is written into memory
 or rules that every later session trusts. One poisoned write can steer an agent for weeks, as
@@ -60,7 +61,9 @@ without work; `agentdetox daemon status` shows it. Writes with nothing related i
 it. On the v0 benchmark it catches 28% of fabricated facts that conflict with existing memory, but on
 real memory the model still misreads fragments, which is why it does not ask;
 `agentdetox config contradiction ask` makes it ask (about 0.5 s per related write once the server
-is up, 3 s for the first). See [bench/MEMORY_BENCHMARK.md](bench/MEMORY_BENCHMARK.md).
+is up, 3 s for the first). Windows has no model server yet: each related write starts a background
+worker that loads the model (about 6 s), one worker at a time, and ask mode loads it inside the hook.
+See [bench/MEMORY_BENCHMARK.md](bench/MEMORY_BENCHMARK.md).
 
 **Provenance check** (Claude Code): a memory write that is mostly copied from web pages, MCP data, command
 output or files the agent just read asks for approval unless you asked it to remember. This is how
@@ -215,6 +218,8 @@ log-probabilities for two of its signals. Treat its output as a ranked lead list
 - The guard on AgentDetox's own settings recognises plain commands and file writes. An agent that
   can run arbitrary code can still change them (a script that edits `~/.agentdetox` is not
   inspected), and nothing stops a person or process outside the agent.
+- On Windows the shell checks understand Git Bash commands (`/c/...` paths, `agentdetox.exe`), not
+  PowerShell or cmd.exe syntax.
 - `poison-cluster` cannot see an attacker who plants only one or two passages per target question,
   or who deliberately makes them dissimilar (both are limits stated by the CleanBase paper).
 - `injection-phrase` patterns are a starting set and will flag security documentation that quotes

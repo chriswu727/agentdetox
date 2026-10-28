@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import contextlib
 import difflib
-import fcntl
 import hashlib
 import json
 import os
@@ -21,13 +20,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .agentscan import read_text, scan_text
+from .compat import release, try_lock
 from .context import ContextFile
 from .findings import Finding
 from .persistence import guarded_sections
 
 # Matches our hook command however the executable path was quoted
-# ("/x/agentdetox" hook, '/a b/agentdetox' hook, python -m agentdetox hook).
-_SELF_RE = re.compile(r"agentdetox['\"]?\s+hook\b")
+# ("/x/agentdetox" hook, '/a b/agentdetox' hook, "C:\x\agentdetox.EXE" hook, python -m agentdetox hook).
+_SELF_RE = re.compile(r"agentdetox(?:\.exe)?['\"]?\s+hook\b", re.IGNORECASE)
 
 
 def is_self_hook(text: str) -> bool:
@@ -47,7 +47,9 @@ def private_dir(path: Path) -> Path:
 
 
 def write_private(path: Path, data: bytes) -> None:
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # O_BINARY: without it Windows opens the descriptor in text mode and turns every "\n"
+    # of a snapshot copy into "\r\n", so a restore would not give back the original.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
     with os.fdopen(fd, "wb") as f:
         f.write(data)
 
@@ -88,21 +90,17 @@ def store_lock(timeout: float = LOCK_TIMEOUT):
         fd = os.open(private_dir(store_dir()) / "store.lock", os.O_RDWR | os.O_CREAT, 0o600)
         try:
             deadline = time.monotonic() + timeout
-            while True:
-                try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except BlockingIOError:
-                    if time.monotonic() > deadline:
-                        raise TimeoutError(f"{store_dir()} is locked by another process") from None
-                    time.sleep(0.01)
+            while not try_lock(fd):
+                if time.monotonic() > deadline:
+                    raise TimeoutError(f"{store_dir()} is locked by another process")
+                time.sleep(0.01)
             _lock_depth = 1
             try:
                 yield
             finally:
                 _lock_depth = 0
         finally:
-            os.close(fd)
+            release(fd)
 
 
 _RESET_HINT = ("Check the agent's memory, rules and config, then run `agentdetox agent snapshot --reset` "
@@ -118,7 +116,7 @@ def _load_baseline() -> dict:
                              f"to hide changes. {_RESET_HINT}")
         return {"version": SCHEMA_VERSION, "files": {}}
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         raise StoreError(f"{path} is damaged ({e}). {_RESET_HINT}") from None
     version = data.get("version", 0) if isinstance(data, dict) else -1
@@ -297,7 +295,7 @@ def _restore(path: Path) -> Path | None:
         shutil.move(str(path), quarantined)
         os.chmod(quarantined, 0o600)
         manifest = qdir / "manifest.json"
-        entries = json.loads(manifest.read_text()) if manifest.exists() else {}
+        entries = json.loads(manifest.read_text(encoding="utf-8")) if manifest.exists() else {}
         entries[quarantined.name] = str(path)
         write_private(manifest, json.dumps(entries, indent=1).encode())
     path.parent.mkdir(parents=True, exist_ok=True)

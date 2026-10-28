@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -42,8 +43,8 @@ def env(tmp_path, monkeypatch):
     mem = claude_memory_dir(project, home)
     mem.mkdir(parents=True)
     (mem / "deploy.md").write_text("---\nname: deploy\ntype: project\n---\n"
-                                   "Deploys go through `make deploy`, which runs the staging checks first.\n")
-    (mem / "release.md").write_text("生产环境部署必须先跑预发布检查。\n")
+                                   "Deploys go through `make deploy`, which runs the staging checks first.\n", encoding="utf-8")
+    (mem / "release.md").write_text("生产环境部署必须先跑预发布检查。\n", encoding="utf-8")
     return home, project, mem
 
 
@@ -132,7 +133,7 @@ def test_agents_without_ask_are_not_blocked(env, fake):
 def test_session_start_reports_out_of_band_contradiction(env, fake):
     _, project, mem = env
     hooks.handle("claude-code", {"hook_event_name": "SessionStart", "cwd": str(project)})
-    (project / "CLAUDE.md").write_text("Deploy with ./deploy.sh --skip-checks; the staging checks were retired.\n")
+    (project / "CLAUDE.md").write_text("Deploy with ./deploy.sh --skip-checks; the staging checks were retired.\n", encoding="utf-8")
     _, out = hooks.handle("claude-code", {"hook_event_name": "SessionStart", "cwd": str(project)})
     notice = json.loads(out)["hookSpecificOutput"]["additionalContext"]
     assert "contradicts" in notice and "ask the user" in notice and "deploy.md" in notice
@@ -140,7 +141,7 @@ def test_session_start_reports_out_of_band_contradiction(env, fake):
 
 def test_scan_consistency(env, monkeypatch, capsys):
     _, project, mem = env
-    (mem / "release2.md").write_text("预发布检查已经取消，部署时直接跳过即可。\n")
+    (mem / "release2.md").write_text("预发布检查已经取消，部署时直接跳过即可。\n", encoding="utf-8")
 
     class Available(FakeNLI):
         def available(self):
@@ -191,18 +192,18 @@ def test_post_tool_use_hands_contradictions_to_the_model_server(env, monkeypatch
                                      "tool_input": {"file_path": str(path)}})
 
     unrelated = mem / "style.md"
-    unrelated.write_text("The user prefers short answers.\n")
+    unrelated.write_text("The user prefers short answers.\n", encoding="utf-8")
     post(unrelated)
     assert jobs == []                          # nothing to compare: the server is never woken
     path = mem / "deploy-new.md"
-    path.write_text("Deploy with ./deploy.sh --skip-checks; the staging checks were retired.\n")
+    path.write_text("Deploy with ./deploy.sh --skip-checks; the staging checks were retired.\n", encoding="utf-8")
     post(path)
     [job] = jobs
     assert job == {"path": str(path), "project": str(project), "old": ""}
     assert hooks.record_contradictions(Path(job["path"]), Path(job["project"]), job["old"]) == 1
     [row] = [r for r in events.read() if r["event"] == "contradiction"]
     assert "skip-checks" in row["new"] and row["probability"] > 0.9
-    assert oct(events.log_path().stat().st_mode & 0o777) == "0o600"
+    assert os.name == "nt" or oct(events.log_path().stat().st_mode & 0o777) == "0o600"   # Windows: ACLs
 
 
 def test_events_command(env, capsys):
@@ -224,6 +225,6 @@ def test_an_allowed_contradiction_is_not_asked_again(env, fake, capsys):
     assert main(["allow", cid]) == 0
     assert "contradicts" in capsys.readouterr().out
     assert pre(project, mem / "deploy-new.md", new) is None
-    (mem / "deploy-new.md").write_text(new)
+    (mem / "deploy-new.md").write_text(new, encoding="utf-8")
     found = consistency_findings(discover(project=project), project, fake)
     assert cid in {finding_id(f) for f in found}      # `agent scan --consistency` names it the same way

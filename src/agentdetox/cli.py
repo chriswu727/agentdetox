@@ -22,7 +22,16 @@ from .scan import scan
 from .trace import trace
 
 
+def _utf8_output() -> None:
+    # Memory is often Chinese or other non-Latin text. Windows encodes piped output (an
+    # agent running `agentdetox status`) as cp1252 and would crash on it; agents read UTF-8.
+    for stream in (sys.stdout, sys.stderr):
+        if (getattr(stream, "encoding", None) or "").lower().replace("-", "") != "utf8" and hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _utf8_output()
     parser = argparse.ArgumentParser(prog="agentdetox", description=__doc__)
     parser.add_argument("--version", action="version", version=f"agentdetox {__version__}")
     sub = parser.add_subparsers(dest="command", required=True, metavar="command")
@@ -236,7 +245,8 @@ def _daemon_command(action: str) -> int:
         print(f"stopped (pid {info['pid']})" if stopped else f"pid {info['pid']} did not stop within 10 s")
         return 0 if stopped else 1
     if info is None:
-        print("not running; it starts on the next memory write that has something to compare")
+        print("not running; it starts on the next memory write that has something to compare" if daemon.SERVER
+              else "not available on Windows yet: each contradiction check loads the model in a background worker")
         return 0
     print(f"running: pid {info['pid']}, started {info['started'].replace('T', ' ')}, model "
           f"{'loaded' if info['model_loaded'] else 'not loaded yet'}, {info['jobs']} job(s), "

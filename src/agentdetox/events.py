@@ -27,8 +27,8 @@ def record(event: str, **fields) -> None:
             with store_lock():
                 if path.exists() and path.stat().st_size > MAX_BYTES:
                     path.replace(path.with_suffix(".jsonl.1"))  # keep one rotated generation
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-        with os.fdopen(fd, "a", encoding="utf-8") as f:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_BINARY", 0), 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8", newline="\n") as f:
             f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "event": event, **fields},
                                ensure_ascii=False) + "\n")
     except OSError:  # TimeoutError from the lock is one too
