@@ -14,7 +14,7 @@ import shlex
 try:
     import fcntl
 except ImportError:
-    fcntl = None
+    fcntl = None  # type: ignore[assignment]
     import msvcrt
 
 WINDOWS = os.name == "nt"

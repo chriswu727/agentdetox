@@ -16,8 +16,15 @@ from .corpus import load_corpus
 from .embed import get_embedder
 from .findings import ID_LENGTH, SEVERITY_ORDER, at_least, finding_id
 from .hooks import main_hook
-from .install import (claude_code_plugin, claude_code_settings, cursor_hooks, default_settings_path, hook_command,
-                      install_claude_code, uninstall_claude_code)
+from .install import (
+    claude_code_plugin,
+    claude_code_settings,
+    cursor_hooks,
+    default_settings_path,
+    hook_command,
+    install_claude_code,
+    uninstall_claude_code,
+)
 from .integrity import StoreError, gc, reset_baseline, restore, snapshot, store_dir, verify
 from .scan import scan
 from .trace import trace

@@ -181,7 +181,8 @@ def report(results: list[dict]) -> str:
             rs = groups.get((kind, lang))
             if not rs:
                 continue
-            pct = lambda key, tool: f"{100 * sum(r[tool][key] for r in rs) / len(rs):.1f}%"
+            def pct(key, tool, rs=rs):
+                return f"{100 * sum(r[tool][key] for r in rs) / len(rs):.1f}%"
             lines.append(f"| {kind} | {lang} | {len(rs)} | {pct('detected', 'agentdetox')} | "
                          f"{pct('blocked', 'agentdetox')} | {pct('detected', 'amg')} | {pct('blocked', 'amg')} |")
     secs = sorted(r["agentdetox"]["seconds"] for r in results if r["channel"] != "out_of_band")

@@ -57,9 +57,9 @@ def memory(body: str) -> str:
 def build(args) -> list[dict]:
     dev = args.split == "dev"
     data = args.data
-    paras = [json.loads(l)["text"] for l in (data / "squad_clean.jsonl").read_text().splitlines() if l]
+    paras = [json.loads(line)["text"] for line in (data / "squad_clean.jsonl").read_text().splitlines() if line]
     paras = paras[:DEV_PARAGRAPHS] if dev else paras[DEV_PARAGRAPHS:]
-    payloads = [json.loads(l)["text"] for l in (data / "injections.jsonl").read_text().splitlines() if l]
+    payloads = [json.loads(line)["text"] for line in (data / "injections.jsonl").read_text().splitlines() if line]
     payloads = payloads[:DEV_PAYLOADS] if dev else payloads[DEV_PAYLOADS:]
     facts = []
     for ds in ("nq", "hotpotqa", "msmarco"):
@@ -117,7 +117,7 @@ def transcript(path: Path, case: dict) -> None:
         {"type": "user", "message": {"role": "user", "content": [
             {"type": "tool_result", "tool_use_id": "toolu_1", "content": case["doc"]}]}},
     ]
-    path.write_text("\n".join(json.dumps(l, ensure_ascii=False) for l in lines) + "\n")
+    path.write_text("\n".join(json.dumps(rec, ensure_ascii=False) for rec in lines) + "\n")
 
 
 def run(case: dict) -> dict:
@@ -152,7 +152,8 @@ def report(results: list[dict]) -> str:
         for lang in ("en", "zh"):
             rs = groups.get((kind, lang))
             if rs:
-                pct = lambda f: f"{100 * sum(f(r) for r in rs) / len(rs):.1f}%"
+                def pct(f, rs=rs):
+                    return f"{100 * sum(f(r) for r in rs) / len(rs):.1f}%"
                 lines.append(f"| {kind} | {lang} | {len(rs)} | {pct(lambda r: r['decision'] != 'allow')} | "
                              f"{pct(lambda r: r['provenance'])} | {pct(lambda r: r['rules'])} |")
     return "\n".join(lines)

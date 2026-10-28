@@ -9,6 +9,7 @@ description = "Poisoning protection for what AI agents know: detect, block and c
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
+authors = [{name = "Yichen Wu"}]
 requires-python = ">=3.11"
 dependencies = ["numpy>=1.24"]
 keywords = ["ai-agents", "agent-memory", "claude-code", "rag", "llm", "security", "prompt-injection",
@@ -35,7 +36,7 @@ Changelog = "https://github.com/chriswu727/agentdetox/blob/main/CHANGELOG.md"
 [project.optional-dependencies]
 st = ["sentence-transformers>=2.2"]
 nli = ["transformers>=4.40", "torch>=2.1"]
-dev = ["pytest>=7"]
+dev = ["pytest>=7", "ruff>=0.15", "mypy>=1.18"]
 
 [project.scripts]
 agentdetox = "agentdetox.cli:main"
@@ -53,3 +54,21 @@ only-include = ["src", "tests", "CHANGELOG.md", "LICENSE", "README.md", "pyproje
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.mypy]
+python_version = "3.11"
+# The hook path's contracts, typed strictly first; the rest of the package follows.
+files = ["src/agentdetox/engine.py", "src/agentdetox/policy.py", "src/agentdetox/adapters.py",
+         "src/agentdetox/context.py", "src/agentdetox/shell.py", "src/agentdetox/compat.py",
+         "src/agentdetox/settings.py", "src/agentdetox/hooks.py", "src/agentdetox/session.py"]
+follow_imports = "silent"
+check_untyped_defs = true
+warn_unused_ignores = true
+no_implicit_optional = true

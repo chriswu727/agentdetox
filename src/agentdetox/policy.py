@@ -15,8 +15,7 @@ import os
 from dataclasses import dataclass, field
 
 from .allowlist import Flag
-from .engine import (CONTRADICTION, COPIED, GUARDRAILS, OWN_STATE, PLANTED, SHELL_WRITE, SUSPICIOUS, USER_WRITTEN,
-                     Signal)
+from .engine import CONTRADICTION, COPIED, GUARDRAILS, OWN_STATE, PLANTED, SHELL_WRITE, SUSPICIOUS, USER_WRITTEN, Signal
 
 _DENY_HINT = {OWN_STATE: "Make this change yourself.",
               GUARDRAILS: "Make this change yourself, or set AGENTDETOX_ALLOW_CONFIG_WRITES=1."}
