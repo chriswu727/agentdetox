@@ -1,0 +1,146 @@
+"""Was a memory write copied from untrusted input the agent just read?
+
+Memory-poisoning attacks such as MemGhost work by getting text from a web page, email or
+document into the agent's memory: the user asks for a summary, the injected text asks
+the agent to remember something. Claude Code's hooks receive the session transcript, so
+a write can be compared with the tool output that preceded it. Copied text the user did
+not ask to keep is worth a question. Paraphrased text is not caught here.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import unicodedata
+from dataclasses import dataclass
+from pathlib import Path
+
+# Tools whose output can carry text an attacker controls: anything fetched, read, run
+# or returned by another agent. MCP tools bring in mail, chat, tickets and the like.
+UNTRUSTED_TOOLS = {"WebFetch", "WebSearch", "Bash", "Read", "Grep", "NotebookRead", "Agent", "Task", "BashOutput"}
+UNTRUSTED_PREFIXES = ("mcp__",)
+
+COPY_THRESHOLD = 0.5
+SHINGLE = 6
+HUMAN_TURNS = 3
+TAIL_BYTES = 4_000_000
+
+_TOKEN_RE = re.compile(r"[a-z0-9_]+|[一-鿿]")
+_FRONTMATTER_RE = re.compile(r"\A---\n.*?\n---\n", re.S)
+_REMEMBER_RE = re.compile(
+    r"\b(remember|memori[sz]e|keep in mind|note (this|that|it) down|make a note|take note"
+    r"|(save|store|add|write|put|record)\b[^.\n]{0,80}\b(memory|memories|notes?|claude\.md)\b)"
+    r"|记住|记下|记一下|记得|存到记忆|保存到记忆|写进记忆|加到记忆|备忘",
+    re.I,
+)
+
+
+@dataclass
+class Source:
+    tool: str
+    text: str
+
+
+@dataclass
+class Transcript:
+    sources: list[Source]
+    human: list[str]  # most recent last
+
+
+@dataclass
+class CopyFinding:
+    tool: str
+    fraction: float
+    excerpt: str
+
+
+def read_transcript(path: str | Path, human_turns: int = HUMAN_TURNS, tail_bytes: int = TAIL_BYTES) -> Transcript:
+    """Untrusted tool output from the last `human_turns` user prompts, and those prompts."""
+    path = Path(path)
+    with path.open("rb") as f:
+        f.seek(0, 2)
+        size = f.tell()
+        f.seek(max(0, size - tail_bytes))
+        raw = f.read().decode("utf-8", errors="replace")
+    lines = raw.splitlines()
+    if size > tail_bytes:
+        lines = lines[1:]  # the first line was cut mid-record
+    names: dict[str, str] = {}
+    turns: list[tuple[str, list[Source]]] = []
+    for line in lines:
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        msg = rec.get("message") or {}
+        content = msg.get("content")
+        if rec.get("type") == "assistant" and isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    names[block.get("id", "")] = block.get("name", "")
+        elif rec.get("type") == "user" and not rec.get("isMeta"):
+            if isinstance(content, str):
+                turns.append((content, []))
+            elif isinstance(content, list):
+                results = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_result"]
+                if not results:
+                    text = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
+                    turns.append((text, []))
+                for b in results:
+                    tool = names.get(b.get("tool_use_id", ""), "")
+                    if not _untrusted(tool):
+                        continue
+                    if not turns:
+                        turns.append(("", []))
+                    turns[-1][1].append(Source(tool, _result_text(b.get("content"))))
+    recent = turns[-human_turns:]
+    return Transcript([s for _, srcs in recent for s in srcs], [h for h, _ in recent])
+
+
+def _untrusted(tool: str) -> bool:
+    return tool in UNTRUSTED_TOOLS or tool.startswith(UNTRUSTED_PREFIXES)
+
+
+def _result_text(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
+    return ""
+
+
+def _tokens(text: str) -> list[str]:
+    return _TOKEN_RE.findall(unicodedata.normalize("NFKC", text).lower())
+
+
+def _shingles(tokens: list[str], n: int = SHINGLE) -> set[tuple[str, ...]]:
+    return {tuple(tokens[i : i + n]) for i in range(len(tokens) - n + 1)}
+
+
+def asked_to_remember(human: list[str]) -> bool:
+    return bool(human) and bool(_REMEMBER_RE.search(human[-1]))
+
+
+def copied_from_untrusted(new_text: str, transcript: Transcript,
+                          threshold: float | None = None) -> CopyFinding | None:
+    """The tool output a write was mostly copied from, unless the user asked to remember it
+    or supplied the text themselves."""
+    threshold = COPY_THRESHOLD if threshold is None else threshold
+    body = _FRONTMATTER_RE.sub("", new_text)
+    tokens = _tokens(body)
+    new = _shingles(tokens)
+    if not new or not transcript.sources or asked_to_remember(transcript.human):
+        return None
+    from_user = set().union(*(_shingles(_tokens(h)) for h in transcript.human)) if transcript.human else set()
+    best: CopyFinding | None = None
+    for src in transcript.sources:
+        shared = (new & _shingles(_tokens(src.text))) - from_user
+        fraction = len(shared) / len(new)
+        if fraction >= threshold and (best is None or fraction > best.fraction):
+            best = CopyFinding(src.tool, fraction, _excerpt(body, shared))
+    return best
+
+
+def _excerpt(body: str, shared: set[tuple[str, ...]]) -> str:
+    words = " ".join(next(iter(shared))) if shared else ""
+    return words[:120] or body.strip()[:120]

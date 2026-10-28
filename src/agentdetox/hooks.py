@@ -24,6 +24,7 @@ from .consistency import NLI, Contradiction, find_contradictions, statements, st
 from .context import ContextFile, classify, discover, home_dir, related_files
 from .findings import Finding
 from .integrity import baseline_paths, snapshot, snapshot_text, verify
+from .provenance import CopyFinding, copied_from_untrusted, read_transcript
 from .persistence import guarded_sections
 
 AGENTS_WITH_ASK = {"claude-code"}
@@ -67,7 +68,9 @@ def _pre_tool_use(agent: str, payload: dict, project: Path) -> Decision:
     tool_input = payload.get("tool_input") or {}
     if tool.lower() in SHELL_TOOLS:
         return _check_shell(agent, tool_input, project)
-    decisions = [_check_write(agent, path, old, new, project) for path, old, new in _planned_writes(tool, tool_input, project)]
+    transcript = payload.get("transcript_path") if agent == "claude-code" else None
+    decisions = [_check_write(agent, path, old, new, project, transcript)
+                 for path, old, new in _planned_writes(tool, tool_input, project)]
     for action in ("deny", "ask"):
         hits = [d for d in decisions if d.action == action]
         if hits:
@@ -125,7 +128,8 @@ def _patch_writes(patch: str, project: Path) -> list[tuple[Path, str, str]]:
     return out
 
 
-def _check_write(agent: str, path: Path, old: str, new: str, project: Path) -> Decision:
+def _check_write(agent: str, path: Path, old: str, new: str, project: Path,
+                 transcript: str | None = None) -> Decision:
     cf = classify(path, project=project)
     if cf is None:
         return Decision("allow")
@@ -146,12 +150,24 @@ def _check_write(agent: str, path: Path, old: str, new: str, project: Path) -> D
     if worst == "high":
         return Decision("deny", _reason(cf, findings))
     reasons = [_reason(cf, findings, "flagged")] if worst == "medium" else []
+    copied = _copied(cf, added, transcript)
+    if copied:
+        reasons.append(
+            f"AgentDetox: {copied.fraction:.0%} of this {cf.kind} write is copied from {copied.tool} output the agent "
+            f'just read ("{copied.excerpt[:80]}..."), and the user did not ask to remember it. Text planted in web '
+            "pages, emails and files reaches agent memory this way.")
     conflicts = _contradictions(cf, old, new, project)
     if conflicts:
         reasons.append(_conflict_reason(cf, conflicts))
     if reasons and agent in AGENTS_WITH_ASK:
         return Decision("ask", " ".join(reasons))
     return Decision("allow")
+
+
+def _copied(cf: ContextFile, added: str, transcript: str | None) -> CopyFinding | None:
+    if cf.kind not in ("memory", "instructions", "skill") or not transcript or not Path(transcript).is_file():
+        return None
+    return copied_from_untrusted(added, read_transcript(transcript))
 
 
 def _contradictions(cf: ContextFile, old_text: str, new_text: str, project: Path) -> list[Contradiction]:

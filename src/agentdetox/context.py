@@ -178,10 +178,21 @@ def classify(path: Path, agents: list[str] | None = None, project: Path | None =
     return None
 
 
+_SLUG_MAX = 200
+
+
 def claude_memory_dir(project: Path, home: Path | None = None) -> Path:
-    # Claude Code names a project's memory dir after its path with every
-    # non-alphanumeric character replaced by "-".
-    return (home or home_dir()) / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(project)) / "memory"
+    # Claude Code names a project's dir after its path with every non-alphanumeric
+    # character replaced by "-"; names over 200 characters are cut to 200 and given a
+    # "-" plus 6-character hash suffix, which can only be found by looking.
+    root = (home or home_dir()) / ".claude" / "projects"
+    slug = re.sub(r"[^A-Za-z0-9]", "-", str(project))
+    if len(slug) > _SLUG_MAX:
+        prefix = slug[:_SLUG_MAX] + "-"
+        matches = [p for p in root.glob(glob.escape(prefix) + "*") if len(p.name) == len(prefix) + 6]
+        if len(matches) == 1:
+            return matches[0] / "memory"
+    return root / slug / "memory"
 
 
 def related_files(cf: ContextFile, project: Path | None, home: Path | None = None) -> list[Path]:
