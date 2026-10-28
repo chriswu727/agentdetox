@@ -18,10 +18,13 @@ fact contains no attack string at all.
 ## Protect an agent
 
 ```bash
-pip install 'agentdetox @ git+https://github.com/chriswu727/agentdetox'
+uv tool install agentdetox                # or: pipx install agentdetox
 agentdetox install claude-code            # prints the settings change; add --apply to write it
 agentdetox agent scan                     # scan memory, rules, skills and config now
 ```
+
+A tool install keeps AgentDetox in an environment of its own, which the hooks call by its full
+path; `pip install agentdetox` works too.
 
 Once installed, three hooks run inside Claude Code:
 
@@ -51,7 +54,7 @@ instead of quietly trusting whatever is on disk, until you check and run
 | OpenClaw | AGENTS, SOUL, USER, IDENTITY, BOOT, MEMORY, daily memory, skills, `openclaw.json`, extensions | not yet (needs a plugin) | yes |
 | WorkBuddy | `~/.workbuddy` memory and identity files (paths unverified) | no public hook API | yes |
 
-**Contradiction detection** (optional, `pip install 'agentdetox[nli]'` then `agentdetox fetch-models`):
+**Contradiction detection** (optional: `uv tool install 'agentdetox[nli]'`, then `agentdetox fetch-models`):
 a memory write that contradicts what the agent already knows is a common sign of a fabricated fact.
 It uses a multilingual NLI model (mDeBERTa-v3, about 560 MB). **By default it records instead of
 asking**: after a write, the hook hands the check to a background model server and returns
@@ -63,7 +66,7 @@ real memory the model still misreads fragments, which is why it does not ask;
 `agentdetox config contradiction ask` makes it ask (about 0.5 s per related write once the server
 is up, 3 s for the first). Windows has no model server yet: each related write starts a background
 worker that loads the model (about 6 s), one worker at a time, and ask mode loads it inside the hook.
-See [bench/MEMORY_BENCHMARK.md](bench/MEMORY_BENCHMARK.md).
+See [bench/MEMORY_BENCHMARK.md](https://github.com/chriswu727/agentdetox/blob/main/bench/MEMORY_BENCHMARK.md).
 
 **Provenance check** (Claude Code): a memory write that is mostly copied from web pages, MCP data, command
 output or files the agent just read asks for approval unless you asked it to remember. This is how
@@ -114,7 +117,7 @@ reports the removal.
 ## Scan a knowledge base
 
 ```bash
-pip install 'agentdetox[st] @ git+https://github.com/chriswu727/agentdetox'   # drop [st] for a numpy-only install
+pip install 'agentdetox[st]'                # drop [st] for a numpy-only install
 agentdetox scan ./knowledge_base            # directory of .txt/.md/.html, or a .jsonl export
 agentdetox trace kb.jsonl -q "Who founded Acme?" -a "Bob Smith"
 ```

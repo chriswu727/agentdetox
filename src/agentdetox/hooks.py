@@ -251,7 +251,7 @@ def _comparison(cf: ContextFile, old_text: str, new_text: str,
 
 def _contradictions(cf: ContextFile, old_text: str, new_text: str, project: Path, nli=None) -> list[Contradiction]:
     found = _comparison(cf, old_text, new_text, project)
-    if found is None or not NLI.installed():
+    if found is None:
         return []
     allowed = allowlist.entries()
     return [c for c in find_contradictions(*found, nli or _nli) if contradiction_flag(c).id not in allowed]
