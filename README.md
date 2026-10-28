@@ -208,7 +208,8 @@ other scanners:
 ## Development
 
 ```bash
-./scripts/update.sh      # run the tests, update the installed agentdetox, then `agentdetox doctor`
+./scripts/check.sh       # lint, type checks and tests: what every change must pass
+./scripts/update.sh      # the checks, then update the installed agentdetox, then `agentdetox doctor`
 ```
 
 How a hook call flows: `adapters.py` turns an agent's event into a planned write or a shell

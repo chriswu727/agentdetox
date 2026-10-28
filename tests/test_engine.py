@@ -5,8 +5,7 @@ import json
 
 from agentdetox import adapters
 from agentdetox.context import claude_memory_dir
-from agentdetox.engine import (GUARDRAILS, OWN_STATE, PLANTED, SHELL_WRITE, SUSPICIOUS, Write, check_command,
-                               check_write)
+from agentdetox.engine import GUARDRAILS, OWN_STATE, PLANTED, SHELL_WRITE, SUSPICIOUS, Write, check_command, check_write
 from agentdetox.integrity import store_dir
 from agentdetox.policy import Decision
 

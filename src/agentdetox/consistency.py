@@ -12,10 +12,9 @@ from __future__ import annotations
 import importlib.util
 import os
 import re
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
-
-import zlib
 
 import numpy as np
 
@@ -167,8 +166,8 @@ class NLI:
             self._tok = AutoTokenizer.from_pretrained(self.model_name, local_files_only=self.local_only)
             self._model = AutoModelForSequenceClassification.from_pretrained(
                 self.model_name, local_files_only=self.local_only).eval()
-            labels = {i: l.lower() for i, l in self._model.config.id2label.items()}
-            self._contra = next(i for i, l in labels.items() if l.startswith("contra"))
+            labels = {i: name.lower() for i, name in self._model.config.id2label.items()}
+            self._contra = next(i for i, name in labels.items() if name.startswith("contra"))
         return self._model
 
     def contradiction(self, pairs: list[tuple[str, str]], batch: int = 16) -> list[float]:

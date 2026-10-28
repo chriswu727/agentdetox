@@ -1,7 +1,7 @@
 import pytest
 
-from agentdetox.corpus import Doc
 from agentdetox.agentscan import scan_text
+from agentdetox.corpus import Doc
 from agentdetox.hidden import decode_tag_chars, scan_doc
 
 

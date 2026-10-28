@@ -16,8 +16,15 @@ from pathlib import Path
 from . import allowlist, daemon, events, shell
 from .agentscan import read_text, scan_text
 from .allowlist import Flag, contradiction_flag, copy_flag, finding_flag, source_id
-from .consistency import (NLI, Contradiction, Statement, candidate_pairs, find_contradictions, statements,
-                          store_statements)
+from .consistency import (
+    NLI,
+    Contradiction,
+    Statement,
+    candidate_pairs,
+    find_contradictions,
+    statements,
+    store_statements,
+)
 from .context import ContextFile, classify, related_files, short_path
 from .findings import Finding
 from .integrity import snapshot, snapshot_text, store_dir

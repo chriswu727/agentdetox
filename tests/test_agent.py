@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from agentdetox.cli import main
-from agentdetox.context import claude_memory_dir, classify, discover
+from agentdetox.context import classify, claude_memory_dir, discover
 from agentdetox.install import default_settings_path
 from agentdetox.persistence import text_findings
 

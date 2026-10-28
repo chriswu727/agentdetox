@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the tests, then update the agentdetox that installed agent hooks call.
+# Run the checks, then update the agentdetox that installed agent hooks call.
 # Hooks pick up the new build on their next call; a broken build would make every
 # agent tool call report a hook error, hence the tests first.
 set -euo pipefail
@@ -11,7 +11,7 @@ if [ ! -x .venv/bin/pytest ]; then
   uv pip install --quiet --python .venv/bin/python -e ".[dev,nli]"
 fi
 
-.venv/bin/pytest -q -p no:warnings
+scripts/check.sh
 uv tool install --quiet --reinstall --python 3.12 ".[nli]"
 bin="$(uv tool dir --bin)/agentdetox"
 # A model server still running the old build would otherwise serve until its next job.
