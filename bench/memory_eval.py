@@ -205,6 +205,8 @@ def main() -> None:
     stores = json.loads(args.stores.read_text(encoding="utf-8"))["stores"]
     by_id = {s["id"]: s for s in stores}
     cases = build_cases(stores, args.data, args.per_dataset, args.split)
+    # Measure what contradiction detection can catch, so run it in ask mode.
+    os.environ["AGENTDETOX_CONTRADICTION"] = "ask"
     if not hooks._nli():
         raise SystemExit("the NLI model is not available; run `agentdetox fetch-models` first")
     results = []

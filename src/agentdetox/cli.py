@@ -6,14 +6,14 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from . import __version__, doctor
+from . import __version__, doctor, events
 from .agentscan import consistency_findings, scan_context
 from .consistency import NLI, NLI_MODEL
 from .context import PROFILES, discover, home_dir
 from .corpus import load_corpus
 from .embed import get_embedder
 from .findings import SEVERITY_ORDER, at_least
-from .hooks import main_hook
+from .hooks import main_hook, record_contradictions
 from .install import cursor_hooks, default_settings_path, hook_command, install_claude_code, uninstall_claude_code
 from .integrity import restore, snapshot, store_dir, verify
 from .scan import scan
@@ -87,6 +87,15 @@ def main(argv: list[str] | None = None) -> int:
     p_uninstall.add_argument("--scope", choices=["user", "project"], default="user")
     p_uninstall.add_argument("--project", type=Path, default=Path.cwd())
 
+    p_events = sub.add_parser("events", help="show what AgentDetox recently asked, blocked, noticed or recorded")
+    p_events.add_argument("-n", type=int, default=20, help="number of events (default 20)")
+    p_events.add_argument("--format", choices=["text", "json"], default="text")
+
+    p_worker = sub.add_parser("_record-contradictions", help=argparse.SUPPRESS)
+    p_worker.add_argument("path", type=Path)
+    p_worker.add_argument("project", type=Path)
+    p_worker.add_argument("old_file", type=Path)
+
     p_doctor = sub.add_parser("doctor", help="check that hooks are installed, current and runnable (read-only)")
     p_doctor.add_argument("--project", type=Path, default=Path.cwd())
 
@@ -99,6 +108,22 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         NLI(local_only=False).contradiction([("The sky is blue.", "The sky is green.")])
         print(f"{NLI_MODEL} is ready; hooks now check memory writes for contradictions")
+        return 0
+    if args.command == "_record-contradictions":
+        record_contradictions(args.path, args.project, args.old_file)
+        return 0
+    if args.command == "events":
+        rows = events.read(args.n)
+        if args.format == "json":
+            print(json.dumps(rows, ensure_ascii=False, indent=2))
+        else:
+            for r in rows:
+                detail = r.get("decision") or ""
+                text = r.get("reason") or r.get("notice") or (f'"{r.get("new", "")}" vs "{r.get("existing", "")}"'
+                                                               if r["event"] == "contradiction" else "")
+                print(f"{r['ts']}  {r['event']:<15} {detail:<5} {' '.join(str(text).split())[:150]}")
+            if not rows:
+                print("no events yet")
         return 0
     if args.command == "doctor":
         checks = doctor.run(args.project.expanduser().absolute())

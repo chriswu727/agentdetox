@@ -15,15 +15,18 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import events
 from .agentscan import read_text, scan_text, scan_context
 from .consistency import NLI, Contradiction, find_contradictions, statements, store_statements
 from .context import ContextFile, classify, discover, home_dir, related_files
 from .findings import Finding
-from .integrity import baseline_paths, snapshot, snapshot_text, verify
+from .integrity import private_dir, baseline_paths, snapshot, snapshot_text, store_dir, verify
 from .provenance import CopyFinding, copied_from_untrusted, read_transcript
 from .persistence import guarded_sections
 
@@ -44,12 +47,19 @@ def handle(agent: str, payload: dict) -> tuple[int, str]:
         event = str(payload.get("hook_event_name", "")).lower()
         project = _project_root(payload)
         if event in ("pretooluse",):
-            return 0, _render_pre(agent, _pre_tool_use(agent, payload, project))
+            decision = _pre_tool_use(agent, payload, project)
+            if decision.action != "allow":
+                events.record("write_checked", agent=agent, decision=decision.action,
+                              tool=payload.get("tool_name"), reason=decision.reason[:500])
+            return 0, _render_pre(agent, decision)
         if event in ("posttooluse", "afterfileedit"):
             _post_tool_use(agent, payload, project)
             return 0, _render_allow(agent)
         if event == "sessionstart":
-            return 0, _render_session(agent, _session_start(agent, project))
+            notice = _session_start(agent, project)
+            if notice:
+                events.record("session_notice", agent=agent, project=str(project), notice=notice[:1500])
+            return 0, _render_session(agent, notice)
         return 0, _render_allow(agent)
     except Exception as e:  # noqa: BLE001
         print(f"agentdetox: hook error ignored (failing open): {type(e).__name__}: {e}", file=sys.stderr)
@@ -156,7 +166,7 @@ def _check_write(agent: str, path: Path, old: str, new: str, project: Path,
             f"AgentDetox: {copied.fraction:.0%} of this {cf.kind} write is copied from {copied.tool} output the agent "
             f'just read ("{copied.excerpt[:80]}..."), and the user did not ask to remember it. Text planted in web '
             "pages, emails and files reaches agent memory this way.")
-    conflicts = _contradictions(cf, old, new, project)
+    conflicts = _contradictions(cf, old, new, project) if contradiction_mode() == "ask" else []
     if conflicts:
         reasons.append(_conflict_reason(cf, conflicts))
     if reasons and agent in AGENTS_WITH_ASK:
@@ -315,7 +325,47 @@ def _post_tool_use(agent: str, payload: dict, project: Path) -> None:
         path = path if path.is_absolute() else project / path
         cf = classify(path, project=project)
         if cf and path.is_file() and _worst(scan_text(str(path), str(path), read_text(path), cf.kind)) != "high":
+            old = snapshot_text(str(path)) or ""
             snapshot([cf], roots=[])
+            if contradiction_mode() == "record":
+                _record_in_background(cf, old, project)
+
+
+def contradiction_mode() -> str:
+    """ask: contradictions need approval; record: logged in the background, never block;
+    off. On real memory the NLI check misreads list items and fragments taken out of
+    context, so it records by default until that improves."""
+    mode = os.environ.get("AGENTDETOX_CONTRADICTION", "record")
+    return mode if mode in ("ask", "record", "off") else "record"
+
+
+def _record_in_background(cf: ContextFile, old: str, project: Path) -> None:
+    """Run the slow NLI check after the hook has returned, so recording costs no latency."""
+    if cf.kind not in ("memory", "instructions") or not NLI.installed():
+        return
+    pending = private_dir(store_dir() / "pending")
+    fd, old_file = tempfile.mkstemp(dir=pending, suffix=".txt")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(old)
+    subprocess.Popen([sys.executable, "-m", "agentdetox", "_record-contradictions", str(cf.path), str(project), old_file],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
+
+
+def record_contradictions(path: Path, project: Path, old_file: Path) -> int:
+    """Background worker: log contradictions between a written file and what was there."""
+    try:
+        old = old_file.read_text(encoding="utf-8")
+    finally:
+        old_file.unlink(missing_ok=True)
+    cf = classify(path, project=project)
+    if cf is None or not path.is_file():
+        return 0
+    conflicts = _contradictions(cf, old, read_text(path), project)
+    for c in conflicts:
+        events.record("contradiction", path=str(path), new=c.new.text[:300], existing=c.existing.text[:300],
+                      existing_source=c.existing.source, probability=round(c.probability, 3))
+    return len(conflicts)
 
 
 # SessionStart -------------------------------------------------------------------------
@@ -343,7 +393,10 @@ def _session_start(agent: str, project: Path) -> str:
             if c.status == "deleted" or cf is None or c.path in flagged:
                 continue
             text = read_text(cf.path)
-            found = _contradictions(cf, snapshot_text(c.path) or "", text, project)
+            mode = contradiction_mode()
+            if mode == "record":
+                _record_in_background(cf, snapshot_text(c.path) or "", project)
+            found = _contradictions(cf, snapshot_text(c.path) or "", text, project) if mode == "ask" else []
             if found:
                 conflicts += found
                 flagged.add(c.path)

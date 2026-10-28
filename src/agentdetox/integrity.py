@@ -35,7 +35,7 @@ def store_dir() -> Path:
     return Path(os.environ.get("AGENTDETOX_HOME") or Path.home() / ".agentdetox")
 
 
-def _private_dir(path: Path) -> Path:
+def private_dir(path: Path) -> Path:
     # Snapshots copy files such as ~/.claude.json and settings.json that can hold
     # tokens or API keys; the copies must not be more readable than the originals.
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -63,7 +63,7 @@ def baseline_paths() -> set[str]:
 
 
 def _save_baseline(baseline: dict) -> None:
-    tmp = _private_dir(store_dir()) / "baseline.json.tmp"
+    tmp = private_dir(store_dir()) / "baseline.json.tmp"
     _write_private(tmp, json.dumps(baseline, indent=1, sort_keys=True).encode())
     tmp.replace(store_dir() / "baseline.json")
 
@@ -72,8 +72,8 @@ def snapshot(files: list[ContextFile], roots: list[Path]) -> int:
     """Record the current state of `files` as trusted. Entries under `roots` that no
     longer exist are dropped; entries for other projects are kept."""
     baseline = _load_baseline()
-    _private_dir(store_dir())
-    objects = _private_dir(store_dir() / "objects")
+    private_dir(store_dir())
+    objects = private_dir(store_dir() / "objects")
     root_strs = [str(r) + os.sep for r in roots]
     baseline["files"] = {
         p: e for p, e in baseline["files"].items()
@@ -187,8 +187,8 @@ def restore(path: Path) -> Path | None:
     obj = store_dir() / "objects" / entry["sha256"]
     quarantined = None
     if path.exists():
-        _private_dir(store_dir() / "quarantine")
-        qdir = _private_dir(store_dir() / "quarantine" / time.strftime("%Y%m%d-%H%M%S"))
+        private_dir(store_dir() / "quarantine")
+        qdir = private_dir(store_dir() / "quarantine" / time.strftime("%Y%m%d-%H%M%S"))
         # Flattening the full path overflows the 255-byte name limit for deep paths
         # such as Claude Code's per-project memory dirs, so use a short hashed name and
         # record the original location in a manifest.
