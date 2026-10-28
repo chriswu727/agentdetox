@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import difflib
 import functools
+import hashlib
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import allowlist, daemon, events, shell
+from . import allowlist, daemon, events, ledger, shell
 from .agentscan import read_text, scan_text
 from .allowlist import Flag, contradiction_flag, copy_flag, finding_flag, source_id
 from .consistency import (
@@ -27,9 +28,9 @@ from .consistency import (
 )
 from .context import ContextFile, classify, related_files, short_path
 from .findings import Finding
-from .integrity import snapshot, snapshot_text, store_dir
+from .integrity import object_text, snapshot, snapshot_digest, store_dir
 from .persistence import guard_changes, guarded_sections
-from .provenance import CopyFinding, Transcript, copied_from_untrusted, read_transcript, typed_by_user
+from .provenance import CopyFinding, Transcript, copied_from_untrusted, origin_of, read_transcript, typed_by_user
 
 # What a signal is about. The last three are also the names of the user's settings.
 PLANTED = "planted"          # a clear-cut planted instruction
@@ -123,25 +124,34 @@ def check_command(command: str, project: Path) -> list[Signal]:
     return []
 
 
-def after_write(paths: list[Path], project: Path, record_contradictions: bool, transcript: str | None = None) -> None:
+def after_write(paths: list[Path], project: Path, record_contradictions: bool, transcript: str | None = None,
+                agent: str = "", session: str = "", tool: str = "") -> None:
     """Re-trust context files the agent just wrote through its own tools, which the write
-    check saw, so the snapshot only lags behind writes that bypassed them. A clear-cut
-    finding the user wrote themselves does not stop this: the write ran, so they approved
-    it when asked."""
-    human = None
+    check saw, so the snapshot only lags behind writes that bypassed them, and record each
+    change in the ledger with where it came from. A clear-cut finding the user wrote
+    themselves does not stop this: the write ran, so they approved it when asked."""
+
+    @functools.cache
+    def recent() -> Transcript | None:
+        return read_transcript(transcript) if transcript and Path(transcript).is_file() else None
+
     for path in paths:
         cf = classify(path, project=project)
         if cf is None or not path.is_file():
             continue
         high = [f for f in allowlist.unsuppressed(scan_text(str(path), str(path), read_text(path), cf.kind))
                 if f.severity == "high"]
-        if high:
-            if human is None:
-                human = read_transcript(transcript).human if transcript and Path(transcript).is_file() else []
-            if not (human and all(typed_by_user(f, human) for f in high)):
-                continue
-        old = snapshot_text(str(path)) or ""
+        t = recent()
+        if high and not (t and t.human and all(typed_by_user(f, t.human) for f in high)):
+            continue
+        before = snapshot_digest(str(path))
+        old = object_text(before) if before else ""
+        data = path.read_bytes()
         snapshot([cf], roots=[])
+        if hashlib.sha256(data).hexdigest() != before:
+            origin, source, requested = origin_of(_added_text(old, data.decode("utf-8", errors="replace")), t)
+            ledger.record(path, origin, before, data, agent=agent, session=session, tool=tool, source=source,
+                          requested=requested)
         if record_contradictions:
             record_in_background(cf, old, project)
 

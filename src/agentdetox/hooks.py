@@ -36,7 +36,8 @@ def handle(agent: str, payload: dict) -> tuple[int, str]:
         if event == "post":
             engine.after_write(adapter.written(payload, project), project,
                                record_contradictions=settings.mode("contradiction") == "record",
-                               transcript=adapter.transcript(payload))
+                               transcript=adapter.transcript(payload), agent=adapter.name,
+                               session=adapter.session(payload), tool=str(payload.get("tool_name") or ""))
             return 0, adapter.render_allow()
         if event == "session":
             notice = session.notice(project, settings.mode("contradiction"))

@@ -163,6 +163,32 @@ def copied_from_untrusted(new_text: str, transcript: Transcript,
     return best
 
 
+def origin_of(text: str, transcript: Transcript | None) -> tuple[str, str, bool]:
+    """Where text the agent just wrote came from, for the ledger: ("you", "", requested) when
+    it is mostly the user's own words, ("copied", source, requested) when it is mostly copied
+    from one input the agent read, else ("agent", "", requested). Unlike the copy check, a
+    request to remember does not hide the source: the ledger records what happened."""
+    if transcript is None:
+        return "agent", "", False
+    requested = asked_to_remember(transcript.human)
+    tokens = _tokens(_FRONTMATTER_RE.sub("", text))
+    if not tokens:
+        return "agent", "", requested
+    n = min(SHINGLE, len(tokens))  # short text is matched whole
+    new = _shingles(tokens, n)
+    said = set().union(*(_shingles(_tokens(h), n) for h in transcript.human))
+    if len(new & said) >= len(new) / 2:
+        return "you", "", requested
+    best, source = 0.0, None
+    for src in transcript.sources:
+        fraction = len((new & _shingles(_tokens(src.text), n)) - said) / len(new)
+        if fraction > best:
+            best, source = fraction, src
+    if source is not None and best >= COPY_THRESHOLD:
+        return "copied", f"{source.tool} {source.origin}".strip()[:200], requested
+    return "agent", "", requested
+
+
 def typed_by_user(finding: Finding, human: list[str]) -> bool:
     """Whether the risky text a rule matched is in the user's own recent messages, so the
     user, not something the agent read, put it there. Only rule and config-command

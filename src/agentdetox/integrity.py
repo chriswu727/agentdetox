@@ -226,7 +226,7 @@ def verify(files: list[ContextFile], roots: list[Path]) -> tuple[list[Change], l
             findings.extend(scan_text(path, path, text, cf.kind))
         else:
             changes.append(Change(path, "modified", cf.kind))
-            old = _object_text(entry["sha256"])
+            old = object_text(entry["sha256"])
             # Only newly added lines can carry a new payload; scanning just those keeps
             # long-lived benign content from re-alerting on every edit.
             added = "\n".join(
@@ -266,10 +266,26 @@ def _config_changes(doc_id: str, path: Path, new: str, old_sections: dict) -> li
 
 def snapshot_text(path: str) -> str | None:
     entry = _load_baseline()["files"].get(path)
-    return None if entry is None else _object_text(entry["sha256"])
+    return None if entry is None else object_text(entry["sha256"])
 
 
-def _object_text(digest: str) -> str:
+def snapshot_digest(path: str) -> str | None:
+    """Which stored copy is the trusted version of `path`."""
+    entry = _load_baseline()["files"].get(path)
+    return None if entry is None else entry["sha256"]
+
+
+def store_object(data: bytes) -> str:
+    """Keep a copy of `data` in the store, named by its hash, and return the name."""
+    private_dir(store_dir())
+    digest = _sha(data)
+    obj = private_dir(store_dir() / "objects") / digest
+    if not obj.exists():
+        write_private(obj, data)
+    return digest
+
+
+def object_text(digest: str) -> str:
     obj = store_dir() / "objects" / digest
     return obj.read_text(encoding="utf-8", errors="replace") if obj.exists() else ""
 
@@ -315,7 +331,7 @@ def gc(force: bool = False) -> dict | None:
         now = time.time()
         if not force and now - baseline.get("last_gc", 0) < GC_INTERVAL:
             return None
-        referenced = {e["sha256"] for e in baseline["files"].values()}
+        referenced = {e["sha256"] for e in baseline["files"].values()} | _ledger_refs()
         removed = freed = 0
         objects = store_dir() / "objects"
         for obj in objects.iterdir() if objects.is_dir() else []:
@@ -332,10 +348,17 @@ def gc(force: bool = False) -> dict | None:
     return {"objects": removed, "bytes": freed}
 
 
+def _ledger_refs() -> set[str]:
+    # Earlier versions the ledger points at stay, so history can be replayed.
+    from .ledger import referenced
+
+    return referenced()
+
+
 def usage() -> dict:
     """Sizes for `agentdetox status`."""
     files = _load_baseline()["files"]
-    referenced = {e["sha256"] for e in files.values()}
+    referenced = {e["sha256"] for e in files.values()} | _ledger_refs()
     objects = [p for p in (store_dir() / "objects").iterdir()] if (store_dir() / "objects").is_dir() else []
     quarantine = store_dir() / "quarantine"
     return {
