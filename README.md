@@ -46,6 +46,14 @@ Clean up with `agentdetox agent verify` (what changed, and why it is suspicious)
 | OpenClaw | AGENTS, SOUL, USER, IDENTITY, BOOT, MEMORY, daily memory, skills, `openclaw.json`, extensions | not yet (needs a plugin) | yes |
 | WorkBuddy | `~/.workbuddy` memory and identity files (paths unverified) | no public hook API | yes |
 
+**Contradiction detection** (optional, `pip install 'agentdetox[nli]'` then `agentdetox fetch-models`):
+a memory write that contradicts what the agent already knows needs your approval, since a
+fabricated fact often looks like that; an edit that replaces the old fact is treated as an update.
+It uses a multilingual NLI model (mDeBERTa-v3, about 560 MB) and adds about 6 s to memory writes
+that have related existing memory. On the v0 memory benchmark it flags 30% of fabricated facts that
+conflict with existing memory and asks on 8% of English benign changes (0% Chinese); facts with no
+counterpart are not caught. See [bench/MEMORY_BENCHMARK.md](bench/MEMORY_BENCHMARK.md).
+
 Detection rules target what a benign memory almost never asks for: running code fetched from the
 network, reverse shells, loosening the agent's own approvals or sandbox, reading credentials,
 acting silently, standing orders to fetch a URL every session, plus the hidden-text and

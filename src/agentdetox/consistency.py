@@ -9,6 +9,7 @@ each pair contradicts. A fabricated fact that conflicts with nothing is not caug
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import re
 from dataclasses import dataclass
@@ -20,9 +21,10 @@ import numpy as np
 
 NLI_MODEL = "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7"
 CONTRADICTION_THRESHOLD = 0.8
-# Only a pre-filter: the NLI model decides, and each statement is compared with at most
-# CANDIDATES_PER_STATEMENT others, so a low bar costs model calls, not false positives.
-MIN_SIMILARITY = 0.05
+# The NLI model also misreads unrelated pairs as contradictions, so this pre-filter does
+# real work: only statements that share content words get compared. Set on the dev split
+# of bench/memory_eval.py: 0.15 is the lowest value with no false alarm on its benign cases.
+MIN_SIMILARITY = 0.15
 CANDIDATES_PER_STATEMENT = 5
 
 _FRONTMATTER_RE = re.compile(r"\A---\n.*?\n---\n", re.S)
@@ -54,7 +56,9 @@ def statements(text: str, source: str) -> list[Statement]:
     out: list[Statement] = []
     for lineno, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
-        if not line or line.startswith(("#", "|", ">", "<!--")):
+        # Index entries ("- [Title](file.md) — hook") point at facts that are compared in
+        # their own files; as fragments they only feed the NLI model noise.
+        if not line or line.startswith(("#", "|", ">", "<!--")) or _INDEX_LINE_RE.match(line):
             continue
         line = _BULLET_RE.sub("", line)
         for sentence in _SENTENCE_RE.split(line):
@@ -74,12 +78,8 @@ class NLI:
 
     @staticmethod
     def installed() -> bool:
-        try:
-            import torch  # noqa: F401
-            import transformers  # noqa: F401
-        except ImportError:
-            return False
-        return True
+        # find_spec, not import: importing torch alone costs ~2 s per hook process.
+        return all(importlib.util.find_spec(m) is not None for m in ("torch", "transformers"))
 
     def available(self) -> bool:
         if os.environ.get("AGENTDETOX_NLI") == "0" or not self.installed():
@@ -104,13 +104,19 @@ class NLI:
         return self._model
 
     def contradiction(self, pairs: list[tuple[str, str]], batch: int = 16) -> list[float]:
-        """Probability that each pair contradicts, taking the max over both orders."""
+        """Probability that each pair contradicts, taking the min over both orders.
+
+        A real contradiction holds both ways. NLI models also call topic shifts
+        "contradiction", but usually in one direction only (0.995 one way, 0.35 the other
+        for two unrelated memory lines), so the max produced a flood of false alarms."""
         if not pairs:
             return []
         model = self._load()
         torch = self._torch
-        # Starting the GPU costs more than a hook's handful of pairs saves.
-        device = "mps" if len(pairs) > 64 and torch.backends.mps.is_available() else "cpu"
+        # Starting the GPU costs more than a hook's handful of pairs saves; a long-running
+        # process (a benchmark) can opt in with AGENTDETOX_NLI_DEVICE=mps.
+        device = os.environ.get("AGENTDETOX_NLI_DEVICE") or (
+            "mps" if len(pairs) > 64 and torch.backends.mps.is_available() else "cpu")
         model.to(device)
         probs: list[float] = []
         for i in range(0, len(pairs), batch):
@@ -121,16 +127,27 @@ class NLI:
             with torch.no_grad():
                 p = torch.softmax(model(**enc).logits, -1)[:, self._contra]
             n = len(chunk)
-            probs += torch.maximum(p[:n], p[n:]).tolist()
+            probs += torch.minimum(p[:n], p[n:]).tolist()
         return probs
 
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_./:@-]*")
+# Shared function words are not shared topics ("Forget everything before that" and "Run
+# the linter before committing" share only "before").
 _STOPWORDS = frozenset(
-    "a an the is are was were be been being to of in on at by for with from as and or but not no it its this that "
-    "these those which who what when where how than then so such can could should would will may might must do does "
-    "did done has have had i you he she we they them their our your his her my me us use uses used using".split()
+    "a an the is are was were be been being to of in on at by for with from as and or but not no nor it its this "
+    "that these those which who whom whose what when where why how than then so such can could should would will "
+    "may might must shall do does did done has have had having i you he she we they them their theirs our ours your "
+    "yours his her hers my mine me us use uses used using before after again also all any both each every everything "
+    "everyone few more most other some same only own too very just now here there into onto over under above below "
+    "up down out off about against between through during until while if else because since though although unless "
+    "whether yet ever never always often sometimes once still already instead rather etc via per please make makes "
+    "made get gets got let lets like one two first new old".split()
 )
+_ZH_STOP_BIGRAMS = frozenset(
+    "可以 需要 已经 我们 你们 他们 这个 那个 一个 没有 不是 就是 还是 以及 或者 但是 因为 所以 如果 进行 之前 之后 时候 什么 怎么 这样 那样".split()
+)
+_INDEX_LINE_RE = re.compile(r"^\s*(?:[-*+]\s+)?\[[^\]]+\]\([^)]+\)")
 _DIM = 4096
 
 
@@ -140,7 +157,7 @@ def _tokens(text: str) -> list[str]:
     words = [w.lower().strip("./:-") for w in _TOKEN_RE.findall(text)]
     out = [w for w in words if len(w) > 1 and w not in _STOPWORDS]
     for run in re.findall(r"[一-鿿]+", text):
-        out += [run[i : i + 2] for i in range(len(run) - 1)] or [run]
+        out += [b for b in (run[i : i + 2] for i in range(len(run) - 1)) if b not in _ZH_STOP_BIGRAMS] or [run]
     return out
 
 
@@ -163,9 +180,10 @@ def _vectors(texts: list[str]) -> np.ndarray:
 
 
 def candidate_pairs(new: list[Statement], existing: list[Statement],
-                    k: int = CANDIDATES_PER_STATEMENT, min_sim: float = MIN_SIMILARITY) -> list[tuple[int, int]]:
+                    k: int = CANDIDATES_PER_STATEMENT, min_sim: float | None = None) -> list[tuple[int, int]]:
     if not new or not existing:
         return []
+    min_sim = MIN_SIMILARITY if min_sim is None else min_sim
     v = _vectors([s.text for s in new + existing])
     sims = v[: len(new)] @ v[len(new) :].T
     pairs = []
@@ -177,8 +195,15 @@ def candidate_pairs(new: list[Statement], existing: list[Statement],
 
 
 def find_contradictions(new: list[Statement], existing: list[Statement], nli,
-                        threshold: float = CONTRADICTION_THRESHOLD) -> list[Contradiction]:
+                        threshold: float | None = None) -> list[Contradiction]:
+    threshold = CONTRADICTION_THRESHOLD if threshold is None else threshold
     pairs = candidate_pairs(new, existing)
+    if not pairs:
+        return []
+    if callable(nli):  # a factory, so callers with nothing to compare never load the model
+        nli = nli()
+        if nli is None:
+            return []
     probs = nli.contradiction([(new[i].text, existing[j].text) for i, j in pairs])
     best: dict[int, Contradiction] = {}
     for (i, j), p in zip(pairs, probs):

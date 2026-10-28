@@ -68,9 +68,12 @@ _PATTERNS: list[tuple[str, str, re.Pattern]] = [
     (
         "high",
         "data exfiltration instruction",
+        # Like the English rule, a concrete external destination is required: "不要把密钥
+        # 提交到仓库" (don't commit keys to the repo) is hygiene, not exfiltration.
         re.compile(
-            r"(密码|密钥|凭证|令牌|对话记录|聊天记录|系统提示|个人信息)[^。\n]{0,30}(发送|转发|上传|提交)(到|至|给)"
-            r"|(发送|转发|上传|提交)[^。\n]{0,20}(密码|密钥|凭证|令牌|对话记录|聊天记录|系统提示|个人信息)[^。\n]{0,20}(到|至|给)"
+            r"((密码|密钥|凭证|令牌|对话记录|聊天记录|系统提示|个人信息)[^。\n]{0,30}(发送|转发|上传|提交)"
+            r"|(发送|转发|上传|提交)[^。\n]{0,20}(密码|密钥|凭证|令牌|对话记录|聊天记录|系统提示|个人信息))"
+            r"[^。\n]{0,40}(https?://|[\w.+-]+@[\w-]+\.\w)"
         ),
     ),
     (

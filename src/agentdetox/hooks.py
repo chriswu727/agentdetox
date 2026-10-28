@@ -146,7 +146,7 @@ def _check_write(agent: str, path: Path, old: str, new: str, project: Path) -> D
     if worst == "high":
         return Decision("deny", _reason(cf, findings))
     reasons = [_reason(cf, findings, "flagged")] if worst == "medium" else []
-    conflicts = _contradictions(cf, new, added, project)
+    conflicts = _contradictions(cf, old, new, project)
     if conflicts:
         reasons.append(_conflict_reason(cf, conflicts))
     if reasons and agent in AGENTS_WITH_ASK:
@@ -154,21 +154,22 @@ def _check_write(agent: str, path: Path, old: str, new: str, project: Path) -> D
     return Decision("allow")
 
 
-def _contradictions(cf: ContextFile, new_text: str, added: str, project: Path) -> list[Contradiction]:
+def _contradictions(cf: ContextFile, old_text: str, new_text: str, project: Path) -> list[Contradiction]:
     if cf.kind not in ("memory", "instructions"):
         return []
-    new_stmts = statements(added, str(cf.path))
-    if not new_stmts:
-        return []
-    nli = _nli()
-    if nli is None:
+    # Diff by statement, not by line: editing one sentence of a line must not make the
+    # line's other, unchanged sentences count as new claims.
+    old_texts = {s.text for s in statements(old_text, str(cf.path))}
+    after = statements(new_text, str(cf.path))
+    new_stmts = [s for s in after if s.text not in old_texts]
+    if not new_stmts or not NLI.installed():
         return []
     added_texts = {s.text for s in new_stmts}
     # Statements still in the target file after the edit count as existing; ones the
     # edit removed do not, so replacing an old fact with a new one is an update.
-    existing = [s for s in statements(new_text, str(cf.path)) if s.text not in added_texts]
+    existing = [s for s in after if s.text not in added_texts]
     existing += store_statements(related_files(cf, project), skip={str(cf.path)})
-    return find_contradictions(new_stmts, existing, nli)
+    return find_contradictions(new_stmts, existing, _nli)
 
 
 _NLI_INSTANCE: list = []
@@ -326,7 +327,7 @@ def _session_start(agent: str, project: Path) -> str:
             if c.status == "deleted" or cf is None or c.path in flagged:
                 continue
             text = read_text(cf.path)
-            found = _contradictions(cf, text, _added_text(snapshot_text(c.path) or "", text), project)
+            found = _contradictions(cf, snapshot_text(c.path) or "", text, project)
             if found:
                 conflicts += found
                 flagged.add(c.path)
