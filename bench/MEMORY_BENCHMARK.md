@@ -89,7 +89,7 @@ Real-memory flags fell to 19 (11 files); the test split numbers above are with t
 
 The trade-off cannot be tuned away with this model: thresholds that bring real-memory flags near 0
 (p >= 0.98) leave about 13% recall on the dev split. **Hooks therefore record contradictions in the
-background instead of asking** (`agentdetox events` shows them; `AGENTDETOX_CONTRADICTION=ask` restores
+background instead of asking** (`agentdetox events` shows them; `agentdetox config contradiction ask` restores
 prompting). A stronger judge than this NLI model is needed before asking again.
 
 ## What changed while building this

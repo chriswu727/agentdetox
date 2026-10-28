@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from agentdetox import hooks
+from agentdetox import hooks, settings
 from agentdetox.cli import main
 from agentdetox.consistency import NLI, Statement, candidate_pairs, find_contradictions, statements
 from agentdetox.context import claude_memory_dir
@@ -172,7 +172,7 @@ def test_record_mode_is_default_and_never_asks(env, monkeypatch):
     nli = FakeNLI()
     monkeypatch.setattr(hooks, "_nli", lambda: nli)
     monkeypatch.delenv("AGENTDETOX_CONTRADICTION", raising=False)
-    assert hooks.contradiction_mode() == "record"
+    assert settings.mode("contradiction") == "record"
     assert pre(project, mem / "deploy-new.md", "Deploy with ./deploy.sh --skip-checks; the staging checks were retired.\n") is None
     assert nli.calls == 0                      # nothing slow runs inside the hook
 
@@ -202,4 +202,21 @@ def test_events_command(env, capsys):
     from agentdetox import events
     events.record("write_checked", decision="ask", reason="copied from WebFetch")
     assert main(["events", "-n", "5"]) == 0
-    assert "write_checked" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "asked" in out and "copied from WebFetch" in out
+
+
+def test_an_allowed_contradiction_is_not_asked_again(env, fake, capsys):
+    from agentdetox.agentscan import consistency_findings
+    from agentdetox.context import discover
+    from agentdetox.findings import finding_id
+    _, project, mem = env
+    new = "Deploy with ./deploy.sh --skip-checks; the staging checks were retired.\n"
+    out = pre(project, mem / "deploy-new.md", new)
+    [cid] = out["permissionDecisionReason"].split("[AgentDetox id ")[1].split(".")[0].split()
+    assert main(["allow", cid]) == 0
+    assert "contradicts" in capsys.readouterr().out
+    assert pre(project, mem / "deploy-new.md", new) is None
+    (mem / "deploy-new.md").write_text(new)
+    found = consistency_findings(discover(project=project), project, fake)
+    assert cid in {finding_id(f) for f in found}      # `agent scan --consistency` names it the same way

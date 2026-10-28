@@ -7,7 +7,7 @@ import unicodedata
 from html.parser import HTMLParser
 
 from .corpus import Doc
-from .findings import Finding, snippet
+from .findings import Finding, line_at, snippet
 
 ZERO_WIDTH = "​‌‍⁠﻿᠎"
 BIDI_CONTROLS = "‪‫‬‭‮⁦⁧⁨⁩"
@@ -188,8 +188,9 @@ def scan_doc(doc: Doc) -> list[Finding]:
     findings: list[Finding] = []
     text = doc.text
 
-    def add(detector: str, severity: str, message: str, evidence: str) -> None:
-        findings.append(Finding(doc.id, doc.source, detector, severity, message, evidence))
+    def add(detector: str, severity: str, message: str, evidence: str, anchor: str = "") -> None:
+        findings.append(Finding(doc.id, doc.source, detector, severity, message, evidence,
+                                anchor=anchor or evidence or message))
 
     smuggled = decode_tag_chars(text)
     if smuggled.strip():
@@ -197,7 +198,8 @@ def scan_doc(doc: Doc) -> list[Finding]:
 
     zw_in_word = _ZW_IN_WORD_RE.findall(text)
     if zw_in_word:
-        add("hidden-unicode", "medium", f"zero-width characters inside {len(zw_in_word)} word(s), a filter-evasion trick", snippet(normalize(text)))
+        add("hidden-unicode", "medium", f"zero-width characters inside {len(zw_in_word)} word(s), a filter-evasion trick", snippet(normalize(text)),
+            " ".join(zw_in_word))
     if _BIDI_RE.search(text):
         add("hidden-unicode", "low", "bidirectional control characters can reorder displayed text", "")
 
@@ -220,8 +222,9 @@ def scan_doc(doc: Doc) -> list[Finding]:
             if injected:
                 add("hidden-html", "high", f"HTML comment contains: {injected[0][1]}", comment[:200])
 
+    norm = normalize(text)
     for severity, label, pos in match_injection(text):
-        add("injection-phrase", severity, label, snippet(normalize(text), pos))
+        add("injection-phrase", severity, label, snippet(norm, pos), line_at(norm, pos))
     if smuggled.strip():
         for severity, label, _ in match_injection(smuggled):
             add("injection-phrase", "high", f"{label} (inside invisible tag characters)", smuggled[:200])

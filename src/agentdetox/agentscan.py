@@ -7,7 +7,7 @@ from pathlib import Path
 from .consistency import find_contradictions, statements, store_statements
 from .context import ContextFile, related_files
 from .corpus import Doc
-from .findings import Finding, snippet
+from .findings import Finding, line_at, pair_anchor, snippet
 from .hidden import normalize, scan_doc
 from .persistence import config_commands, text_findings
 
@@ -23,7 +23,8 @@ def scan_text(doc_id: str, source: str, text: str, kind: str) -> list[Finding]:
     findings = scan_doc(Doc(doc_id, text, source))
     norm = normalize(text)
     for severity, label, pos in text_findings(text):
-        findings.append(Finding(doc_id, source, "persistence", severity, label, snippet(norm, pos)))
+        findings.append(Finding(doc_id, source, "persistence", severity, label, snippet(norm, pos),
+                                anchor=line_at(norm, pos)))
     return findings
 
 
@@ -31,7 +32,8 @@ def _scan_config(doc_id: str, source: str, text: str) -> list[Finding]:
     findings = []
     for where, command in config_commands(Path(source), text):
         for severity, label, _ in text_findings(command):
-            findings.append(Finding(doc_id, source, "config-command", severity, f"{label} ({where})", command[:200]))
+            findings.append(Finding(doc_id, source, "config-command", severity, f"{label} ({where})", command[:200],
+                                    anchor=command))
     return findings
 
 
@@ -55,7 +57,8 @@ def consistency_findings(files: list[ContextFile], project: Path | None, nli) ->
             seen.add(key)
             out.append(Finding(str(cf.path), str(cf.path), "contradiction", "medium",
                                f'contradicts "{c.existing.text[:120]}" ({c.existing.source}:{c.existing.line}), '
-                               f"p={c.probability:.2f}", c.new.text[:200]))
+                               f"p={c.probability:.2f}", c.new.text[:200],
+                               anchor=pair_anchor(c.new.text, c.existing.text)))
     return out
 
 

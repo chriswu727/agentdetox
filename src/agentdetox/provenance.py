@@ -41,6 +41,7 @@ _REMEMBER_RE = re.compile(
 class Source:
     tool: str
     text: str
+    origin: str = ""  # the file, URL, command or query the output came from
 
 
 @dataclass
@@ -54,6 +55,7 @@ class CopyFinding:
     tool: str
     fraction: float
     excerpt: str
+    origin: str = ""
 
 
 def read_transcript(path: str | Path, human_turns: int = HUMAN_TURNS, tail_bytes: int = TAIL_BYTES) -> Transcript:
@@ -68,6 +70,7 @@ def read_transcript(path: str | Path, human_turns: int = HUMAN_TURNS, tail_bytes
     if size > tail_bytes:
         lines = lines[1:]  # the first line was cut mid-record
     names: dict[str, str] = {}
+    inputs: dict[str, object] = {}
     turns: list[tuple[str, list[Source]]] = []
     for line in lines:
         try:
@@ -80,6 +83,7 @@ def read_transcript(path: str | Path, human_turns: int = HUMAN_TURNS, tail_bytes
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "tool_use":
                     names[block.get("id", "")] = block.get("name", "")
+                    inputs[block.get("id", "")] = block.get("input")
         elif rec.get("type") == "user" and not rec.get("isMeta"):
             if isinstance(content, str):
                 turns.append((content, []))
@@ -89,18 +93,30 @@ def read_transcript(path: str | Path, human_turns: int = HUMAN_TURNS, tail_bytes
                     text = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
                     turns.append((text, []))
                 for b in results:
-                    tool = names.get(b.get("tool_use_id", ""), "")
+                    use_id = b.get("tool_use_id", "")
+                    tool = names.get(use_id, "")
                     if not _untrusted(tool):
                         continue
                     if not turns:
                         turns.append(("", []))
-                    turns[-1][1].append(Source(tool, _result_text(b.get("content"))))
+                    turns[-1][1].append(Source(tool, _result_text(b.get("content")), _origin(inputs.get(use_id))))
     recent = turns[-human_turns:]
     return Transcript([s for _, srcs in recent for s in srcs], [h for h, _ in recent])
 
 
 def _untrusted(tool: str) -> bool:
     return tool in UNTRUSTED_TOOLS or tool.startswith(UNTRUSTED_PREFIXES)
+
+
+_ORIGIN_KEYS = ("file_path", "notebook_path", "url", "command", "query", "pattern", "path", "description")
+
+
+def _origin(tool_input) -> str:
+    if not isinstance(tool_input, dict) or not tool_input:
+        return ""
+    parts = [str(tool_input[k]) for k in _ORIGIN_KEYS if tool_input.get(k)]
+    text = " ".join(parts) if parts else json.dumps(tool_input, sort_keys=True, ensure_ascii=False)
+    return text[:300]
 
 
 def _result_text(content) -> str:
@@ -139,7 +155,7 @@ def copied_from_untrusted(new_text: str, transcript: Transcript,
         shared = (new & _shingles(_tokens(src.text))) - from_user
         fraction = len(shared) / len(new)
         if fraction >= threshold and (best is None or fraction > best.fraction):
-            best = CopyFinding(src.tool, fraction, _excerpt(body, shared))
+            best = CopyFinding(src.tool, fraction, _excerpt(body, shared), src.origin)
     return best
 
 

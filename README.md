@@ -52,7 +52,7 @@ It uses a multilingual NLI model (mDeBERTa-v3, about 560 MB). **By default it re
 asking**: after a write, a background process checks it and logs conflicts (`agentdetox events`), so
 writes are not slowed. On the v0 benchmark it catches 28% of fabricated facts that conflict with
 existing memory, but on real memory the model still misreads fragments, which is why it does not ask;
-`AGENTDETOX_CONTRADICTION=ask` makes it ask (about 6 s per related write). See
+`agentdetox config contradiction ask` makes it ask (about 6 s per related write). See
 [bench/MEMORY_BENCHMARK.md](bench/MEMORY_BENCHMARK.md).
 
 **Provenance check** (Claude Code): a memory write that is mostly copied from web pages, MCP data, command
@@ -65,6 +65,36 @@ Detection rules target what a benign memory almost never asks for: running code 
 network, reverse shells, loosening the agent's own approvals or sandbox, reading credentials,
 acting silently, standing orders to fetch a URL every session, plus the hidden-text and
 injection detectors below. English and Chinese.
+
+### Day to day
+
+```bash
+agentdetox status                         # health, what is watched, how checks are set, recent activity
+agentdetox events                         # everything blocked, asked, recorded or noticed
+agentdetox allow 3f9c2a1b7e               # stop flagging something you reviewed
+agentdetox config copied record           # change a check
+```
+
+Every message from AgentDetox carries an id. If what it flagged is fine, `agentdetox allow <id>`
+stops it being flagged again in write checks, session notices and scans alike. An id stands for the
+flagged line, the pair of contradicting entries, or the source text was copied from (that file, page
+or command), not for one occurrence; `agentdetox allow --list` and `--remove` review and undo.
+
+Settings live in `~/.agentdetox/config.toml` (`agentdetox config` shows them). Each check is `ask`,
+`record` (the write goes through and is logged) or `off`; agents without an ask prompt record
+instead of asking. An `AGENTDETOX_<KEY>` environment variable overrides the file.
+
+| Key | Default | Check |
+|---|---|---|
+| `suspicious` | ask | writes that look like planted instructions but are not clear-cut |
+| `copied` | ask | memory copied from untrusted input the agent just read |
+| `contradiction` | record | new memory that contradicts existing memory |
+
+Clear-cut planted instructions are always blocked; allowing the id is the way past a false
+positive. The settings, the allowlist and the snapshots are guarded like the agent's own config: an
+agent writing under `~/.agentdetox`, deleting it, or running `agentdetox allow`, `config <key>
+<value>`, `install`, `uninstall`, `agent snapshot` or `agent restore` needs your approval, or an
+injected instruction could switch a check off or allow itself.
 
 Hooks fail open: if AgentDetox itself errors, the agent's action proceeds. If an attacker deletes
 the hooks, the session-start check cannot run; `agentdetox agent verify` (by hand or in CI) still
@@ -174,6 +204,9 @@ log-probabilities for two of its signals. Treat its output as a ranked lead list
 ## Limits
 
 - Detection is not a security boundary. An adaptive attacker who knows these rules can evade them.
+- The guard on AgentDetox's own settings recognises plain commands and file writes. An agent that
+  can run arbitrary code can still change them (a script that edits `~/.agentdetox` is not
+  inspected), and nothing stops a person or process outside the agent.
 - `poison-cluster` cannot see an attacker who plants only one or two passages per target question,
   or who deliberately makes them dissimilar (both are limits stated by the CleanBase paper).
 - `injection-phrase` patterns are a starting set and will flag security documentation that quotes

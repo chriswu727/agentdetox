@@ -43,7 +43,7 @@ def private_dir(path: Path) -> Path:
     return path
 
 
-def _write_private(path: Path, data: bytes) -> None:
+def write_private(path: Path, data: bytes) -> None:
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "wb") as f:
         f.write(data)
@@ -62,9 +62,13 @@ def baseline_paths() -> set[str]:
     return set(_load_baseline()["files"])
 
 
+def baseline_entries() -> dict[str, dict]:
+    return _load_baseline()["files"]
+
+
 def _save_baseline(baseline: dict) -> None:
     tmp = private_dir(store_dir()) / "baseline.json.tmp"
-    _write_private(tmp, json.dumps(baseline, indent=1, sort_keys=True).encode())
+    write_private(tmp, json.dumps(baseline, indent=1, sort_keys=True).encode())
     tmp.replace(store_dir() / "baseline.json")
 
 
@@ -84,7 +88,7 @@ def snapshot(files: list[ContextFile], roots: list[Path]) -> int:
         digest = _sha(data)
         obj = objects / digest
         if not obj.exists():
-            _write_private(obj, data)
+            write_private(obj, data)
         text = data.decode("utf-8", errors="replace")
         baseline["files"][str(cf.path)] = {
             "sha256": digest,
@@ -198,7 +202,7 @@ def restore(path: Path) -> Path | None:
         manifest = qdir / "manifest.json"
         entries = json.loads(manifest.read_text()) if manifest.exists() else {}
         entries[quarantined.name] = str(path)
-        _write_private(manifest, json.dumps(entries, indent=1).encode())
+        write_private(manifest, json.dumps(entries, indent=1).encode())
     path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(obj, path)
     return quarantined

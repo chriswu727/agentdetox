@@ -4,7 +4,6 @@ a tool that rewrites its own hook config is the behaviour AgentDetox flags in ot
 from __future__ import annotations
 
 import json
-import os
 import shlex
 import stat
 import subprocess
@@ -12,7 +11,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import __version__
+from . import __version__, allowlist, settings
 from .consistency import NLI, NLI_MODEL
 from .context import home_dir
 from .install import claude_code_settings, default_settings_path
@@ -28,6 +27,7 @@ class Check:
 def run(project: Path) -> list[Check]:
     checks = [Check("ok", f"agentdetox {__version__} (Python {sys.version.split()[0]})")]
     checks += _claude_code_hooks(project)
+    checks += _settings()
     checks += _nli()
     checks += _store()
     checks += _other_agents(project)
@@ -79,6 +79,20 @@ def _check_claude_settings(path: Path, settings: dict, command: str) -> Check:
     return Check("ok", f"Claude Code: hooks installed and current in {path}")
 
 
+def _settings() -> list[Check]:
+    current, problems = settings.load()
+    summary = ", ".join(f"{s.key}={s.value}" + (f" ({s.source})" if s.source == "env" or s.value != settings.DEFAULTS[s.key]
+                                                 else "") for s in current)
+    checks = [Check("ok", f"checks: {summary}")] + [Check("warn", p) for p in problems]
+    path = allowlist.path()
+    if path.exists():
+        try:
+            json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            checks.append(Check("warn", f"{path} is not valid JSON, so nothing is allowed until it is fixed"))
+    return checks
+
+
 def _nli() -> list[Check]:
     # Reports on this interpreter; the hooks' own install is checked via its --version only.
     nli = NLI()
@@ -86,8 +100,8 @@ def _nli() -> list[Check]:
         return [Check("warn", "contradiction detection off: install 'agentdetox[nli]', then `agentdetox fetch-models`")]
     if not nli.available():
         return [Check("warn", "contradiction detection off: model not downloaded; run `agentdetox fetch-models`")]
-    mode = os.environ.get("AGENTDETOX_CONTRADICTION", "record")
-    how = {"ask": "asks on conflicts", "off": "turned off"}.get(mode, "records conflicts in the background")
+    how = {"ask": "asks on conflicts", "off": "turned off"}.get(settings.mode("contradiction"),
+                                                               "records conflicts in the background")
     return [Check("ok", f"contradiction detection {how} ({NLI_MODEL})")]
 
 

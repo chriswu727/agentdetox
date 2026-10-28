@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections import Counter
 from pathlib import Path
 
-from . import __version__, doctor, events
+from . import __version__, allowlist, doctor, events, settings, status
 from .agentscan import consistency_findings, scan_context
+from .allowlist import finding_flag
 from .consistency import NLI, NLI_MODEL
 from .context import PROFILES, discover, home_dir
 from .corpus import load_corpus
 from .embed import get_embedder
-from .findings import SEVERITY_ORDER, at_least
+from .findings import ID_LENGTH, SEVERITY_ORDER, at_least, finding_id
 from .hooks import main_hook, record_contradictions
 from .install import cursor_hooks, default_settings_path, hook_command, install_claude_code, uninstall_claude_code
 from .integrity import restore, snapshot, store_dir, verify
@@ -23,7 +25,7 @@ from .trace import trace
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="agentdetox", description=__doc__)
     parser.add_argument("--version", action="version", version=f"agentdetox {__version__}")
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command", required=True, metavar="command")
 
     def corpus_args(p: argparse.ArgumentParser) -> None:
         p.add_argument("path", type=Path, help="directory of .txt/.md/.html files, or a .jsonl file")
@@ -91,7 +93,21 @@ def main(argv: list[str] | None = None) -> int:
     p_events.add_argument("-n", type=int, default=20, help="number of events (default 20)")
     p_events.add_argument("--format", choices=["text", "json"], default="text")
 
-    p_worker = sub.add_parser("_record-contradictions", help=argparse.SUPPRESS)
+    p_status = sub.add_parser("status", help="what AgentDetox protects, how its checks are set, what it did lately")
+    p_status.add_argument("--project", type=Path, default=Path.cwd())
+    p_status.add_argument("--format", choices=["text", "json"], default="text")
+
+    p_allow = sub.add_parser("allow", help="stop flagging something you reviewed, by the id in AgentDetox's message")
+    p_allow.add_argument("ids", nargs="*", metavar="id")
+    p_allow.add_argument("--note", default="", help="why it is safe, kept with the entry")
+    p_allow.add_argument("--list", action="store_true", help="show allowed ids (also the default with no ids)")
+    p_allow.add_argument("--remove", action="store_true", help="flag these ids again")
+
+    p_config = sub.add_parser("config", help="show settings, or change one: agentdetox config copied record")
+    p_config.add_argument("key", nargs="?", choices=list(settings.DEFAULTS))
+    p_config.add_argument("value", nargs="?", choices=settings.MODES)
+
+    p_worker = sub.add_parser("_record-contradictions")  # no help: hidden from the listing
     p_worker.add_argument("path", type=Path)
     p_worker.add_argument("project", type=Path)
     p_worker.add_argument("old_file", type=Path)
@@ -118,13 +134,19 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(rows, ensure_ascii=False, indent=2))
         else:
             for r in rows:
-                detail = r.get("decision") or ""
-                text = r.get("reason") or r.get("notice") or (f'"{r.get("new", "")}" vs "{r.get("existing", "")}"'
-                                                               if r["event"] == "contradiction" else "")
-                print(f"{r['ts']}  {r['event']:<15} {detail:<5} {' '.join(str(text).split())[:150]}")
+                what, about, ids = status.describe(r)
+                print(f"{r.get('ts', '')}  {what:<13} {about[:150]}" + (f" [{ids}]" if ids else ""))
             if not rows:
                 print("no events yet")
         return 0
+    if args.command == "status":
+        data = status.collect(args.project.expanduser().absolute())
+        print(json.dumps(data, ensure_ascii=False, indent=2) if args.format == "json" else status.render(data))
+        return 0
+    if args.command == "allow":
+        return _allow(args)
+    if args.command == "config":
+        return _config(args)
     if args.command == "doctor":
         checks = doctor.run(args.project.expanduser().absolute())
         print(doctor.render(checks))
@@ -174,7 +196,7 @@ def _install(args) -> int:
             return 0
         # Scan before trusting, so content that is already poisoned never becomes the baseline.
         files = discover(project=project)
-        flagged = {f.doc_id for f in scan_context(files) if f.severity == "high"}
+        flagged = {f.doc_id for f in allowlist.unsuppressed(scan_context(files)) if f.severity == "high"}
         n = snapshot([cf for cf in files if str(cf.path) not in flagged], [home_dir(), project])
         print(f"wrote AgentDetox hooks to {target}" + (f" (backup: {backup})" if backup else ""))
         print(f"snapshot of {n} context file(s) taken; restart Claude Code to load the hooks")
@@ -193,6 +215,78 @@ def _install(args) -> int:
         print("\n--apply is only supported for claude-code until these hook formats are verified on real installs.",
               file=sys.stderr)
         return 2
+    return 0
+
+
+def _allow(args) -> int:
+    if args.list or not args.ids:
+        rows = allowlist.entries()
+        for i, e in rows.items():
+            note = f"  ({e['note']})" if e.get("note") else ""
+            print(f"{i}  {e.get('added', '')[:10]}  {e.get('what', '')[:120]}{note}")
+        if not rows:
+            print("nothing allowed yet; ids appear in every AgentDetox message and in `agentdetox agent scan`")
+        return 0
+    bad = [i for i in args.ids if not allowlist.ID_RE.match(i)]
+    if bad:
+        print(f"error: not an AgentDetox id: {' '.join(bad)} (ids are {ID_LENGTH} hex characters)", file=sys.stderr)
+        return 2
+    try:
+        if args.remove:
+            for i in args.ids:
+                print(f"{i} will be flagged again" if allowlist.remove(i) else f"{i} was not allowed")
+            return 0
+        known = _describe_ids(args.ids)
+        for i in args.ids:
+            allowlist.add(i, known.get(i, ""), args.note)
+            print(f"allowed {i}: {known[i]}" if i in known else
+                  f"allowed {i} (not seen in the event log or current context files; check the id, and undo "
+                  f"with `agentdetox allow --remove {i}`)")
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    return 0
+
+
+def _describe_ids(ids: list[str]) -> dict[str, str]:
+    """What each id was flagged for: from the event log, else from a rules scan of the
+    current context files. Contradiction ids from `agent scan --consistency` need the log."""
+    found: dict[str, str] = {}
+    for r in events.read(None):
+        for f in r.get("flags") or []:
+            found.setdefault(f.get("id", ""), f.get("what", ""))
+        if r.get("event") == "contradiction" and r.get("id"):
+            found.setdefault(r["id"], status.describe(r)[1])
+    if not set(ids) <= set(found):
+        for f in scan_context(discover(project=Path.cwd())):
+            flag = finding_flag(f)
+            found.setdefault(flag.id, flag.what)
+    return {i: found[i] for i in ids if i in found}
+
+
+def _config(args) -> int:
+    if args.key and args.value:
+        try:
+            path = settings.set_mode(args.key, args.value)
+        except ValueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        print(f"{args.key} = {args.value} ({path})")
+        var = f"AGENTDETOX_{args.key.upper()}"
+        if os.environ.get(var):
+            print(f"note: {var}={os.environ[var]} is set in this environment and overrides the file")
+        return 0
+    current, problems = settings.load()
+    for s in current:
+        if args.key in (None, s.key):
+            source = {"default": "default", "config": "config file", "env": f"AGENTDETOX_{s.key.upper()}"}[s.source]
+            print(f"{s.key:<14} {s.value:<7} {settings.LABELS[s.key]} ({source})")
+    path = settings.config_path()
+    print(f"\nconfig file: {path}" + ("" if path.exists() else
+                                       " (not created yet; `agentdetox config <key> <value>` creates it)"))
+    print("values: ask (Claude Code asks you first), record (allowed and logged), off")
+    for p in problems:
+        print(f"warning: {p}", file=sys.stderr)
     return 0
 
 
@@ -218,43 +312,49 @@ def _agent(args) -> int:
         return 0
 
     if args.agent_command == "scan":
-        findings = scan_context(files)
+        found = scan_context(files)
         if args.consistency:
             nli = NLI()
             if not nli.available():
                 print("contradiction check skipped: install 'agentdetox[nli]' and run `agentdetox fetch-models`",
                       file=sys.stderr)
             else:
-                findings += consistency_findings(files, project, nli)
+                found += consistency_findings(files, project, nli)
+        findings = allowlist.unsuppressed(found)
         header = f"agentdetox {__version__}: scanned {len(files)} context file(s)"
-        _print_findings(findings, header, args.format, extra={"files": [str(f.path) for f in files]})
+        _print_findings(findings, header, args.format, len(found) - len(findings),
+                        extra={"files": [str(f.path) for f in files]})
     else:
-        changes, findings = verify(files, roots)
+        changes, found = verify(files, roots)
+        findings = allowlist.unsuppressed(found)
         header = f"agentdetox {__version__}: {len(changes)} context file(s) changed since snapshot"
         for c in changes:
             header += f"\n  {c.status:<8} {c.kind:<12} {c.path}"
-        _print_findings(findings, header, args.format,
+        _print_findings(findings, header, args.format, len(found) - len(findings),
                         extra={"changes": [{"path": c.path, "status": c.status, "kind": c.kind} for c in changes]})
     if args.fail_on != "none" and any(at_least(f.severity, args.fail_on) for f in findings):
         return 1
     return 0
 
 
-def _print_findings(findings, header: str, fmt: str, extra: dict) -> None:
+def _print_findings(findings, header: str, fmt: str, allowed: int, extra: dict) -> None:
     findings = sorted(findings, key=lambda f: (-SEVERITY_ORDER[f.severity], f.doc_id))
     if fmt == "json":
-        json.dump({"version": __version__, **extra, "findings": [f.to_dict() for f in findings]},
+        json.dump({"version": __version__, **extra, "allowed": allowed, "findings": [f.to_dict() for f in findings]},
                   sys.stdout, ensure_ascii=False, indent=2)
         print()
         return
     print(header + "\n")
     for f in findings:
-        print(f"{f.severity.upper():<6} {f.detector:<17} {f.source}")
+        print(f"{f.severity.upper():<6} {f.detector:<17} {f.source}  [{finding_id(f)}]")
         print(f"       {f.message}")
         if f.evidence:
             print(f"       > {' '.join(f.evidence.split())[:160]}")
     counts = Counter(f.severity for f in findings)
-    print(f"\n{counts['high']} high, {counts['medium']} medium, {counts['low']} low")
+    print(f"\n{counts['high']} high, {counts['medium']} medium, {counts['low']} low"
+          + (f"; {allowed} allowed and not shown (`agentdetox allow --list`)" if allowed else ""))
+    if findings:
+        print("False positive? `agentdetox allow <id>` stops it being reported.")
 
 
 def _print_scan(result, fmt: str) -> None:

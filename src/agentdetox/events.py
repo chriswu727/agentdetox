@@ -33,12 +33,14 @@ def record(event: str, **fields) -> None:
         pass  # logging must never break a hook
 
 
-def read(limit: int = 50) -> list[dict]:
+def read(limit: int | None = 50) -> list[dict]:
+    """The most recent `limit` events, oldest first; None for all of them."""
     path = log_path()
     if not path.exists():
         return []
     out = []
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]:
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    for line in lines[-limit:] if limit else lines:
         try:
             out.append(json.loads(line))
         except ValueError:
