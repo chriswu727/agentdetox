@@ -26,7 +26,8 @@ Everything lives in `~/.agentdetox` (or `AGENTDETOX_HOME`), private to your user
 
 | Path | Contents |
 |---|---|
-| `objects/` | Full copies of each watched file at its last trusted version, named by hash. These include settings files, so any secret written in them (an MCP server's token, say) is copied too |
+| `objects/` | Full copies of each watched file at its last trusted version, and of the earlier versions the ledger refers to, named by hash. These include settings files, so any secret written in them (an MCP server's token, say) is copied too |
+| `ledger.jsonl` | One line per change to a watched file: when, which file, where it came from (you, the agent, a named web page or tool output it copied, or something outside the agent), the session id, and which copies in `objects/` hold the version before and after |
 | `baseline.json` | The list of watched files and which copy is trusted for each |
 | `quarantine/` | Files replaced by `agentdetox agent restore`, kept until you delete them |
 | `events.jsonl` | What was blocked, asked, recorded or noticed: the command or file paths, the reason, and up to a few hundred characters of the flagged text. Rotated at 5 MB, keeping one older file |
@@ -34,7 +35,8 @@ Everything lives in `~/.agentdetox` (or `AGENTDETOX_HOME`), private to your user
 | `config.toml`, `allowlist.json` | Your settings and the ids you allowed |
 | `daemon.log`, `*.lock`, `nli.sock` | The model server's log, locks and socket |
 
-Snapshot copies that no longer back any file are deleted once a day; quarantined files are not.
+Copies that neither back a watched file nor a ledger entry are deleted once a day; quarantined files
+are not. The ledger and the history it keeps grow with use; nothing prunes them yet.
 
 ## Removing it
 

@@ -73,6 +73,10 @@ class Adapter:
     def transcript(self, payload: dict) -> str | None:
         return None
 
+    def session(self, payload: dict) -> str:
+        """The agent's id for the session, for the ledger."""
+        return str(payload.get("session_id") or payload.get("conversation_id") or "")
+
     def render_pre(self, decision: Decision) -> str:
         if decision.action == "allow":
             return ""

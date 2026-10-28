@@ -58,3 +58,12 @@ background workers take turns on a job queue. Trade-off: a second process to man
 
 Claude Code runs a plugin's hooks in addition to identical ones in settings, so both together would
 run every check twice. `install` declines when the plugin is enabled and `doctor` warns about both.
+
+## ADR 10: Record where every change came from, and keep the history
+
+Every change to a watched file is recorded with its origin (the user, the agent, a named input the
+agent copied, or something outside the agent) and the versions before and after, which are kept
+while the ledger refers to them. Detection can be reworded around; origin cannot, and history is
+what makes `blame`, review and rollback possible. Trade-off: the store grows with use until pruning
+exists, and a change made by the agent's shell commands is recorded as "outside the agent's edit
+tools" until a post-command check tells the two apart.

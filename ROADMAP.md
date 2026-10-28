@@ -106,7 +106,8 @@ a week of the maintainer's daily use produces no block that cannot be explained.
   changes the hooks did not see.
 - A check right after each shell command the agent runs, so a change made during the session by
   another program (an install script, say) is reported on the spot rather than at the next session.
-- `agentdetox log`, `agentdetox blame <file>` and rollback to a point in time.
+- `agentdetox log` and `agentdetox blame <file>` (shipped early, in 0.2), and rollback to a point in
+  time.
 - Checks weighted by origin, and memory written after untrusted reading marked as tainted.
 - `agentdetox review`: one inbox for everything recorded but not blocked, replacing today's
   separate event log and allow list, and the weekly "what your agent learned" summary.

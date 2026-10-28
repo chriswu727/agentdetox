@@ -5,9 +5,10 @@ import json
 import os
 import sys
 from collections import Counter
+from dataclasses import asdict
 from pathlib import Path
 
-from . import __version__, allowlist, daemon, demo, doctor, events, settings, status
+from . import __version__, allowlist, daemon, demo, doctor, events, ledger, settings, status
 from .agentscan import consistency_findings, scan_context
 from .allowlist import finding_flag
 from .consistency import NLI, NLI_MODEL
@@ -25,7 +26,7 @@ from .install import (
     install_claude_code,
     uninstall_claude_code,
 )
-from .integrity import StoreError, gc, reset_baseline, restore, snapshot, store_dir, verify
+from .integrity import StoreError, gc, reset_baseline, restore, snapshot, store_dir, store_object, verify
 from .scan import scan
 from .trace import trace
 
@@ -138,9 +139,21 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("fetch-models", help=f"download the contradiction-detection model ({NLI_MODEL}, ~560 MB)")
     sub.add_parser("demo", help="watch an attack on an agent get caught and undone, in a throwaway folder")
 
+    p_log = sub.add_parser("log", help="what changed in the agent's memory, rules and config, and where it came from")
+    p_log.add_argument("path", nargs="?", type=Path, help="only changes to this file")
+    p_log.add_argument("-n", type=int, default=30, help="how many of the most recent changes to show")
+    p_log.add_argument("--format", choices=["text", "json"], default="text")
+
+    p_blame = sub.add_parser("blame", help="where each line of a memory, rules or config file came from")
+    p_blame.add_argument("path", type=Path)
+
     args = parser.parse_args(argv)
     if args.command == "demo":
         return demo.run()
+    if args.command == "log":
+        return _log(args)
+    if args.command == "blame":
+        return _blame(args)
     if args.command == "fetch-models":
         if not NLI.installed():
             print("needs the optional extra: pip install 'agentdetox[nli]'", file=sys.stderr)
@@ -211,6 +224,51 @@ def main(argv: list[str] | None = None) -> int:
         embedder.fit(texts)
     rows = trace(docs, embedder.encode(texts), embedder, args.question, args.answer, args.top_k)
     _print_trace(rows, args.format)
+    return 0
+
+
+def _log(args) -> int:
+    path = str(args.path.expanduser().absolute()) if args.path else None
+    rows = ledger.entries(path)[-args.n:] if args.n > 0 else []
+    if args.format == "json":
+        print(json.dumps([asdict(e) for e in rows], ensure_ascii=False, indent=2))
+        return 0
+    if not rows:
+        print("no recorded changes" + (f" to {short_path(path)}" if path else "") + " yet")
+    for e in rows:
+        session = f" [session {e.session[:8]}]" if e.session else ""
+        print(f"{e.ts.replace('T', ' ')}  {e.origin:<9} {_display_path(e.path)}: {e.describe()}{session}")
+    return 0
+
+
+def _display_path(path: str) -> str:
+    # Claude Code names memory folders after the whole project path; keep their ends, where
+    # the project's own name is.
+    parts = short_path(path).split(os.sep)
+    return os.sep.join(p if len(p) <= 40 else "…" + p[-28:] for p in parts)
+
+
+def _blame(args) -> int:
+    path = args.path.expanduser().absolute()
+    if not path.exists():
+        print(f"error: {path} does not exist", file=sys.stderr)
+        return 2
+    labels = {ledger.EARLIER: "earlier", ledger.UNRECORDED: "not yet recorded"}
+    rows = ledger.blame(path)
+    for text, cause in rows:
+        if isinstance(cause, ledger.Entry):
+            label = f"{cause.origin} {cause.ts[5:16].replace('T', ' ')}"
+            if cause.origin == "copied" and cause.source:
+                label += " " + cause.source.split()[0]
+        else:
+            label = labels[cause]
+        print(f"{label[:32]:<32} | {text}")
+    causes = {cause for _, cause in rows if isinstance(cause, str)}
+    notes = {ledger.EARLIER: "earlier: there before AgentDetox recorded a change to this file.",
+             ledger.UNRECORDED: "not yet recorded: changed since, outside the agent's edit tools; the next "
+                                "session records it."}
+    print("\n" + "\n".join(notes[c] for c in (ledger.EARLIER, ledger.UNRECORDED) if c in causes)
+          + f"\nDetails: agentdetox log {short_path(str(path))}")
     return 0
 
 
@@ -372,11 +430,13 @@ def _agent_command(args) -> int:
     if args.agent_command == "restore":
         for path in args.paths:
             path = path.expanduser().absolute()
+            current = path.read_bytes() if path.is_file() else None
             try:
                 moved = restore(path)
             except KeyError as e:
                 print(f"error: {e.args[0]}", file=sys.stderr)
                 return 2
+            ledger.record(path, "restored", store_object(current) if current is not None else None, path.read_bytes())
             print(f"restored {path}" + (f" (previous version quarantined at {moved})" if moved else ""))
         return 0
 

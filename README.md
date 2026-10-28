@@ -95,10 +95,17 @@ instead of quietly trusting whatever is on disk, until you check and run
 ```bash
 agentdetox status                         # health, what is watched, how checks are set, recent activity
 agentdetox events                         # everything blocked, asked, recorded or noticed
+agentdetox log                            # every change to memory, rules and config, and where it came from
+agentdetox blame ~/.claude/CLAUDE.md      # where each line of a file came from
 agentdetox allow 3f9c2a1b7e               # stop flagging something you reviewed
 agentdetox config copied record           # change a check
 agentdetox doctor                         # check the hooks are installed, current and runnable
 ```
+
+Each change AgentDetox sees is recorded with its origin: your own words, the agent, a web page or
+tool output the agent copied (named), or a change made outside the agent's edit tools.
+`agentdetox blame <file>` shows that per line; lines from before AgentDetox was installed show as
+"earlier".
 
 Every message from AgentDetox carries an id. If what it flagged is fine, `agentdetox allow <id>`
 stops it being flagged again in write checks, session notices and scans alike. An id stands for the

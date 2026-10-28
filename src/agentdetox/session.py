@@ -4,17 +4,18 @@ was not writing it (another program, a sync, a person), and whether to warn abou
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import re
 import shlex
 from pathlib import Path
 
-from . import allowlist, compat, engine
+from . import allowlist, compat, engine, ledger
 from .agentscan import read_text, scan_context
 from .allowlist import contradiction_flag
 from .consistency import Contradiction
 from .context import discover, home_dir, short_path
 from .findings import finding_id
-from .integrity import StoreError, baseline_paths, gc, snapshot, snapshot_text, verify
+from .integrity import Change, StoreError, baseline_paths, gc, snapshot, snapshot_text, verify
 
 
 def notice(project: Path, contradiction_mode: str) -> str:
@@ -59,6 +60,7 @@ def _check(project: Path, mode: str) -> str:
             if found:
                 conflicts += found
                 flagged.add(c.path)
+        _record_external(changes, flagged)
         # Flagged files keep their old snapshot entry, so `restore` can still bring back
         # the pre-tampering version; benign out-of-band edits are accepted.
         snapshot([cf for cf in files if str(cf.path) not in flagged], roots)
@@ -91,6 +93,17 @@ def _check(project: Path, mode: str) -> str:
                         ", and suggest reviewing it with `agentdetox agent scan`."))
     lines.append("If an entry is a false positive, the user can run `agentdetox allow <id>` to stop it being reported.")
     return "\n".join(lines)
+
+
+def _record_external(changes: list[Change], flagged: set[str]) -> None:
+    """Put changes made outside the agent's edit tools in the ledger. A flagged file keeps
+    its old snapshot and is found again every session; it is recorded once."""
+    for c in changes:
+        path = Path(c.path)
+        after = path.read_bytes() if c.status != "deleted" and path.is_file() else None
+        if after is not None and ledger.last_version(c.path) == hashlib.sha256(after).hexdigest():
+            continue
+        ledger.record(c.path, "external", engine.previous_version(c.path), after, flagged=c.path in flagged)
 
 
 def _shell_path(path: str) -> str:
