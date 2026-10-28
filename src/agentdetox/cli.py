@@ -7,7 +7,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from . import __version__, allowlist, doctor, events, settings, status
+from . import __version__, allowlist, daemon, doctor, events, settings, status
 from .agentscan import consistency_findings, scan_context
 from .allowlist import finding_flag
 from .consistency import NLI, NLI_MODEL
@@ -15,9 +15,9 @@ from .context import PROFILES, discover, home_dir
 from .corpus import load_corpus
 from .embed import get_embedder
 from .findings import ID_LENGTH, SEVERITY_ORDER, at_least, finding_id
-from .hooks import main_hook, record_contradictions
+from .hooks import main_hook
 from .install import cursor_hooks, default_settings_path, hook_command, install_claude_code, uninstall_claude_code
-from .integrity import restore, snapshot, store_dir, verify
+from .integrity import StoreError, gc, reset_baseline, restore, snapshot, store_dir, verify
 from .scan import scan
 from .trace import trace
 
@@ -69,11 +69,14 @@ def main(argv: list[str] | None = None) -> int:
                         help="also look for memory entries that contradict each other (needs agentdetox[nli])")
     a_snap = asub.add_parser("snapshot", help="record the current context files as trusted")
     agent_args(a_snap)
+    a_snap.add_argument("--reset", action="store_true",
+                        help="start a new snapshot list when the old one is damaged or missing")
     a_verify = asub.add_parser("verify", help="report context files changed since the snapshot")
     agent_args(a_verify)
     a_verify.add_argument("--fail-on", choices=["low", "medium", "high", "none"], default="high")
     a_restore = asub.add_parser("restore", help="put back the snapshotted version; the current one is quarantined")
     a_restore.add_argument("paths", type=Path, nargs="+")
+    asub.add_parser("gc", help="delete snapshot copies nothing refers to (also runs daily on its own)")
 
     p_hook = sub.add_parser("hook", help="hook entry point called by the agent (reads the event JSON on stdin)")
     p_hook.add_argument("agent_name", choices=["claude-code", "codex", "cursor"])
@@ -107,10 +110,10 @@ def main(argv: list[str] | None = None) -> int:
     p_config.add_argument("key", nargs="?", choices=list(settings.DEFAULTS))
     p_config.add_argument("value", nargs="?", choices=settings.MODES)
 
-    p_worker = sub.add_parser("_record-contradictions")  # no help: hidden from the listing
-    p_worker.add_argument("path", type=Path)
-    p_worker.add_argument("project", type=Path)
-    p_worker.add_argument("old_file", type=Path)
+    p_daemon = sub.add_parser("daemon", help="the background process that keeps the contradiction model loaded")
+    p_daemon.add_argument("action", choices=["status", "stop"])
+    p_serve = sub.add_parser("_daemon")  # no help: hidden from the listing
+    p_serve.add_argument("--job")
 
     p_doctor = sub.add_parser("doctor", help="check that hooks are installed, current and runnable (read-only)")
     p_doctor.add_argument("--project", type=Path, default=Path.cwd())
@@ -125,9 +128,10 @@ def main(argv: list[str] | None = None) -> int:
         NLI(local_only=False).contradiction([("The sky is blue.", "The sky is green.")])
         print(f"{NLI_MODEL} is ready; hooks now check memory writes for contradictions")
         return 0
-    if args.command == "_record-contradictions":
-        record_contradictions(args.path, args.project, args.old_file)
-        return 0
+    if args.command == "_daemon":
+        return daemon.serve(args.job)
+    if args.command == "daemon":
+        return _daemon_command(args.action)
     if args.command == "events":
         rows = events.read(args.n)
         if args.format == "json":
@@ -162,7 +166,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "hook":
         return main_hook(args.agent_name)
     if args.command == "install":
-        return _install(args)
+        try:
+            return _install(args)
+        except StoreError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
     if not args.path.exists():
         parser.error(f"{args.path} does not exist")
     docs = load_corpus(args.path, args.text_field, args.id_field, args.chunk_chars)
@@ -215,6 +223,26 @@ def _install(args) -> int:
         print("\n--apply is only supported for claude-code until these hook formats are verified on real installs.",
               file=sys.stderr)
         return 2
+    return 0
+
+
+def _daemon_command(action: str) -> int:
+    info = daemon.ping()
+    if action == "stop":
+        if info is None:
+            print("not running")
+            return 0
+        stopped = daemon.stop()
+        print(f"stopped (pid {info['pid']})" if stopped else f"pid {info['pid']} did not stop within 10 s")
+        return 0 if stopped else 1
+    if info is None:
+        print("not running; it starts on the next memory write that has something to compare")
+        return 0
+    print(f"running: pid {info['pid']}, started {info['started'].replace('T', ' ')}, model "
+          f"{'loaded' if info['model_loaded'] else 'not loaded yet'}, {info['jobs']} job(s), "
+          f"idle {info['idle_seconds'] // 60} min (exits after {int(daemon.idle_seconds() // 60)})")
+    if info["code"] != daemon.code_id():
+        print("it runs an older build and will be replaced on its next job")
     return 0
 
 
@@ -291,6 +319,19 @@ def _config(args) -> int:
 
 
 def _agent(args) -> int:
+    try:
+        return _agent_command(args)
+    except StoreError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+
+def _agent_command(args) -> int:
+    if args.agent_command == "gc":
+        freed = gc(force=True)
+        print(f"removed {freed['objects']} old snapshot cop{'y' if freed['objects'] == 1 else 'ies'} "
+              f"({freed['bytes'] / 1024:.0f} KB); quarantined files are kept")
+        return 0
     if args.agent_command == "restore":
         for path in args.paths:
             path = path.expanduser().absolute()
@@ -307,8 +348,20 @@ def _agent(args) -> int:
     roots = [home_dir()] + ([project] if project else [])
 
     if args.agent_command == "snapshot":
-        n = snapshot(files, roots)
+        if args.reset:
+            kept = reset_baseline()
+            if kept:
+                print(f"old snapshot list kept as {kept}")
+        # Like install and the first session: a planted instruction never becomes trusted
+        # by accident. Allowing its id is the deliberate way.
+        flagged = {f.doc_id for f in allowlist.unsuppressed(scan_context(files)) if f.severity == "high"}
+        n = snapshot([cf for cf in files if str(cf.path) not in flagged], roots)
         print(f"snapshot of {n} context file(s) saved to {store_dir()}")
+        if flagged:
+            print(f"left out {len(flagged)} file(s) with high-severity findings; review them with "
+                  "`agentdetox agent scan`, or `agentdetox allow <id>` if they are fine:")
+            for path in sorted(flagged):
+                print(f"  {path}")
         return 0
 
     if args.agent_command == "scan":

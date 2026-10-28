@@ -207,8 +207,12 @@ def main() -> None:
     cases = build_cases(stores, args.data, args.per_dataset, args.split)
     # Measure what contradiction detection can catch, so run it in ask mode.
     os.environ["AGENTDETOX_CONTRADICTION"] = "ask"
-    if not hooks._nli():
+    # One in-process model for the whole run: each case has its own store, and the
+    # hooks' model server is per store.
+    nli = consistency.NLI()
+    if not nli.available():
         raise SystemExit("the NLI model is not available; run `agentdetox fetch-models` first")
+    hooks._NLI_INSTANCE[:] = [nli]
     results = []
     for i, case in enumerate(cases, 1):
         store = by_id[case["store"]]

@@ -14,7 +14,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from .integrity import private_dir, store_dir, write_private
+from .integrity import private_dir, store_dir, store_lock, write_private
 
 MODES = ("ask", "record", "off")
 DEFAULTS = {"suspicious": "ask", "copied": "ask", "contradiction": "record"}
@@ -113,6 +113,11 @@ def set_mode(key: str, value: str) -> Path:
         raise ValueError(f"unknown setting {key!r}; one of {', '.join(DEFAULTS)}")
     if value not in MODES:
         raise ValueError(f"{key} must be one of {', '.join(MODES)}")
+    with store_lock():
+        return _set_mode(key, value)
+
+
+def _set_mode(key: str, value: str) -> Path:
     path = config_path()
     text = path.read_text(encoding="utf-8") if path.exists() else TEMPLATE.format(**DEFAULTS)
     line = f'{key} = "{value}"'

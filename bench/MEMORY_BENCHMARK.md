@@ -117,10 +117,13 @@ concrete external destination.
 - **Comparison with AMG is partial.** AMG's strengths are provenance and trust policies that need
   the integrator to label each write's source; every write here is labelled with its default
   source, so those policies were not exercised.
-- **Latency.** Each Claude Code hook is a new process. Writing an ordinary file or an unrelated
-  memory takes about 0.15 s; a memory write that has related existing memory loads the NLI model
-  and takes about 6 s (M-series Mac). The in-process figures the harness prints assume a loaded
-  model and do not reflect this.
+- **Latency.** Each Claude Code hook is a new process; the NLI model lives in a separate model
+  server that the hooks start on demand. Measured with the installed hook on an M-series Mac:
+  an ordinary or unrelated memory write takes about 0.1 s; in record mode (the default) a related
+  write also returns in about 0.1 s and the conflict is logged 0.4 s later (11 s when the server
+  first has to start and load the model); in ask mode, as this benchmark runs, a related write takes
+  about 0.5 s once the server is up and 3 s for the first one. The in-process figures the harness
+  prints assume a loaded model.
 
 ## Provenance check (memory copied from untrusted tool output)
 

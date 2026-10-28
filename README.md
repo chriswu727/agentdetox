@@ -36,7 +36,11 @@ Once installed, three hooks run inside Claude Code:
 
 Clean up with `agentdetox agent verify` (what changed, and why it is suspicious) and
 `agentdetox agent restore <file>` (put back the snapshot; the current file is quarantined under
-`~/.agentdetox/quarantine`, never deleted).
+`~/.agentdetox/quarantine`, never deleted). Snapshot copies that no longer back any file are
+deleted once a day (`agentdetox agent gc` does it now); quarantined files are kept. If the snapshot
+list itself is damaged, or deleted while its copies remain, AgentDetox says so at every session
+instead of quietly trusting whatever is on disk, until you check and run
+`agentdetox agent snapshot --reset`.
 
 | Agent | Files watched | Write blocking | Tamper detection |
 |---|---|---|---|
@@ -49,11 +53,14 @@ Clean up with `agentdetox agent verify` (what changed, and why it is suspicious)
 **Contradiction detection** (optional, `pip install 'agentdetox[nli]'` then `agentdetox fetch-models`):
 a memory write that contradicts what the agent already knows is a common sign of a fabricated fact.
 It uses a multilingual NLI model (mDeBERTa-v3, about 560 MB). **By default it records instead of
-asking**: after a write, a background process checks it and logs conflicts (`agentdetox events`), so
-writes are not slowed. On the v0 benchmark it catches 28% of fabricated facts that conflict with
-existing memory, but on real memory the model still misreads fragments, which is why it does not ask;
-`agentdetox config contradiction ask` makes it ask (about 6 s per related write). See
-[bench/MEMORY_BENCHMARK.md](bench/MEMORY_BENCHMARK.md).
+asking**: after a write, the hook hands the check to a background model server and returns
+(about 0.1 s), and conflicts are logged (`agentdetox events`). The server loads the model on first
+use (about 1 GB of memory), keeps it while memory is being written, and exits after 30 minutes
+without work; `agentdetox daemon status` shows it. Writes with nothing related in memory never wake
+it. On the v0 benchmark it catches 28% of fabricated facts that conflict with existing memory, but on
+real memory the model still misreads fragments, which is why it does not ask;
+`agentdetox config contradiction ask` makes it ask (about 0.5 s per related write once the server
+is up, 3 s for the first). See [bench/MEMORY_BENCHMARK.md](bench/MEMORY_BENCHMARK.md).
 
 **Provenance check** (Claude Code): a memory write that is mostly copied from web pages, MCP data, command
 output or files the agent just read asks for approval unless you asked it to remember. This is how
@@ -73,6 +80,7 @@ agentdetox status                         # health, what is watched, how checks 
 agentdetox events                         # everything blocked, asked, recorded or noticed
 agentdetox allow 3f9c2a1b7e               # stop flagging something you reviewed
 agentdetox config copied record           # change a check
+agentdetox daemon status                  # the background contradiction model server
 ```
 
 Every message from AgentDetox carries an id. If what it flagged is fine, `agentdetox allow <id>`
@@ -222,10 +230,11 @@ log-probabilities for two of its signals. Treat its output as a ranked lead list
 ```
 
 Installed hooks call a fixed executable, so updating it takes effect on the next hook call with
-no reinstall. Re-run `agentdetox install claude-code --apply` only when `agentdetox doctor` says
-the registered hooks are from an older version. To remove everything: `agentdetox uninstall
-claude-code`, then `uv tool uninstall agentdetox`, then delete `~/.agentdetox` (this also deletes
-quarantined files).
+no reinstall; a model server still running the old build is stopped by `update.sh`, and otherwise
+replaces itself on its next job. Re-run `agentdetox install claude-code --apply` only when
+`agentdetox doctor` says the registered hooks are from an older version. To remove everything:
+`agentdetox uninstall claude-code`, `agentdetox daemon stop`, then `uv tool uninstall agentdetox`, then
+delete `~/.agentdetox` (this also deletes quarantined files).
 
 ## License
 

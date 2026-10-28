@@ -7,10 +7,10 @@ from collections import Counter
 from dataclasses import asdict
 from pathlib import Path
 
-from . import __version__, allowlist, doctor, events, settings
+from . import __version__, allowlist, daemon, doctor, events, settings
 from .consistency import NLI
 from .context import home_dir
-from .integrity import baseline_entries
+from .integrity import StoreError, baseline_entries, usage
 
 ACTIVITY = ("blocked", "asked", "recorded", "contradictions", "notices")
 _DECISIONS = {"deny": "blocked", "ask": "asked", "record": "recorded"}
@@ -41,7 +41,10 @@ def _bucket(row: dict) -> str:
 
 def collect(project: Path, days: int = 7) -> dict:
     problems = [c for c in doctor.run(project) if c.status != "ok"]
-    files = baseline_entries()
+    try:
+        files, store = baseline_entries(), usage()
+    except StoreError:
+        files, store = {}, None  # doctor's failure, shown under Health, says why
     current, _ = settings.load()
     rows = events.read(None)
     since = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(time.time() - days * 86400))
@@ -56,6 +59,8 @@ def collect(project: Path, days: int = 7) -> dict:
         },
         "checks": [asdict(s) for s in current],
         "contradiction_model": NLI.installed() and NLI().available(),
+        "model_server": daemon.ping(),
+        "store": store,
         "config_file": str(settings.config_path()) if settings.config_path().exists() else None,
         "allowed": len(allowlist.entries()),
         "days": days,
@@ -96,6 +101,17 @@ def render(data: dict) -> str:
                       + (" (inactive: model not installed)" if inactive else ""))
     checks.append("change with `agentdetox config <key> <value>`")
     row("Checks", *checks)
+
+    if data["contradiction_model"]:
+        s = data["model_server"]
+        row("Model server", f"running, pid {s['pid']}, model {'loaded' if s['model_loaded'] else 'not loaded yet'}, "
+                            f"{s['jobs']} job(s), idle {s['idle_seconds'] // 60} min" if s else
+                            "not running; starts on the next memory write with something to compare")
+    st = data["store"]
+    if st:
+        row("Store", f"{st['bytes'] / 1e6:.1f} MB in {st['objects']} snapshot copies"
+                     + (f" ({st['unreferenced']} superseded, cleaned daily)" if st["unreferenced"] else "")
+                     + f", {st['quarantined']} quarantined file(s)")
 
     row("Allowlist", f"{data['allowed']} id(s)" + (" (`agentdetox allow --list`)" if data["allowed"] else ""))
     a = data["activity"]

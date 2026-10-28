@@ -13,4 +13,7 @@ fi
 
 .venv/bin/pytest -q -p no:warnings
 uv tool install --quiet --reinstall --python 3.12 ".[nli]"
-"$(uv tool dir --bin)/agentdetox" doctor
+bin="$(uv tool dir --bin)/agentdetox"
+# A model server still running the old build would otherwise serve until its next job.
+"$bin" daemon stop >/dev/null || true
+"$bin" doctor

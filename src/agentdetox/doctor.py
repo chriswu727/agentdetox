@@ -11,11 +11,11 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import __version__, allowlist, settings
+from . import __version__, allowlist, daemon, settings
 from .consistency import NLI, NLI_MODEL
 from .context import home_dir
 from .install import claude_code_settings, default_settings_path
-from .integrity import baseline_paths, is_self_hook, store_dir
+from .integrity import SCHEMA_VERSION, StoreError, is_self_hook, store_dir, usage
 
 
 @dataclass
@@ -102,14 +102,26 @@ def _nli() -> list[Check]:
         return [Check("warn", "contradiction detection off: model not downloaded; run `agentdetox fetch-models`")]
     how = {"ask": "asks on conflicts", "off": "turned off"}.get(settings.mode("contradiction"),
                                                                "records conflicts in the background")
-    return [Check("ok", f"contradiction detection {how} ({NLI_MODEL})")]
+    checks = [Check("ok", f"contradiction detection {how} ({NLI_MODEL})")]
+    info = daemon.ping()
+    if info and info["code"] != daemon.code_id():
+        checks.append(Check("warn", f"model server (pid {info['pid']}) runs an older build; it is replaced on its "
+                                    "next job, or run `agentdetox daemon stop`"))
+    elif info:
+        checks.append(Check("ok", f"model server running (pid {info['pid']}, model "
+                                  f"{'loaded' if info['model_loaded'] else 'not loaded yet'})"))
+    return checks
 
 
 def _store() -> list[Check]:
     store = store_dir()
     if not (store / "baseline.json").exists():
         return [Check("warn", f"snapshot store {store} is empty; it is created on install or first session")]
-    checks = [Check("ok", f"snapshot store {store}: {len(baseline_paths())} file(s) tracked")]
+    try:
+        tracked = usage()["tracked"]
+    except StoreError as e:
+        return [Check("fail", str(e))]
+    checks = [Check("ok", f"snapshot store {store}: {tracked} file(s) tracked (store version {SCHEMA_VERSION})")]
     for p in (store, store / "objects"):
         if p.exists() and stat.S_IMODE(p.stat().st_mode) & 0o077:
             checks.append(Check("fail", f"{p} is readable by other users; run `chmod 700 {p}`"))

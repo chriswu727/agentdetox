@@ -10,24 +10,24 @@ Handlers fail open: an error inside AgentDetox must never break the agent.
 
 from __future__ import annotations
 
+import contextlib
 import difflib
 import json
 import os
 import re
 import shlex
-import subprocess
 import sys
-import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from . import allowlist, events, settings
+from . import allowlist, daemon, events, settings
 from .agentscan import read_text, scan_text, scan_context
 from .allowlist import Flag, contradiction_flag, copy_flag, finding_flag, source_id
-from .consistency import NLI, Contradiction, find_contradictions, statements, store_statements
+from .consistency import (NLI, Contradiction, Statement, candidate_pairs, find_contradictions, statements,
+                          store_statements)
 from .context import ContextFile, classify, discover, home_dir, related_files
 from .findings import Finding, finding_id
-from .integrity import private_dir, baseline_paths, snapshot, snapshot_text, store_dir, verify
+from .integrity import StoreError, baseline_paths, gc, snapshot, snapshot_text, store_dir, verify
 from .provenance import CopyFinding, copied_from_untrusted, read_transcript
 from .persistence import guarded_sections
 
@@ -229,34 +229,57 @@ def _copied(cf: ContextFile, added: str, transcript: str | None) -> CopyFinding 
     return copied_from_untrusted(added, t)
 
 
-def _contradictions(cf: ContextFile, old_text: str, new_text: str, project: Path) -> list[Contradiction]:
+def _comparison(cf: ContextFile, old_text: str, new_text: str,
+                project: Path) -> tuple[list[Statement], list[Statement]] | None:
+    """The statements a write adds and the ones they are compared with."""
     if cf.kind not in ("memory", "instructions"):
-        return []
+        return None
     # Diff by statement, not by line: editing one sentence of a line must not make the
     # line's other, unchanged sentences count as new claims.
     old_texts = {s.text for s in statements(old_text, str(cf.path))}
     after = statements(new_text, str(cf.path))
     new_stmts = [s for s in after if s.text not in old_texts]
-    if not new_stmts or not NLI.installed():
-        return []
+    if not new_stmts:
+        return None
     added_texts = {s.text for s in new_stmts}
     # Statements still in the target file after the edit count as existing; ones the
     # edit removed do not, so replacing an old fact with a new one is an update.
     existing = [s for s in after if s.text not in added_texts]
     existing += store_statements(related_files(cf, project), skip={str(cf.path)})
+    return new_stmts, existing
+
+
+def _contradictions(cf: ContextFile, old_text: str, new_text: str, project: Path, nli=None) -> list[Contradiction]:
+    found = _comparison(cf, old_text, new_text, project)
+    if found is None or not NLI.installed():
+        return []
     allowed = allowlist.entries()
-    return [c for c in find_contradictions(new_stmts, existing, _nli) if contradiction_flag(c).id not in allowed]
+    return [c for c in find_contradictions(*found, nli or _nli) if contradiction_flag(c).id not in allowed]
+
+
+def _nli_installed() -> bool:
+    # AGENTDETOX_NLI=0 must also keep tests and benchmarks from starting a server.
+    return os.environ.get("AGENTDETOX_NLI") != "0" and NLI.installed()
 
 
 _NLI_INSTANCE: list = []
 
 
 def _nli():
-    """One model per process; None when the optional NLI extra or model is missing."""
+    """The model for checks that must answer inside the hook (ask mode): the model
+    server's, so only its first use pays the load. None when the extra or model is
+    missing. A process that set _NLI_INSTANCE (a benchmark) uses its own model."""
     if not _NLI_INSTANCE:
-        nli = NLI()
-        _NLI_INSTANCE.append(nli if nli.available() else None)
+        _NLI_INSTANCE.append(_ServerNLI() if NLI().available() else None)
     return _NLI_INSTANCE[0]
+
+
+class _ServerNLI:
+    def contradiction(self, pairs: list[tuple[str, str]]) -> list[float]:
+        probs = daemon.contradiction(pairs)
+        if probs is None:  # no server could be reached: load the model here, as before
+            probs = NLI().contradiction(pairs)
+        return probs
 
 
 def _conflict_reason(cf: ContextFile, conflicts: list[Contradiction]) -> str:
@@ -422,28 +445,23 @@ def _post_tool_use(agent: str, payload: dict, project: Path) -> None:
 
 
 def _record_in_background(cf: ContextFile, old: str, project: Path) -> None:
-    """Run the slow NLI check after the hook has returned, so recording costs no latency."""
-    if cf.kind not in ("memory", "instructions") or not NLI.installed():
+    """Hand the slow NLI check to the model server, so recording costs the hook nothing.
+    Writes with nothing to compare (most of them) never reach it."""
+    if not _nli_installed():
         return
-    pending = private_dir(store_dir() / "pending")
-    fd, old_file = tempfile.mkstemp(dir=pending, suffix=".txt")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(old)
-    subprocess.Popen([sys.executable, "-m", "agentdetox", "_record-contradictions", str(cf.path), str(project), old_file],
-                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     start_new_session=True)
+    found = _comparison(cf, old, read_text(cf.path), project)
+    if found is None or not candidate_pairs(*found):
+        return
+    daemon.submit({"path": str(cf.path), "project": str(project), "old": old})
 
 
-def record_contradictions(path: Path, project: Path, old_file: Path) -> int:
-    """Background worker: log contradictions between a written file and what was there."""
-    try:
-        old = old_file.read_text(encoding="utf-8")
-    finally:
-        old_file.unlink(missing_ok=True)
+def record_contradictions(path: Path, project: Path, old: str, nli=None) -> int:
+    """Log contradictions between a written file and what was there before (run by the
+    model server)."""
     cf = classify(path, project=project)
     if cf is None or not path.is_file():
         return 0
-    conflicts = _contradictions(cf, old, read_text(path), project)
+    conflicts = _contradictions(cf, old, read_text(path), project, nli)
     for c in conflicts:
         events.record("contradiction", id=contradiction_flag(c).id, path=str(path), new=c.new.text[:300],
                       existing=c.existing.text[:300], existing_source=c.existing.source,
@@ -454,6 +472,18 @@ def record_contradictions(path: Path, project: Path, old_file: Path) -> int:
 # SessionStart -------------------------------------------------------------------------
 
 def _session_start(agent: str, project: Path) -> str:
+    try:
+        notice = _session_check(agent, project)
+    except StoreError as e:
+        # Deleting or corrupting the snapshot list is itself a way to launder tampering.
+        return ("AgentDetox security notice.\nAgentDetox could not compare this agent's memory, rules and config "
+                f"with its snapshot: {e}\nTell the user about this before doing anything else.")
+    with contextlib.suppress(OSError, StoreError):
+        gc()
+    return notice
+
+
+def _session_check(agent: str, project: Path) -> str:
     # Only high findings interrupt a session. Medium ones (a user's own "commit without
     # asking" preference, a quoted attack example) stay visible in `agentdetox agent scan`
     # but would otherwise nag at every start and get the tool uninstalled.

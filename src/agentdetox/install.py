@@ -21,7 +21,9 @@ def hook_command(agent: str) -> str:
     exe = str(sibling) if sibling.exists() else shutil.which("agentdetox")
     if exe:
         return f"{shlex.quote(exe)} hook {agent}"
-    return f"{shlex.quote(sys.executable)} -m agentdetox hook {agent}"
+    # -I: hooks run in the project directory, and plain -m would import an `agentdetox`
+    # package planted at the top of a cloned repository.
+    return f"{shlex.quote(sys.executable)} -I -m agentdetox hook {agent}"
 
 
 def claude_code_settings(existing: dict, command: str) -> dict:

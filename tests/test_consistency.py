@@ -177,22 +177,29 @@ def test_record_mode_is_default_and_never_asks(env, monkeypatch):
     assert nli.calls == 0                      # nothing slow runs inside the hook
 
 
-def test_post_tool_use_hands_contradictions_to_a_background_worker(env, monkeypatch, tmp_path):
+def test_post_tool_use_hands_contradictions_to_the_model_server(env, monkeypatch):
     from agentdetox import events
     _, project, mem = env
     nli = FakeNLI()
     monkeypatch.setattr(hooks, "_nli", lambda: nli)
-    monkeypatch.delenv("AGENTDETOX_CONTRADICTION", raising=False)
-    spawned = []
-    monkeypatch.setattr(hooks.subprocess, "Popen", lambda args, **kw: spawned.append(args))
+    monkeypatch.setattr(hooks, "_nli_installed", lambda: True)
+    jobs = []
+    monkeypatch.setattr(hooks.daemon, "submit", jobs.append)
+
+    def post(path):
+        hooks.handle("claude-code", {"hook_event_name": "PostToolUse", "cwd": str(project), "tool_name": "Write",
+                                     "tool_input": {"file_path": str(path)}})
+
+    unrelated = mem / "style.md"
+    unrelated.write_text("The user prefers short answers.\n")
+    post(unrelated)
+    assert jobs == []                          # nothing to compare: the server is never woken
     path = mem / "deploy-new.md"
     path.write_text("Deploy with ./deploy.sh --skip-checks; the staging checks were retired.\n")
-    hooks.handle("claude-code", {"hook_event_name": "PostToolUse", "cwd": str(project), "tool_name": "Write",
-                                 "tool_input": {"file_path": str(path)}})
-    [args] = spawned
-    assert args[1:4] == ["-m", "agentdetox", "_record-contradictions"]
-    assert hooks.record_contradictions(Path(args[4]), Path(args[5]), Path(args[6])) == 1
-    assert not Path(args[6]).exists()          # the old-text handoff file is removed
+    post(path)
+    [job] = jobs
+    assert job == {"path": str(path), "project": str(project), "old": ""}
+    assert hooks.record_contradictions(Path(job["path"]), Path(job["project"]), job["old"]) == 1
     [row] = [r for r in events.read() if r["event"] == "contradiction"]
     assert "skip-checks" in row["new"] and row["probability"] > 0.9
     assert oct(events.log_path().stat().st_mode & 0o777) == "0o600"

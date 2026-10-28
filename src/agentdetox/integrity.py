@@ -7,12 +7,15 @@ disk now with what was there before.
 
 from __future__ import annotations
 
+import contextlib
 import difflib
+import fcntl
 import hashlib
 import json
 import os
 import re
 import shutil
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,9 +56,79 @@ def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+# 0: 0.1.0 before versioning (same layout, no "version" key). 1: adds "version" and "last_gc".
+SCHEMA_VERSION = 1
+GC_INTERVAL = 24 * 3600
+LOCK_TIMEOUT = 10.0
+
+
+class StoreError(RuntimeError):
+    """The store cannot be trusted as it is. Starting over silently would accept
+    whatever is on disk now, tampered files included, so this is reported instead."""
+
+
+_LOCK = threading.RLock()
+_lock_depth = 0
+
+
+@contextlib.contextmanager
+def store_lock(timeout: float = LOCK_TIMEOUT):
+    """Serialise read-modify-write of the store across hooks, the model server and the
+    CLI; parallel tool calls otherwise lose each other's snapshot entries. Re-entrant
+    within a process (flock on a second descriptor would wait for ourselves)."""
+    global _lock_depth
+    with _LOCK:
+        if _lock_depth:
+            _lock_depth += 1
+            try:
+                yield
+            finally:
+                _lock_depth -= 1
+            return
+        fd = os.open(private_dir(store_dir()) / "store.lock", os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() > deadline:
+                        raise TimeoutError(f"{store_dir()} is locked by another process") from None
+                    time.sleep(0.01)
+            _lock_depth = 1
+            try:
+                yield
+            finally:
+                _lock_depth = 0
+        finally:
+            os.close(fd)
+
+
+_RESET_HINT = ("Check the agent's memory, rules and config, then run `agentdetox agent snapshot --reset` "
+               "to trust them as they are now.")
+
+
 def _load_baseline() -> dict:
     path = store_dir() / "baseline.json"
-    return json.loads(path.read_text()) if path.exists() else {"files": {}}
+    if not path.exists():
+        objects = store_dir() / "objects"
+        if objects.is_dir() and any(objects.iterdir()):
+            raise StoreError(f"{path} is missing although snapshot copies exist, so it may have been deleted "
+                             f"to hide changes. {_RESET_HINT}")
+        return {"version": SCHEMA_VERSION, "files": {}}
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError) as e:
+        raise StoreError(f"{path} is damaged ({e}). {_RESET_HINT}") from None
+    version = data.get("version", 0) if isinstance(data, dict) else -1
+    if not isinstance(data, dict) or not isinstance(data.get("files"), dict):
+        raise StoreError(f"{path} does not look like an AgentDetox snapshot list")
+    if version > SCHEMA_VERSION:
+        raise StoreError(f"{path} was written by a newer AgentDetox (store version {version}, this one "
+                         f"reads up to {SCHEMA_VERSION}); upgrade agentdetox")
+    data["version"] = SCHEMA_VERSION
+    return data
 
 
 def baseline_paths() -> set[str]:
@@ -67,14 +140,33 @@ def baseline_entries() -> dict[str, dict]:
 
 
 def _save_baseline(baseline: dict) -> None:
+    baseline["version"] = SCHEMA_VERSION
     tmp = private_dir(store_dir()) / "baseline.json.tmp"
     write_private(tmp, json.dumps(baseline, indent=1, sort_keys=True).encode())
     tmp.replace(store_dir() / "baseline.json")
 
 
+def reset_baseline() -> Path | None:
+    """Start a new snapshot list after the old one was damaged or deleted. The old file is
+    kept beside it; returns where, or None if there was none."""
+    with store_lock():
+        path = store_dir() / "baseline.json"
+        kept = None
+        if path.exists():
+            kept = path.with_name(f"baseline.json.broken-{time.strftime('%Y%m%d-%H%M%S')}")
+            path.replace(kept)
+        _save_baseline({"version": SCHEMA_VERSION, "files": {}})
+    return kept
+
+
 def snapshot(files: list[ContextFile], roots: list[Path]) -> int:
     """Record the current state of `files` as trusted. Entries under `roots` that no
     longer exist are dropped; entries for other projects are kept."""
+    with store_lock():
+        return _snapshot(files, roots)
+
+
+def _snapshot(files: list[ContextFile], roots: list[Path]) -> int:
     baseline = _load_baseline()
     private_dir(store_dir())
     objects = private_dir(store_dir() / "objects")
@@ -185,6 +277,11 @@ def _object_text(digest: str) -> str:
 def restore(path: Path) -> Path | None:
     """Put the snapshotted version back. The current version is moved to quarantine,
     never deleted. Returns the quarantine location, or None if nothing was on disk."""
+    with store_lock():
+        return _restore(path)
+
+
+def _restore(path: Path) -> Path | None:
     entry = _load_baseline()["files"].get(str(path))
     if entry is None:
         raise KeyError(f"{path} is not in the snapshot")
@@ -206,3 +303,46 @@ def restore(path: Path) -> Path | None:
     path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(obj, path)
     return quarantined
+
+
+def gc(force: bool = False) -> dict | None:
+    """Delete snapshot copies no entry refers to any more (each trusted write leaves the
+    previous version behind) and job files a crashed model server never picked up.
+    Quarantine is never touched: it holds the user's own files. Without `force`, runs
+    at most once per GC_INTERVAL and returns None when skipped."""
+    with store_lock():
+        baseline = _load_baseline()
+        now = time.time()
+        if not force and now - baseline.get("last_gc", 0) < GC_INTERVAL:
+            return None
+        referenced = {e["sha256"] for e in baseline["files"].values()}
+        removed = freed = 0
+        objects = store_dir() / "objects"
+        for obj in objects.iterdir() if objects.is_dir() else []:
+            if obj.name not in referenced:
+                freed += obj.stat().st_size
+                obj.unlink()
+                removed += 1
+        pending = store_dir() / "pending"
+        for job in pending.iterdir() if pending.is_dir() else []:
+            if now - job.stat().st_mtime > GC_INTERVAL:
+                job.unlink()
+        baseline["last_gc"] = now
+        _save_baseline(baseline)
+    return {"objects": removed, "bytes": freed}
+
+
+def usage() -> dict:
+    """Sizes for `agentdetox status`."""
+    files = _load_baseline()["files"]
+    referenced = {e["sha256"] for e in files.values()}
+    objects = [p for p in (store_dir() / "objects").iterdir()] if (store_dir() / "objects").is_dir() else []
+    quarantine = store_dir() / "quarantine"
+    return {
+        "tracked": len(files),
+        "objects": len(objects),
+        "unreferenced": sum(p.name not in referenced for p in objects),
+        "bytes": sum(p.stat().st_size for p in objects),
+        "quarantined": sum(1 for p in quarantine.rglob("*") if p.is_file() and p.name != "manifest.json")
+        if quarantine.is_dir() else 0,
+    }
