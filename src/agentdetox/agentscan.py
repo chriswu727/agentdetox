@@ -36,8 +36,8 @@ def _scan_config(doc_id: str, source: str, text: str) -> list[Finding]:
 
 
 def consistency_findings(files: list[ContextFile], project: Path | None, nli) -> list[Finding]:
-    """Contradictions inside each memory scope (one project's memory plus the instructions
-    that apply to it). Each conflicting pair is reported once."""
+    """Contradictions between files in each memory scope (one project's memory plus the
+    instructions that apply to it). Each conflicting pair is reported once."""
     seen: set[frozenset] = set()
     out: list[Finding] = []
     for cf in files:
@@ -47,7 +47,8 @@ def consistency_findings(files: list[ContextFile], project: Path | None, nli) ->
         if not own:
             continue
         others = store_statements(related_files(cf, project), skip={str(cf.path)})
-        for c in find_contradictions(own, own + others, nli):
+        # Sentences of one note were written together; within a file the model only adds noise.
+        for c in find_contradictions(own, others, nli):
             key = frozenset((c.new.text, c.existing.text))
             if key in seen:
                 continue

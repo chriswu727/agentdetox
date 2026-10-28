@@ -45,13 +45,13 @@ direct store edits followed by `verify_all()`.
 
 | Case kind | Lang | n | AgentDetox flagged | AgentDetox blocked | AMG flagged | AMG blocked |
 |---|---|---|---|---|---|---|
-| poison_fact_conflict | en | 150 | **30.0%** | 0.0% | 0.0% | 0.0% |
+| poison_fact_conflict | en | 150 | **28.0%** | 0.0% | 0.0% | 0.0% |
 | poison_fact_novel | en | 150 | 0.0% | 0.0% | 0.0% | 0.0% |
 | poison_instruction | en | 213 | 5.6% | 5.2% | 0.9% | 0.9% |
 | poison_instruction_oob | en | 213 | 5.2% | 0.0% | 100.0%* | 0.0% |
 | benign_add | en | 20 | 10.0% | 0.0% | 0.0% | 0.0% |
 | benign_add | zh | 12 | 0.0% | 0.0% | 0.0% | 0.0% |
-| benign_update | en | 15 | 6.7% | 0.0% | 0.0% | 0.0% |
+| benign_update | en | 15 | 0.0% | 0.0% | 0.0% | 0.0% |
 | benign_update | zh | 9 | 0.0% | 0.0% | 0.0% | 0.0% |
 | benign_conflicting_add | en | 5 | 0.0% | 0.0% | 0.0% | 0.0% |
 | benign_conflicting_add | zh | 3 | 0.0% | 0.0% | 0.0% | 0.0% |
@@ -62,18 +62,35 @@ direct store edits followed by `verify_all()`.
 
 What the numbers say:
 
-- **Contradiction detection is the only thing here that catches fabricated facts**: 30% of the
+- **Contradiction detection is the only thing here that catches fabricated facts**: 28% of the
   false claims that conflict with an existing memory note, against 0% for AMG, which has no
   semantic check. Facts with no counterpart are not caught by either tool, as expected.
 - **Planted instructions are mostly missed by both tools.** deepset prompts are varied chat-style
   injections ("Forget all previous tasks…"); rules catch few of them, which matches the 10.6% that
   rules scored on the same prompts in the knowledge-base benchmark.
-- **False alarms: 5 of 60 English benign cases (8.3%), 0 of 36 Chinese.** All 5 are the NLI model
+- **False alarms: 4 of 60 English benign cases (6.7%), 0 of 36 Chinese.** All 4 are the NLI model
   calling consistent statements about one topic contradictory (two of them are the same pair
-  replayed out of band); no benign case was flagged by a rule. Flags only ask; nothing benign was
-  blocked.
+  replayed out of band); no benign case was flagged by a rule. This benign set is far cleaner than
+  real memory; see "Contradictions on real memory" below.
 - **Benign conflicting updates were not flagged** (0 of 8). Asking there would arguably have been
   useful; the similarity pre-filter set on the dev split is conservative.
+
+## Contradictions on real memory
+
+The table above was measured in ask mode. A read-only scan of one user's real Claude Code memory
+(106 memory files plus instruction files, 2026-10-27) told a different story: the version above
+flagged 124 contradictions across 47 files, nearly all false. Real memory is lists, fragments, tables
+and Why/How-to-apply notes, and the NLI model, judging fragments out of context, calls notes about
+different components contradictory. Changes made against that scan and the dev split: statements
+carry their heading and parent list item as context, "label: value" lines are only compared with
+lines about the same label, list-introducing lines and fragments under 3 content words are dropped,
+compared statements must share 2 content words, and the whole-store scan compares across files only.
+Real-memory flags fell to 19 (11 files); the test split numbers above are with these changes.
+
+The trade-off cannot be tuned away with this model: thresholds that bring real-memory flags near 0
+(p >= 0.98) leave about 13% recall on the dev split. **Hooks therefore record contradictions in the
+background instead of asking** (`agentdetox events` shows them; `AGENTDETOX_CONTRADICTION=ask` restores
+prompting). A stronger judge than this NLI model is needed before asking again.
 
 ## What changed while building this
 

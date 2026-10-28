@@ -26,6 +26,9 @@ CONTRADICTION_THRESHOLD = 0.8
 # of bench/memory_eval.py: 0.15 is the lowest value with no false alarm on its benign cases.
 MIN_SIMILARITY = 0.15
 CANDIDATES_PER_STATEMENT = 5
+# Statements compared must share this many content words; one shared common word let the
+# NLI model compare unrelated notes (set on the dev split and on real memory).
+MIN_SHARED_TOKENS = 2
 
 _FRONTMATTER_RE = re.compile(r"\A---\n.*?\n---\n", re.S)
 _FENCE_RE = re.compile(r"^```.*?^```", re.S | re.M)
@@ -41,6 +44,31 @@ class Statement:
     text: str
     source: str
     line: int
+    context: str = ""  # nearest heading and parent list item, so the model knows the subject
+    subject: str = ""  # the label of a "label: value" line ("Prod DB: db.acme.internal")
+
+
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
+_LABEL_RE = re.compile(r"^\**`?(?P<label>[^:：—–`*\n]{1,48}?)`?\**\s*(?:[:：]|\s[—–]\s|\s-\s)\s*\**\s*(?P<value>\S.*)$")
+_GENERIC_LABELS = {"note", "notes", "tip", "warning", "important", "update", "nb", "why", "how to apply", "example",
+                   "注意", "备注", "提示", "说明", "原因", "例如"}
+# Shorter fragments are list items whose subject lives in their context; 3 still keeps
+# short claims such as "Node 22 is required."
+MIN_CONTENT_TOKENS = 3
+
+
+def _clean(s: str) -> str:
+    return " ".join(s.replace("**", "").replace("`", "").split())
+
+
+def _label(line: str) -> str:
+    m = _LABEL_RE.match(line)
+    if not m:
+        return ""
+    label = _clean(m.group("label")).strip(" -")
+    if label.lower() in _GENERIC_LABELS or len(label.split()) > 5 or (_CJK_RE.search(label) and len(label) > 12):
+        return ""
+    return label
 
 
 @dataclass
@@ -54,18 +82,58 @@ def statements(text: str, source: str) -> list[Statement]:
     text = _FRONTMATTER_RE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
     text = _FENCE_RE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
     out: list[Statement] = []
+    headings: list[tuple[int, str]] = []
+    parents: list[tuple[int, str]] = []
     for lineno, raw in enumerate(text.splitlines(), 1):
-        line = raw.strip()
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        h = _HEADING_RE.match(stripped)
+        if h:
+            level = len(h.group(1))
+            headings = [x for x in headings if x[0] < level] + [(level, _clean(h.group(2)))]
+            parents = []
+            continue
         # Index entries ("- [Title](file.md) — hook") point at facts that are compared in
         # their own files; as fragments they only feed the NLI model noise.
-        if not line or line.startswith(("#", "|", ">", "<!--")) or _INDEX_LINE_RE.match(line):
+        if stripped.startswith(("|", ">", "<!--")) or _INDEX_LINE_RE.match(stripped):
             continue
-        line = _BULLET_RE.sub("", line)
-        for sentence in _SENTENCE_RE.split(line):
+        indent = len(raw) - len(raw.lstrip())
+        bullet = bool(_BULLET_RE.match(raw))
+        line = _BULLET_RE.sub("", stripped)
+        if bullet:
+            parents = [p for p in parents if p[0] < indent]
+        context = " > ".join([x[1] for x in headings[-1:]] + [p[1] for p in parents[-1:]])[:100]
+        if bullet:
+            parents.append((indent, _clean(line)[:80]))
+        elif line.endswith((":", "：")):
+            parents = [(-1, _clean(line[:-1])[:80])]  # a paragraph introducing the list below
+        else:
+            parents = []
+        subject = _label(line)
+        for i, sentence in enumerate(_SENTENCE_RE.split(line)):
             s = sentence.strip()
-            if len(s) >= (6 if _CJK_RE.search(s) else 12):
-                out.append(Statement(s, source, lineno))
+            if not s or s.endswith((":", "：")) or len(_tokens(s)) < MIN_CONTENT_TOKENS:
+                continue
+            out.append(Statement(s, source, lineno, context, subject if i == 0 else ""))
     return out
+
+
+def _same_subject(a: Statement, b: Statement) -> bool:
+    """Two "label: value" lines only conflict if they are about the same label; a labelled
+    line and a sentence only if the sentence mentions the label."""
+    sa, sb = set(_tokens(a.subject)), set(_tokens(b.subject))
+    if sa and sb:
+        return bool(sa & sb)
+    if sa:
+        return bool(sa & set(_tokens(b.text)))
+    if sb:
+        return bool(sb & set(_tokens(a.text)))
+    return True
+
+
+def _nli_text(s: Statement) -> str:
+    return f"{s.context}: {s.text}" if s.context else s.text
 
 
 class NLI:
@@ -189,7 +257,8 @@ def candidate_pairs(new: list[Statement], existing: list[Statement],
     pairs = []
     for i in range(len(new)):
         for j in np.argsort(-sims[i])[:k]:
-            if sims[i, j] >= min_sim and new[i].text != existing[j].text:
+            if (sims[i, j] >= min_sim and new[i].text != existing[j].text and _same_subject(new[i], existing[j])
+                    and len(set(_tokens(new[i].text)) & set(_tokens(existing[j].text))) >= MIN_SHARED_TOKENS):
                 pairs.append((i, int(j)))
     return pairs
 
@@ -204,7 +273,7 @@ def find_contradictions(new: list[Statement], existing: list[Statement], nli,
         nli = nli()
         if nli is None:
             return []
-    probs = nli.contradiction([(new[i].text, existing[j].text) for i, j in pairs])
+    probs = nli.contradiction([(_nli_text(new[i]), _nli_text(existing[j])) for i, j in pairs])
     best: dict[int, Contradiction] = {}
     for (i, j), p in zip(pairs, probs):
         if p >= threshold and (i not in best or p > best[i].probability):

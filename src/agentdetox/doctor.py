@@ -4,6 +4,7 @@ a tool that rewrites its own hook config is the behaviour AgentDetox flags in ot
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import stat
 import subprocess
@@ -85,7 +86,9 @@ def _nli() -> list[Check]:
         return [Check("warn", "contradiction detection off: install 'agentdetox[nli]', then `agentdetox fetch-models`")]
     if not nli.available():
         return [Check("warn", "contradiction detection off: model not downloaded; run `agentdetox fetch-models`")]
-    return [Check("ok", f"contradiction detection on ({NLI_MODEL})")]
+    mode = os.environ.get("AGENTDETOX_CONTRADICTION", "record")
+    how = {"ask": "asks on conflicts", "off": "turned off"}.get(mode, "records conflicts in the background")
+    return [Check("ok", f"contradiction detection {how} ({NLI_MODEL})")]
 
 
 def _store() -> list[Check]:
