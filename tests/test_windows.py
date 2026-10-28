@@ -15,7 +15,7 @@ import time
 
 import pytest
 
-from agentdetox import compat, doctor, events, hooks
+from agentdetox import compat, doctor, events, hooks, shell
 from agentdetox.cli import main
 from agentdetox.context import claude_memory_dir
 from agentdetox.install import hook_command
@@ -183,7 +183,7 @@ def test_windows_hook_commands_are_recognised(windows, command, exe):
     ("agentdetox.exe status", False),
 ])
 def test_shell_guard_knows_the_windows_program_name(command, changes):
-    assert hooks._changes_agentdetox(hooks._shell_tokens(command)) is changes
+    assert shell.changes_agentdetox(shell.split(command)) is changes
 
 
 # Doctor -------------------------------------------------------------------------------

@@ -142,6 +142,11 @@ def home_dir() -> Path:
     return Path(os.environ.get("AGENTDETOX_USER_HOME") or Path.home())
 
 
+def short_path(source: str) -> str:
+    home = str(home_dir())
+    return "~" + source[len(home):] if source.startswith(home) else source
+
+
 def discover(agents: list[str] | None = None, project: Path | None = None, home: Path | None = None) -> list[ContextFile]:
     home = home or home_dir()
     found: dict[Path, ContextFile] = {}

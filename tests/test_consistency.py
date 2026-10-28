@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from agentdetox import hooks, settings
+from agentdetox import engine, hooks, settings
 from agentdetox.cli import main
 from agentdetox.consistency import NLI, Statement, candidate_pairs, find_contradictions, statements
 from agentdetox.context import claude_memory_dir
@@ -29,7 +29,7 @@ class FakeNLI:
 def fake(monkeypatch):
     """Ask mode, so the tests below see contradictions in the hook's decision."""
     nli = FakeNLI()
-    monkeypatch.setattr(hooks, "_nli", lambda: nli)
+    monkeypatch.setattr(engine, "_nli", lambda: nli)
     monkeypatch.setenv("AGENTDETOX_CONTRADICTION", "ask")
     return nli
 
@@ -171,7 +171,7 @@ def test_real_model(monkeypatch):
 def test_record_mode_is_default_and_never_asks(env, monkeypatch):
     _, project, mem = env
     nli = FakeNLI()
-    monkeypatch.setattr(hooks, "_nli", lambda: nli)
+    monkeypatch.setattr(engine, "_nli", lambda: nli)
     monkeypatch.delenv("AGENTDETOX_CONTRADICTION", raising=False)
     assert settings.mode("contradiction") == "record"
     assert pre(project, mem / "deploy-new.md", "Deploy with ./deploy.sh --skip-checks; the staging checks were retired.\n") is None
@@ -182,10 +182,10 @@ def test_post_tool_use_hands_contradictions_to_the_model_server(env, monkeypatch
     from agentdetox import events
     _, project, mem = env
     nli = FakeNLI()
-    monkeypatch.setattr(hooks, "_nli", lambda: nli)
-    monkeypatch.setattr(hooks, "_nli_installed", lambda: True)
+    monkeypatch.setattr(engine, "_nli", lambda: nli)
+    monkeypatch.setattr(engine, "_nli_installed", lambda: True)
     jobs = []
-    monkeypatch.setattr(hooks.daemon, "submit", jobs.append)
+    monkeypatch.setattr(engine.daemon, "submit", jobs.append)
 
     def post(path):
         hooks.handle("claude-code", {"hook_event_name": "PostToolUse", "cwd": str(project), "tool_name": "Write",
@@ -200,7 +200,7 @@ def test_post_tool_use_hands_contradictions_to_the_model_server(env, monkeypatch
     post(path)
     [job] = jobs
     assert job == {"path": str(path), "project": str(project), "old": ""}
-    assert hooks.record_contradictions(Path(job["path"]), Path(job["project"]), job["old"]) == 1
+    assert engine.record_contradictions(Path(job["path"]), Path(job["project"]), job["old"]) == 1
     [row] = [r for r in events.read() if r["event"] == "contradiction"]
     assert "skip-checks" in row["new"] and row["probability"] > 0.9
     assert os.name == "nt" or oct(events.log_path().stat().st_mode & 0o777) == "0o600"   # Windows: ACLs

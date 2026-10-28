@@ -28,7 +28,7 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
-from agentdetox import consistency, hooks
+from agentdetox import consistency, engine, hooks
 from agentdetox.context import claude_memory_dir, discover
 from agentdetox.integrity import snapshot
 
@@ -212,7 +212,7 @@ def main() -> None:
     nli = consistency.NLI()
     if not nli.available():
         raise SystemExit("the NLI model is not available; run `agentdetox fetch-models` first")
-    hooks._NLI_INSTANCE[:] = [nli]
+    engine._NLI_INSTANCE[:] = [nli]
     results = []
     for i, case in enumerate(cases, 1):
         store = by_id[case["store"]]

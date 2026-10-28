@@ -183,7 +183,7 @@ def _local_nli():
 
 
 def _record(job: dict, nli) -> None:
-    from .hooks import record_contradictions
+    from .engine import record_contradictions
 
     try:
         record_contradictions(Path(job["path"]), Path(job["project"]), job.get("old", ""), nli)

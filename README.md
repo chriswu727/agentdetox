@@ -237,6 +237,14 @@ log-probabilities for two of its signals. Treat its output as a ranked lead list
 ./scripts/update.sh      # run the tests, update the installed agentdetox, then `agentdetox doctor`
 ```
 
+How a hook call flows: `adapters.py` turns an agent's event into a planned write or a shell
+command, `engine.py` runs the checks and reports signals, `policy.py` decides from your settings
+and the agent's abilities whether to block, ask or record, and the adapter formats the reply.
+`hooks.py` wires these together, and `session.py` runs the session-start check. The engine knows
+nothing about agents, so a new integration needs only an adapter. The detectors are in
+`hidden.py` (rules), `consistency.py` (contradictions) and `provenance.py`. The snapshot store
+is in `integrity.py`, and the model server in `daemon.py`.
+
 Installed hooks call a fixed executable, so updating it takes effect on the next hook call with
 no reinstall; a model server still running the old build is stopped by `update.sh`, and otherwise
 replaces itself on its next job. Re-run `agentdetox install claude-code --apply` only when

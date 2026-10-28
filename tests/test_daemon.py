@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from agentdetox import daemon, events, hooks
+from agentdetox import daemon, engine, events
 from agentdetox.context import claude_memory_dir
 
 OLD_FACT = "Deploys go through `make deploy`, which runs the staging checks first.\n"
@@ -156,7 +156,7 @@ def test_submit_without_a_server_starts_one_with_a_private_job_file(store, monke
 
 
 def test_ask_mode_hooks_use_the_server(server):
-    assert hooks._ServerNLI().contradiction([("skip it", "do it")]) == [0.97]
+    assert engine._ServerNLI().contradiction([("skip it", "do it")]) == [0.97]
 
 
 @posix_only
@@ -230,8 +230,8 @@ def test_without_a_server_checks_in_the_hook_load_the_model_there(store, no_serv
         def available(self):
             return True
 
-    monkeypatch.setattr(hooks, "NLI", LocalNLI)
-    assert isinstance(hooks._nli(), LocalNLI)
+    monkeypatch.setattr(engine, "NLI", LocalNLI)
+    assert isinstance(engine._nli(), LocalNLI)
 
 
 @posix_only

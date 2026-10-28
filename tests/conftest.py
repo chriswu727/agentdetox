@@ -58,12 +58,12 @@ def poisoned_docs() -> list[Doc]:
 @pytest.fixture(autouse=True)
 def _no_real_nli(monkeypatch):
     """Unit tests must not depend on whether the NLI model happens to be cached."""
-    from agentdetox import hooks
+    from agentdetox import engine
 
     monkeypatch.setenv("AGENTDETOX_NLI", "0")
-    hooks._NLI_INSTANCE.clear()
+    engine._NLI_INSTANCE.clear()
     yield
-    hooks._NLI_INSTANCE.clear()
+    engine._NLI_INSTANCE.clear()
 
 
 @pytest.fixture(autouse=True)
