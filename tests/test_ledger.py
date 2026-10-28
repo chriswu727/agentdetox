@@ -1,6 +1,7 @@
 """The ledger: each change to an agent's context, recorded with where it came from."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -61,7 +62,7 @@ def test_writes_are_recorded_with_their_origin(env):
     t = transcript(tmp / "b.jsonl", [("human", "Summarize the release notes"), ("tool", "WebFetch", PAGE)])
     written(project, mem / "vendor.md", PAGE + "\n", t)
     written(project, mem / "plain.md", "The API lives in services/api.\n")
-    got = [(e.path.rsplit("/", 1)[-1], e.origin, e.requested, e.session) for e in ledger.entries()]
+    got = [(Path(e.path).name, e.origin, e.requested, e.session) for e in ledger.entries()]
     assert got == [("pm.md", "you", True, "s-123"), ("pm2.md", "agent", True, "s-123"),
                    ("vendor.md", "copied", False, "s-123"), ("plain.md", "agent", False, "s-123")]
     assert ledger.entries(str(mem / "vendor.md"))[0].source == "WebFetch https://docs.example.net/4.2"
@@ -79,7 +80,7 @@ def test_outside_changes_are_recorded_once(env):
     (mem / "evil.md").write_text(POISON, encoding="utf-8")
     assert "evil.md" in session(project)
     assert "evil.md" in session(project)               # still flagged: reported again, recorded once
-    got = [(e.path.rsplit("/", 1)[-1], e.origin, e.flagged) for e in ledger.entries()]
+    got = [(Path(e.path).name, e.origin, e.flagged) for e in ledger.entries()]
     assert got == [("MEMORY.md", "external", False), ("evil.md", "external", True)]
 
 
