@@ -20,7 +20,9 @@ from pathlib import Path
 UNTRUSTED_TOOLS = {"WebFetch", "WebSearch", "Bash", "Read", "Grep", "NotebookRead", "Agent", "Task", "BashOutput"}
 UNTRUSTED_PREFIXES = ("mcp__",)
 
-COPY_THRESHOLD = 0.5
+# Share of the new text's 6-token shingles found in one untrusted output. Set on the dev
+# split of bench/provenance_eval.py: the lowest tested value with no benign false alarm.
+COPY_THRESHOLD = 0.3
 SHINGLE = 6
 HUMAN_TURNS = 3
 TAIL_BYTES = 4_000_000

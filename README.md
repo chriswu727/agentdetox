@@ -54,6 +54,12 @@ that have related existing memory. On the v0 memory benchmark it flags 30% of fa
 conflict with existing memory and asks on 8% of English benign changes (0% Chinese); facts with no
 counterpart are not caught. See [bench/MEMORY_BENCHMARK.md](bench/MEMORY_BENCHMARK.md).
 
+**Provenance check** (Claude Code): a memory write that is mostly copied from web pages, MCP data, command
+output or files the agent just read asks for approval unless you asked it to remember. This is how
+text planted in an email or page usually reaches memory. On the v0 benchmark it flags 67-97% of copied
+injection prompts (5.6% without it) with no false alarm on benign writes in the agent's own words, after
+"remember this", or from text you pasted; text the model paraphrases is not caught.
+
 Detection rules target what a benign memory almost never asks for: running code fetched from the
 network, reverse shells, loosening the agent's own approvals or sandbox, reading credentials,
 acting silently, standing orders to fetch a URL every session, plus the hidden-text and

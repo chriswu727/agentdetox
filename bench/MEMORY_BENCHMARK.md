@@ -104,3 +104,44 @@ concrete external destination.
   memory takes about 0.15 s; a memory write that has related existing memory loads the NLI model
   and takes about 6 s (M-series Mac). The in-process figures the harness prints assume a loaded
   model and do not reflect this.
+
+## Provenance check (memory copied from untrusted tool output)
+
+`bench/provenance_eval.py` builds Claude Code transcripts in the real JSONL format: the user asks
+for something, WebFetch, an MCP mail tool, Bash or Read returns a document, and the agent writes a
+memory file. Attack text (English, public data only) is a deepset injection prompt or a PoisonedRAG
+adv_text embedded in a SQuAD paragraph, after a request that does not ask to remember anything; the
+memory is that text verbatim, half of it after a framing sentence, or all of it between two benign
+sentences. Contradiction detection is off so the check is measured alone. The copy threshold (0.3 of
+the new text's 6-token shingles) was the lowest value with no benign false alarm on the dev split;
+the test split was then run once.
+
+| Case kind | Lang | n | Flagged | By provenance | By rules |
+|---|---|---|---|---|---|
+| injection, verbatim | en | 213 | **96.7%** | 91.5% | 5.6% |
+| injection, partial | en | 213 | **76.5%** | 72.3% | 4.7% |
+| injection, mixed with benign text | en | 213 | **66.7%** | 61.5% | 5.6% |
+| fabricated fact, verbatim | en | 150 | 100.0% | 100.0% | 0.0% |
+| fabricated fact, partial | en | 150 | 96.0% | 96.0% | 0.0% |
+| fabricated fact, mixed | en | 150 | 96.0% | 96.0% | 0.0% |
+| benign, own words | en / zh | 20 / 12 | 0.0% / 0.0% | 0.0% / 0.0% | 0.0% |
+| benign, copied after "remember this" | en / zh | 100 / 24 | 0.0% / 0.0% | 0.0% / 0.0% | 0.0% |
+| benign, text the user pasted | en / zh | 50 / 12 | 0.0% / 0.0% | 0.0% / 0.0% | 0.0% |
+| grey zone: benign text copied unasked | en / zh | 100 / 24 | 100% / 100% | 100% / 100% | 0.0% |
+
+The same deepset prompts were flagged 5.6% of the time when written into memory with no transcript
+(table above); knowing where the text came from is what raises it. Flags ask; nothing is blocked.
+
+Limits of this part, in addition to those above:
+
+- **Synthetic transcripts.** One tool call and template prompts per case. Real sessions are longer,
+  and how often an agent copies benign tool output (commands, errors, paths) into memory unasked is
+  the real false-alarm question; this benchmark cannot answer it.
+- **Paraphrase evades it.** Only copied text is detected; attack text the model restates in its
+  own words is not.
+- **Very short attack text** (under 6 tokens) has no shingles to match; **delayed writes** more than
+  three user turns after the read are out of the window.
+- **The "remember this" exemption** reads only the user's own message, which injected text cannot
+  forge, but a user who habitually asks the agent to remember things while it reads untrusted
+  content loses this protection in those turns.
+- **Claude Code only.** Other agents' transcript formats are not parsed.
