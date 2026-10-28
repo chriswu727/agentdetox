@@ -8,6 +8,7 @@ here knows which agent is asking or what the user's settings are.
 from __future__ import annotations
 
 import difflib
+import functools
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,11 +21,12 @@ from .consistency import (NLI, Contradiction, Statement, candidate_pairs, find_c
 from .context import ContextFile, classify, related_files, short_path
 from .findings import Finding
 from .integrity import snapshot, snapshot_text, store_dir
-from .persistence import guarded_sections
-from .provenance import CopyFinding, copied_from_untrusted, read_transcript
+from .persistence import guard_changes, guarded_sections
+from .provenance import CopyFinding, Transcript, copied_from_untrusted, read_transcript, typed_by_user
 
 # What a signal is about. The last three are also the names of the user's settings.
 PLANTED = "planted"          # a clear-cut planted instruction
+USER_WRITTEN = "user-written"  # the same, in text the user typed or pasted themselves
 OWN_STATE = "own-state"      # a change to AgentDetox's own settings, allowlist or snapshots
 GUARDRAILS = "guardrails"    # an agent changing its own hooks, MCP servers or permissions
 SHELL_WRITE = "shell-write"  # a shell command writing agent context past the write check
@@ -56,23 +58,30 @@ def check_write(write: Write, project: Path, run: set[str], transcript: str | No
     cf = classify(path, project=project)
     if cf is None:
         return []
+
+    @functools.cache
+    def recent() -> Transcript | None:
+        return read_transcript(transcript) if transcript and Path(transcript).is_file() else None
+
     if cf.kind == "config":
         findings = allowlist.unsuppressed(scan_text(str(path), str(path), new, "config"))
         if _worst(findings) == "high":
-            return [_planted(cf, findings)]
+            return [_planted(cf, findings, recent())]
         if guarded_sections(path, old) != guarded_sections(path, new):
-            return [Signal(GUARDRAILS, f"AgentDetox: this changes the hooks, MCP servers or permissions in {path}. "
-                                       "Agents changing their own guardrails is how CurXecute-style attacks persist.")]
+            changes = "; ".join(guard_changes(path, old, new)) or "changes the hooks, MCP servers or permissions"
+            return [Signal(GUARDRAILS, f"AgentDetox: this write to {short_path(str(path))} {changes}. An agent "
+                                       "changing its own hooks, MCP servers or permissions is how an injected "
+                                       "instruction makes itself permanent.")]
         return []
     added = _added_text(old, new)
     findings = allowlist.unsuppressed(scan_text(str(path), str(path), added, cf.kind))
     if _worst(findings) == "high":
-        return [_planted(cf, findings)]
+        return [_planted(cf, findings, recent())]
     signals = []
     medium = [f for f in findings if f.severity == "medium"]
     if medium and SUSPICIOUS in run:
         signals.append(Signal(SUSPICIOUS, _reason(cf, medium, "flagged"), [finding_flag(f) for f in medium]))
-    copied = _copied(cf, added, transcript) if COPIED in run else None
+    copied = _copied(cf, added, recent()) if COPIED in run else None
     if copied:
         source = f"{copied.tool} output ({copied.origin[:100]})" if copied.origin else f"{copied.tool} output"
         signals.append(Signal(
@@ -107,18 +116,27 @@ def check_command(command: str, project: Path) -> list[Signal]:
     return []
 
 
-def after_write(paths: list[Path], project: Path, record_contradictions: bool) -> None:
+def after_write(paths: list[Path], project: Path, record_contradictions: bool, transcript: str | None = None) -> None:
     """Re-trust context files the agent just wrote through its own tools, which the write
-    check saw, so the snapshot only lags behind writes that bypassed them."""
+    check saw, so the snapshot only lags behind writes that bypassed them. A clear-cut
+    finding the user wrote themselves does not stop this: the write ran, so they approved
+    it when asked."""
+    human = None
     for path in paths:
         cf = classify(path, project=project)
         if cf is None or not path.is_file():
             continue
-        if _worst(allowlist.unsuppressed(scan_text(str(path), str(path), read_text(path), cf.kind))) != "high":
-            old = snapshot_text(str(path)) or ""
-            snapshot([cf], roots=[])
-            if record_contradictions:
-                record_in_background(cf, old, project)
+        high = [f for f in allowlist.unsuppressed(scan_text(str(path), str(path), read_text(path), cf.kind))
+                if f.severity == "high"]
+        if high:
+            if human is None:
+                human = read_transcript(transcript).human if transcript and Path(transcript).is_file() else []
+            if not (human and all(typed_by_user(f, human) for f in high)):
+                continue
+        old = snapshot_text(str(path)) or ""
+        snapshot([cf], roots=[])
+        if record_contradictions:
+            record_in_background(cf, old, project)
 
 
 def is_own_state(path: Path) -> bool:
@@ -127,14 +145,18 @@ def is_own_state(path: Path) -> bool:
     return Path(os.path.realpath(path)).is_relative_to(os.path.realpath(store_dir()))
 
 
-def _planted(cf: ContextFile, findings: list[Finding]) -> Signal:
-    return Signal(PLANTED, _reason(cf, findings), [finding_flag(f) for f in findings if f.severity == "high"])
+def _planted(cf: ContextFile, findings: list[Finding], t: Transcript | None) -> Signal:
+    high = [f for f in findings if f.severity == "high"]
+    flags = [finding_flag(f) for f in high]
+    if t and all(typed_by_user(f, t.human) for f in high):
+        return Signal(USER_WRITTEN, _reason(cf, findings, "flagged") + " The flagged text is from your own message; "
+                                    "approve only if you trust where you got it.", flags)
+    return Signal(PLANTED, _reason(cf, findings), flags)
 
 
-def _copied(cf: ContextFile, added: str, transcript: str | None) -> CopyFinding | None:
-    if cf.kind not in ("memory", "instructions", "skill") or not transcript or not Path(transcript).is_file():
+def _copied(cf: ContextFile, added: str, t: Transcript | None) -> CopyFinding | None:
+    if cf.kind not in ("memory", "instructions", "skill") or t is None:
         return None
-    t = read_transcript(transcript)
     allowed = allowlist.entries()
     t.sources = [s for s in t.sources if source_id(s.tool, s.origin) not in allowed]
     return copied_from_untrusted(added, t)
@@ -154,7 +176,7 @@ def _worst(findings: list[Finding]) -> str | None:
 
 def _reason(cf: ContextFile, findings: list[Finding], verb: str = "blocked") -> str:
     labels = "; ".join(sorted({f.message for f in findings if f.severity in ("medium", "high")}))
-    return (f"AgentDetox {verb} a write to the agent's {cf.kind} file {cf.path}: {labels}. "
+    return (f"AgentDetox {verb} a write to the agent's {cf.kind} file {short_path(str(cf.path))}: {labels}. "
             "Content like this, once saved, is obeyed in every later session.")
 
 

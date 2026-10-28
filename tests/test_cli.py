@@ -1,4 +1,5 @@
 import json
+import os
 
 from agentdetox.cli import main
 
@@ -40,3 +41,13 @@ def test_trace_cli(tmp_path, clean_docs, poisoned_docs, capsys):
     assert main(argv) == 0
     rows = json.loads(capsys.readouterr().out)
     assert {r["id"] for r in rows if r["responsible"]} == {d.id for d in poisoned_docs}
+
+
+def test_demo_runs_in_a_throwaway_folder(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "cc"))
+    before = dict(os.environ)
+    assert main(["demo"]) == 0
+    out = capsys.readouterr().out
+    assert "blocks the write" in out and "agentdetox agent restore ~/code/shop/CLAUDE.md" in out
+    assert dict(os.environ) == before
+    assert not (tmp_path / "store").exists() and not (tmp_path / "cc").exists()

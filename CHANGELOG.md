@@ -13,13 +13,18 @@ instruction and skill files, and config.
 
 - **Claude Code protection** (`agentdetox install claude-code`). Hooks check every write to
   memory, CLAUDE.md, rules, skills and config, including shell redirects, `tee`, `sed -i`, `cp`,
-  `mv` and `rm`. Planted instructions are denied. Changes to hooks, MCP servers or permissions,
-  and suspicious writes, need your approval. At session start, files changed outside the agent
-  since the last snapshot are reported.
+  `mv` and `rm`. Planted instructions are denied, unless you typed or pasted the text yourself,
+  in which case you are asked. Changes to hooks, MCP servers or permissions (the prompt says what
+  is added or removed), suspicious writes, and memory that points package installs at a
+  non-default registry need your approval. At session start, files changed outside
+  the agent since the last snapshot are reported with the command that restores each one.
+  `CLAUDE_CONFIG_DIR` is followed.
 - **Snapshots, tamper detection and restore** (`agentdetox agent snapshot|verify|restore|scan`).
   The store in `~/.agentdetox` is private (0700/0600). A restore quarantines the current file
   instead of deleting it.
-- **Contradiction detection** (optional `nli` extra, then `agentdetox fetch-models`). A
+- **`agentdetox demo`**: an attack caught and undone in a throwaway folder, using the real hooks.
+  `install` ends by saying what is now watched.
+- **Contradiction detection** (experimental; optional `nli` extra, then `agentdetox fetch-models`). A
   multilingual NLI model compares new memory with what the agent already knows. It records
   conflicts by default and asks only if you set it to. One background model server per store
   keeps the model loaded, so a write costs the hook about 0.1 s.
@@ -30,7 +35,7 @@ instruction and skill files, and config.
   the settings live in `~/.agentdetox/config.toml`, and `AGENTDETOX_<CHECK>` overrides them.
 - **Guard on AgentDetox's own state.** An agent needs approval to change AgentDetox's settings,
   allowlist or snapshots, or to run the commands that do.
-- **Experimental hooks for Codex and Cursor.** OpenClaw and WorkBuddy get tamper detection only.
+- **Experimental hooks for Codex and Cursor.** OpenClaw gets tamper detection only.
 - **Windows support**, so far tested only in simulation. Windows has no model server yet.
 - **Benchmarks.** An agent memory poisoning benchmark (v0, built from public data only) and a
   provenance benchmark, in `bench/`.

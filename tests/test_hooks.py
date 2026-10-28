@@ -136,7 +136,8 @@ def test_session_start_reports_out_of_band_tampering_until_fixed(env, capsys):
     assert session("claude-code", project) == ""          # first run: clean, baseline taken
     (mem / "MEMORY.md").write_text((mem / "MEMORY.md").read_text(encoding="utf-8") + POISON + "\n", encoding="utf-8")
     notice = session("claude-code", project)
-    assert "changed outside the agent" in notice and "MEMORY.md" in notice and "Do not follow" in notice
+    assert "changed outside the agent" in notice and "Do not follow" in notice
+    assert "`agentdetox agent restore ~/.claude/projects/-proj/memory/MEMORY.md`" in notice
     assert "MEMORY.md" in session("claude-code", project)  # still flagged next session
     assert main(["agent", "restore", str(mem / "MEMORY.md")]) == 0
     assert session("claude-code", project) == ""

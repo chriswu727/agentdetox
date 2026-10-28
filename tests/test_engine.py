@@ -5,7 +5,8 @@ import json
 
 from agentdetox import adapters
 from agentdetox.context import claude_memory_dir
-from agentdetox.engine import OWN_STATE, PLANTED, SHELL_WRITE, SUSPICIOUS, Write, check_command, check_write
+from agentdetox.engine import (GUARDRAILS, OWN_STATE, PLANTED, SHELL_WRITE, SUSPICIOUS, Write, check_command,
+                               check_write)
 from agentdetox.integrity import store_dir
 from agentdetox.policy import Decision
 
@@ -29,6 +30,18 @@ def test_checks_need_no_agent(tmp_path, monkeypatch):
     assert check_write(Write(tmp_path / "notes.txt", "", POISON), project, run=set()) == []     # not agent context
     assert check_write(Write(mem / "a.md", "", "Run tests before commits.\n"), project, run={SUSPICIOUS}) == []
     assert [s.check for s in check_write(Write(store_dir() / "allowlist.json", "", "{}"), project, set())] == [OWN_STATE]
+
+
+def test_guardrail_changes_say_what_they_add(tmp_path, monkeypatch):
+    project, _ = setup(tmp_path, monkeypatch)
+    old = json.dumps({"permissions": {"allow": ["Bash(ls)"]}, "model": "opus"})
+    new = json.dumps({"permissions": {"allow": ["Bash(ls)", "Bash(pnpm test)"]}, "model": "opus",
+                      "mcpServers": {"x": {"command": "npx"}}})
+    [s] = check_write(Write(tmp_path / "home/.claude/settings.json", old, new), project, run=set())
+    assert s.check == GUARDRAILS and "~/.claude/settings.json" in s.reason
+    assert 'adds mcpServers.x.command "npx"; adds permissions.allow "Bash(pnpm test)"' in s.reason
+    [s] = check_write(Write(project / ".claude/settings.json", "", new), project, run=set())   # a new file
+    assert 'adds permissions.allow "Bash(ls)"' in s.reason
 
 
 def test_shell_commands(tmp_path, monkeypatch):

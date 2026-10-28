@@ -1,7 +1,8 @@
 """What to do about what the engine found: block it, ask the user, or let it through and
 log it. The user's settings and what each agent can do come in here, not in the checks.
 
-- A clear-cut planted instruction is always blocked.
+- A clear-cut planted instruction is always blocked, unless the user typed or pasted it
+  themselves: then it asks, and is blocked where the agent cannot ask.
 - A change to AgentDetox's own state, or to the agent's own hooks, MCP servers or
   permissions, asks where the agent can ask and is blocked where it cannot.
 - Suspicious, copied and contradicting writes follow the user's settings. "ask" falls
@@ -14,7 +15,8 @@ import os
 from dataclasses import dataclass, field
 
 from .allowlist import Flag
-from .engine import CONTRADICTION, COPIED, GUARDRAILS, OWN_STATE, PLANTED, SHELL_WRITE, SUSPICIOUS, Signal
+from .engine import (CONTRADICTION, COPIED, GUARDRAILS, OWN_STATE, PLANTED, SHELL_WRITE, SUSPICIOUS, USER_WRITTEN,
+                     Signal)
 
 _DENY_HINT = {OWN_STATE: "Make this change yourself.",
               GUARDRAILS: "Make this change yourself, or set AGENTDETOX_ALLOW_CONFIG_WRITES=1."}
@@ -42,6 +44,9 @@ def decide(signals: list[Signal], can_ask: bool, modes: dict[str, str]) -> Decis
     planted = [s for s in signals if s.check == PLANTED]
     if planted:
         return Decision("deny", with_ids(" ".join(s.reason for s in planted), flags), flags)
+    typed = [s for s in signals if s.check == USER_WRITTEN]
+    if typed:
+        return Decision("ask" if can_ask else "deny", with_ids(" ".join(s.reason for s in typed), flags), flags)
     guards = [s for s in signals if s.check in _DENY_HINT
               and not (s.check == GUARDRAILS and os.environ.get("AGENTDETOX_ALLOW_CONFIG_WRITES"))]
     if guards:

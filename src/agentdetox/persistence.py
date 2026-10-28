@@ -21,6 +21,24 @@ _FETCH_EXEC = (
     r"|base64\s+(-d|--decode)\b[^\n|]{0,80}\|\s*(ba|z)?sh\b"
 )
 _REVERSE_SHELL = r"/dev/tcp/\d|\bnc\b[^\n]{0,40}\s-e\s|\bmkfifo\b[^\n]{0,60}\bnc\b"
+# Every later install resolves through a registry a memory names, so a planted one swaps
+# in the attacker's packages. The default registries and the big public mirrors (common
+# in China) are not flagged.
+_PUBLIC_REGISTRY = (
+    r"(?:registry\.npmjs\.org|registry\.yarnpkg\.com|pypi\.org|pypi\.python\.org|files\.pythonhosted\.org"
+    r"|proxy\.golang\.org|(?:registry\.)?npmmirror\.com|registry\.npm\.taobao\.org|(?:pypi|mirrors)\.tuna\.tsinghua\.edu\.cn"
+    r"|mirrors\.(?:aliyun\.com|cloud\.tencent\.com|ustc\.edu\.cn|bfsu\.edu\.cn|huaweicloud\.com)|repo\.huaweicloud\.com"
+    r"|goproxy\.(?:cn|io))(?![\w.-])"
+)
+_REGISTRY_HOST = rf"[\"']?(?:https?://)?(?!{_PUBLIC_REGISTRY})[\w-]+(?:\.[\w-]+)+"
+_REGISTRY = (
+    rf"\b(?:npm|pnpm|yarn|bun)\s+config\s+set\s+(?:@[\w.-]+:)?registry[\s=]+{_REGISTRY_HOST}"
+    rf"|--registry[\s=]+{_REGISTRY_HOST}|\bnpmRegistryServer\s*:\s*{_REGISTRY_HOST}"
+    rf"|^\s*(?:@[\w.-]+:)?registry\s*=\s*{_REGISTRY_HOST}"
+    rf"|--(?:extra-|default-)?index(?:-url)?[\s=]+{_REGISTRY_HOST}|^\s*(?:extra-)?index-url\s*=\s*{_REGISTRY_HOST}"
+    rf"|\bpip3?\s+install\b[^\n]{{0,80}}?\s-i\s*{_REGISTRY_HOST}|\bpip3?\s+config\s+set\s+\S*index-url\s+{_REGISTRY_HOST}"
+    rf"|\b(?:PIP|UV)_(?:EXTRA_)?INDEX_URL\s*=\s*{_REGISTRY_HOST}|\bGOPROXY\s*=\s*{_REGISTRY_HOST}"
+)
 
 TEXT_RULES: list[tuple[str, str, re.Pattern]] = [
     ("high", "runs code fetched from the network", re.compile(_FETCH_EXEC, re.I)),
@@ -74,6 +92,7 @@ TEXT_RULES: list[tuple[str, str, re.Pattern]] = [
             re.I,
         ),
     ),
+    ("medium", "points package installs at a non-default registry", re.compile(_REGISTRY, re.I | re.M)),
 ]
 
 _COMMAND_KEYS = {"command", "args", "url", "notify"}
@@ -151,3 +170,34 @@ def guarded_sections(path: Path, text: str) -> dict[str, str]:
 
     walk(data, "")
     return sections
+
+
+def guard_changes(path: Path, old_text: str, new_text: str, limit: int = 4) -> list[str]:
+    """What a write adds to or removes from the guarded sections, as short phrases such
+    as 'adds permissions.allow "Bash(npm test)"'. List order is ignored."""
+    old = guarded_sections(path, old_text) if old_text.strip() else {}   # a file the write creates
+    new = guarded_sections(path, new_text)
+    if WHOLE_FILE in old or WHOLE_FILE in new:
+        return []
+    before, after = _leaves(old), _leaves(new)
+    phrases = [f'adds {k} "{v[:100]}"' for k, v in sorted(after - before)]
+    phrases += [f'removes {k} "{v[:100]}"' for k, v in sorted(before - after)]
+    return phrases[:limit] + ([f"and {len(phrases) - limit} more"] if len(phrases) > limit else [])
+
+
+def _leaves(sections: dict[str, str]) -> set[tuple[str, str]]:
+    out: set[tuple[str, str]] = set()
+
+    def walk(node, where: str) -> None:
+        if isinstance(node, dict):
+            for k, v in node.items():
+                walk(v, f"{where}.{k}")
+        elif isinstance(node, list):
+            for v in node:
+                walk(v, where)
+        else:
+            out.add((where, str(node)))
+
+    for key, text in sections.items():
+        walk(json.loads(text), key)
+    return out

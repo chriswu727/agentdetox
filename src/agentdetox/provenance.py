@@ -15,6 +15,10 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
+from .findings import Finding
+from .hidden import normalize
+from .persistence import TEXT_RULES
+
 # Tools whose output can carry text an attacker controls: anything fetched, read, run
 # or returned by another agent. MCP tools bring in mail, chat, tickets and the like.
 UNTRUSTED_TOOLS = {"WebFetch", "WebSearch", "Bash", "Read", "Grep", "NotebookRead", "Agent", "Task", "BashOutput"}
@@ -157,6 +161,26 @@ def copied_from_untrusted(new_text: str, transcript: Transcript,
         if fraction >= threshold and (best is None or fraction > best.fraction):
             best = CopyFinding(src.tool, fraction, _excerpt(body, shared), src.origin)
     return best
+
+
+def typed_by_user(finding: Finding, human: list[str]) -> bool:
+    """Whether the risky text a rule matched is in the user's own recent messages, so the
+    user, not something the agent read, put it there. Only rule and config-command
+    findings qualify; hidden text never does, since the user cannot see what they pasted."""
+    if finding.detector == "config-command":
+        spans = [finding.anchor]
+    elif finding.detector == "persistence":
+        line = normalize(finding.anchor)
+        spans = [m.group(0) for severity, label, pattern in TEXT_RULES
+                 if label == finding.message and severity == finding.severity and (m := pattern.search(line))]
+    else:
+        return False
+    said = _squash("\n".join(human))
+    return bool(spans) and all(_squash(s) in said for s in spans)
+
+
+def _squash(text: str) -> str:
+    return " ".join(normalize(text).lower().split())
 
 
 def _excerpt(body: str, shared: set[tuple[str, ...]]) -> str:

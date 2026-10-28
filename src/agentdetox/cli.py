@@ -7,16 +7,17 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from . import __version__, allowlist, daemon, doctor, events, settings, status
+from . import __version__, allowlist, daemon, demo, doctor, events, settings, status
 from .agentscan import consistency_findings, scan_context
 from .allowlist import finding_flag
 from .consistency import NLI, NLI_MODEL
-from .context import PROFILES, discover, home_dir
+from .context import KINDS, PROFILES, discover, home_dir, short_path
 from .corpus import load_corpus
 from .embed import get_embedder
 from .findings import ID_LENGTH, SEVERITY_ORDER, at_least, finding_id
 from .hooks import main_hook
-from .install import cursor_hooks, default_settings_path, hook_command, install_claude_code, uninstall_claude_code
+from .install import (claude_code_settings, cursor_hooks, default_settings_path, hook_command, install_claude_code,
+                      uninstall_claude_code)
 from .integrity import StoreError, gc, reset_baseline, restore, snapshot, store_dir, verify
 from .scan import scan
 from .trace import trace
@@ -128,8 +129,11 @@ def main(argv: list[str] | None = None) -> int:
     p_doctor.add_argument("--project", type=Path, default=Path.cwd())
 
     sub.add_parser("fetch-models", help=f"download the contradiction-detection model ({NLI_MODEL}, ~560 MB)")
+    sub.add_parser("demo", help="watch an attack on an agent get caught and undone, in a throwaway folder")
 
     args = parser.parse_args(argv)
+    if args.command == "demo":
+        return demo.run()
     if args.command == "fetch-models":
         if not NLI.installed():
             print("needs the optional extra: pip install 'agentdetox[nli]'", file=sys.stderr)
@@ -207,19 +211,30 @@ def _install(args) -> int:
     project = args.project.expanduser().absolute()
     target = default_settings_path(args.agent_name, args.scope, project)
     if args.agent_name == "claude-code":
-        text, backup = install_claude_code(target, args.apply)
+        _, backup = install_claude_code(target, args.apply)
         if not args.apply:
-            print(f"# {target} would become:\n{text}\nRe-run with --apply to write it (the old file is backed up).")
+            added = claude_code_settings({}, hook_command("claude-code"))
+            print(f"# Adds these hooks to {short_path(str(target))}, keeping everything else in it:\n"
+                  f"{json.dumps(added, indent=2, ensure_ascii=False)}\n"
+                  "Re-run with --apply to write it (the old file is backed up).")
             return 0
         # Scan before trusting, so content that is already poisoned never becomes the baseline.
         files = discover(project=project)
         flagged = {f.doc_id for f in allowlist.unsuppressed(scan_context(files)) if f.severity == "high"}
-        n = snapshot([cf for cf in files if str(cf.path) not in flagged], [home_dir(), project])
-        print(f"wrote AgentDetox hooks to {target}" + (f" (backup: {backup})" if backup else ""))
-        print(f"snapshot of {n} context file(s) taken; restart Claude Code to load the hooks")
+        trusted = [cf for cf in files if str(cf.path) not in flagged]
+        snapshot(trusted, [home_dir(), project])
+        kinds = Counter(cf.kind for cf in trusted)
+        print(f"AgentDetox hooks added to {short_path(str(target))}"
+              + (f" (backup: {short_path(str(backup))})" if backup else "") + ".")
+        print("Restart Claude Code to load them. From then on AgentDetox checks every write Claude Code makes to "
+              "its memory, rules, skills and config, and reports changes made outside it at the next session.")
+        print(f"Watching {len(trusted)} context files ("
+              + ", ".join(f"{kinds[k]} {k}" for k in KINDS if kinds[k]) + ").")
         if flagged:
             print(f"{len(flagged)} file(s) look suspicious and were left out of the snapshot; "
-                  "run `agentdetox agent scan` to review them")
+                  "review them with `agentdetox agent scan`.")
+        print("See it catch an attack without touching your files: agentdetox demo\n"
+              "Check on it any time: agentdetox status")
         return 0
     command = hook_command(args.agent_name)
     if args.agent_name == "cursor":

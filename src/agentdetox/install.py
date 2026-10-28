@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from . import compat
-from .context import home_dir
+from .context import claude_dir, home_dir
 from .integrity import is_self_hook
 
 
@@ -98,7 +98,7 @@ def _write_with_backup(path: Path, text: str) -> Path | None:
 def default_settings_path(agent: str, scope: str, project: Path) -> Path:
     base = home_dir() if scope == "user" else project
     return {
-        "claude-code": base / ".claude" / "settings.json",
+        "claude-code": (claude_dir() if scope == "user" else project / ".claude") / "settings.json",
         "cursor": base / ".cursor" / "hooks.json",
         "codex": base / ".codex" / "hooks.json",
     }[agent]

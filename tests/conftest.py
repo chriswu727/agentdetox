@@ -69,7 +69,8 @@ def _no_real_nli(monkeypatch):
 @pytest.fixture(autouse=True)
 def _isolated_store(tmp_path, monkeypatch):
     """No test may read the real ~/.agentdetox settings or allowlist, or the user's
-    AGENTDETOX_* overrides."""
+    AGENTDETOX_* overrides, or follow the user's CLAUDE_CONFIG_DIR."""
     monkeypatch.setenv("AGENTDETOX_HOME", str(tmp_path / "store"))
     for key in ("SUSPICIOUS", "COPIED", "CONTRADICTION"):
         monkeypatch.delenv(f"AGENTDETOX_{key}", raising=False)
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
