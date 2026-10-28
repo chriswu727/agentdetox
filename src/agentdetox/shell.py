@@ -33,7 +33,8 @@ def split(command: str) -> list[str]:
 
 def changes_agentdetox(tokens: list[str]) -> bool:
     """An agentdetox call that changes what it trusts: allowing an id, changing a
-    setting, (un)installing, snapshot or restore. Reading commands stay free."""
+    setting, (un)installing, snapshot or restore. Reading commands, and `install`
+    without --apply, which only shows the change, stay free."""
     for i, tok in enumerate(tokens):
         prev = tokens[i - 1] if i else ""
         if compat.program(tok) != "agentdetox" or not (
@@ -47,7 +48,7 @@ def changes_agentdetox(tokens: list[str]) -> bool:
         words = [a for a in args if not a.startswith("-")]
         sub = words[0] if words else ""
         rest = args[args.index(sub) + 1:] if sub else []
-        if (sub in ("install", "uninstall")
+        if (sub == "uninstall" or (sub == "install" and "--apply" in rest)
                 or (sub == "allow" and any(a not in ("--list", "-h", "--help") for a in rest))
                 or (sub == "config" and len(words) >= 3)
                 or (sub == "agent" and words[1:2] in (["snapshot"], ["restore"]))):

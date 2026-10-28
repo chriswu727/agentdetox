@@ -8,6 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from . import __version__, allowlist, daemon, doctor, events, settings
+from .adapters import SHELL_TOOLS
 from .consistency import NLI
 from .context import home_dir
 from .integrity import StoreError, baseline_entries, usage
@@ -24,6 +25,11 @@ def describe(row: dict) -> tuple[str, str, str]:
     if event == "write_checked":
         label = _DECISIONS.get(row.get("decision", ""), row.get("decision", ""))
         text = "; ".join(f.get("what", "") for f in flags) or row.get("reason", "")
+        target = " ".join(str(row.get("target") or "").split())
+        if len(target) > 70:  # a command reads from the start, a path from its file name
+            target = target[:69] + "…" if str(row.get("tool", "")).lower() in SHELL_TOOLS else "…" + target[-69:]
+        if target:
+            text = f"{target}: {text}"
     elif event == "contradiction":
         label, text = "contradiction", f'"{row.get("new", "")}" vs "{row.get("existing", "")}"'
     elif event == "session_notice":

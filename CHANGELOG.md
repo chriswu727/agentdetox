@@ -33,7 +33,8 @@ instruction and skill files, and config.
   keeps the model loaded, so a write costs the hook about 0.1 s.
 - **Provenance check.** A memory write mostly copied from web pages, MCP data, command output or
   files the agent just read asks for approval, unless you asked the agent to remember it.
-- **Day-to-day commands.** `agentdetox status`, `events`, `doctor`, and `allow <id>` to
+- **Day-to-day commands.** `agentdetox status`, `events` (each with the command or file it was
+  about), `doctor`, and `allow <id>` to
   permanently allow a reviewed false positive. `config <check> ask|record|off` sets each check;
   the settings live in `~/.agentdetox/config.toml`, and `AGENTDETOX_<CHECK>` overrides them.
 - **Guard on AgentDetox's own state.** An agent needs approval to change AgentDetox's settings,

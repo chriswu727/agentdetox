@@ -241,6 +241,9 @@ def test_agent_writes_to_settings_and_allowlist_need_approval(env):
     ("python -m agentdetox config copied off", "ask"),
     ("uvx agentdetox agent snapshot", "ask"),
     ("agentdetox uninstall claude-code", "ask"),
+    ("agentdetox install claude-code --apply", "ask"),
+    ("agentdetox install claude-code", "allow"),     # only shows the change
+    ("agentdetox install --apply claude-code", "ask"),
     ("cd /tmp && AGENTDETOX_X=1 agentdetox agent restore CLAUDE.md", "ask"),
     ("agentdetox allow --list", "allow"),
     ("agentdetox config", "allow"),
@@ -253,6 +256,18 @@ def test_agent_writes_to_settings_and_allowlist_need_approval(env):
 def test_shell_commands_that_change_agentdetox(env, command, expected):
     _, project, _ = env
     assert pre(project, "Bash", {"command": command})[0] == expected
+
+
+def test_events_say_what_each_check_was_about(env, capsys):
+    _, project, mem = env
+    pre(project, "Bash", {"command": "agentdetox allow 0123456789"})
+    pre(project, "Write", {"file_path": str(mem / "sync.md"), "content": POISON})
+    command, path = [r["target"] for r in events.read(None)][-2:]
+    assert command == "agentdetox allow 0123456789"
+    assert path.startswith("~/.claude/projects/") and path.endswith("/memory/sync.md")
+    main(["events"])
+    out = capsys.readouterr().out
+    assert "agentdetox allow 0123456789: " in out and "memory/sync.md: " in out
 
 
 def test_shell_writes_and_deletes_in_the_store_need_approval(env):

@@ -18,6 +18,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from . import adapters, engine, events, policy, session, settings
+from .context import short_path
 
 
 def handle(agent: str, payload: dict) -> tuple[int, str]:
@@ -29,8 +30,8 @@ def handle(agent: str, payload: dict) -> tuple[int, str]:
             if decision.action != "allow" or decision.flags:
                 events.record("write_checked", agent=agent,
                               decision=decision.action if decision.action != "allow" else "record",
-                              tool=payload.get("tool_name"), reason=decision.reason[:500],
-                              flags=[asdict(f) for f in decision.flags])
+                              tool=payload.get("tool_name"), target=_target(adapter, payload, project),
+                              reason=decision.reason[:500], flags=[asdict(f) for f in decision.flags])
             return 0, adapter.render_pre(decision)
         if event == "post":
             engine.after_write(adapter.written(payload, project), project,
@@ -46,6 +47,15 @@ def handle(agent: str, payload: dict) -> tuple[int, str]:
     except Exception as e:  # noqa: BLE001
         print(f"agentdetox: hook error ignored (failing open): {type(e).__name__}: {e}", file=sys.stderr)
         return 0, adapter.render_allow()
+
+
+def _target(adapter: adapters.Adapter, payload: dict, project: Path) -> str:
+    """The command, or the files, a logged tool call was about."""
+    command = adapter.command(payload)
+    if command is not None:
+        return command[:300]
+    paths = adapter.written(payload, project) or [w.path for w in adapter.writes(payload, project)]
+    return ", ".join(short_path(str(p)) for p in paths)[:300]
 
 
 def _pre_tool_use(adapter: adapters.Adapter, payload: dict, project: Path) -> policy.Decision:
