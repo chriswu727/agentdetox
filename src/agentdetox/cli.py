@@ -237,8 +237,15 @@ def _log(args) -> int:
         print("no recorded changes" + (f" to {short_path(path)}" if path else "") + " yet")
     for e in rows:
         session = f" [session {e.session[:8]}]" if e.session else ""
-        print(f"{e.ts.replace('T', ' ')}  {e.origin:<9} {short_path(e.path)}: {e.describe()}{session}")
+        print(f"{e.ts.replace('T', ' ')}  {e.origin:<9} {_display_path(e.path)}: {e.describe()}{session}")
     return 0
+
+
+def _display_path(path: str) -> str:
+    # Claude Code names memory folders after the whole project path; keep their ends, where
+    # the project's own name is.
+    parts = short_path(path).split(os.sep)
+    return os.sep.join(p if len(p) <= 40 else "…" + p[-28:] for p in parts)
 
 
 def _blame(args) -> int:
@@ -247,7 +254,8 @@ def _blame(args) -> int:
         print(f"error: {path} does not exist", file=sys.stderr)
         return 2
     labels = {ledger.EARLIER: "earlier", ledger.UNRECORDED: "not yet recorded"}
-    for text, cause in ledger.blame(path):
+    rows = ledger.blame(path)
+    for text, cause in rows:
         if isinstance(cause, ledger.Entry):
             label = f"{cause.origin} {cause.ts[5:16].replace('T', ' ')}"
             if cause.origin == "copied" and cause.source:
@@ -255,9 +263,12 @@ def _blame(args) -> int:
         else:
             label = labels[cause]
         print(f"{label[:32]:<32} | {text}")
-    print("\nearlier: there before AgentDetox recorded a change to this file. not yet recorded: changed\n"
-          "since, outside the agent's edit tools; the next session records it. "
-          f"`agentdetox log {short_path(str(path))}` has the details.")
+    causes = {cause for _, cause in rows if isinstance(cause, str)}
+    notes = {ledger.EARLIER: "earlier: there before AgentDetox recorded a change to this file.",
+             ledger.UNRECORDED: "not yet recorded: changed since, outside the agent's edit tools; the next "
+                                "session records it."}
+    print("\n" + "\n".join(notes[c] for c in (ledger.EARLIER, ledger.UNRECORDED) if c in causes)
+          + f"\nDetails: agentdetox log {short_path(str(path))}")
     return 0
 
 

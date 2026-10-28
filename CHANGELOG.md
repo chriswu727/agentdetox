@@ -22,6 +22,10 @@ instruction and skill files, and config.
 - **Claude Code plugin** (`/plugin install agentdetox --marketplace chriswu727/agentdetox`), as an
   alternative to `install claude-code`. It runs the installed `agentdetox`, or its own release
   through `uvx`; `install` and `doctor` notice when both routes register the hooks.
+- **Ledger** (`agentdetox log`, `agentdetox blame <file>`). Every change to a watched file is
+  recorded with where it came from: your own words, the agent, a named web page or tool output it
+  copied, or a change made outside the agent's edit tools. The versions before and after are kept,
+  so `blame` can say where each line came from.
 - **Snapshots, tamper detection and restore** (`agentdetox agent snapshot|verify|restore|scan`).
   The store in `~/.agentdetox` is private (0700/0600). A restore quarantines the current file
   instead of deleting it.

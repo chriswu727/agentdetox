@@ -24,9 +24,9 @@ adapters.py   renders the Decision in the agent's reply format
 ```
 
 `hooks.py` wires these together and logs every decision that was not a plain allow to
-`events.jsonl`. After a write, the engine trusts the file as written. At session start,
-`session.py` compares every watched file with its snapshot and tells the agent about suspicious
-changes made outside it.
+`events.jsonl`. After a write, the engine trusts the file as written and records the change in the
+ledger with where it came from. At session start, `session.py` compares every watched file with
+its snapshot, records changes made outside the agent, and tells the agent about suspicious ones.
 
 ## Modules
 
@@ -45,6 +45,7 @@ changes made outside it.
 | `consistency.py` | Splitting memory into statements and finding contradictions with an NLI model |
 | `daemon.py` | The model server (Unix socket), or a job queue where there is none (Windows) |
 | `integrity.py` | Snapshot store: baseline, content-addressed copies, verify, restore, quarantine, locking |
+| `ledger.py` | Each change with its origin, the versions before and after, and `blame` |
 | `allowlist.py`, `events.py`, `settings.py` | Allowed ids, the event log, the settings file |
 | `install.py`, `doctor.py`, `status.py`, `demo.py`, `cli.py` | Installing hooks, health, the commands |
 | `scan.py`, `corpus.py`, `embed.py`, `cluster.py`, `trace.py` | The RAG knowledge-base scanner |
