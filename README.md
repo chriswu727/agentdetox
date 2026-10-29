@@ -34,7 +34,7 @@ it), and the file being restored. It runs the real hooks, so it doubles as a sel
 uv tool install agentdetox                # or: pipx install agentdetox
 ```
 
-Until 0.2.0 is on PyPI, install it from GitHub instead:
+To run the latest code from `main` instead:
 `uv tool install git+https://github.com/chriswu727/agentdetox`.
 
 Then install the Claude Code plugin, from inside Claude Code:
@@ -67,11 +67,12 @@ scans what is already there before trusting it; `agentdetox agent scan` does the
   you could not see what you pasted). An agent changing its own hooks,
   MCP servers or permissions needs your approval, and the prompt says exactly what is added or
   removed.
-- **After the write**, the file is trusted as it now is.
+- **After the write**, the file is trusted as it now is, and the change is recorded with where it
+  came from.
 - **At session start**, files changed outside the agent since the last session are compared with
   the snapshot. Suspicious changes are reported to the agent, which is told not to follow them and
   to tell you, with the command that restores each file. Edits you made yourself that look benign
-  are accepted silently.
+  are accepted silently, and recorded as made outside the agent.
 
 **Where memory came from.** A memory write that is mostly copied from web pages, MCP data, command
 output or files the agent just read asks for approval, unless you asked the agent to remember it.
@@ -108,7 +109,7 @@ agentdetox doctor                         # check the hooks are installed, curre
 Each change AgentDetox sees is recorded with its origin: your own words, the agent, a web page or
 tool output the agent copied (named), or a change made outside the agent's edit tools.
 `agentdetox blame <file>` shows that per line; lines from before AgentDetox was installed show as
-"earlier".
+"earlier", and lines changed since the last recorded change as "unrecorded".
 
 Every message from AgentDetox carries an id. If what it flagged is fine, `agentdetox allow <id>`
 stops it being flagged again in write checks, session notices and scans alike. An id stands for the
@@ -140,6 +141,8 @@ reports the removal.
   and a plausible-looking false fact with nothing to contradict passes.
 - Planted text the model rewrites in its own words before saving it, unless a rule still matches.
 - A change made outside the agent is reported at the next session, not the moment it happens.
+- The ledger knows what the hooks saw. A change the agent makes with a shell command is recorded as
+  made outside the agent, and text it copied in its own words as the agent's.
 - The guard on AgentDetox's own settings recognises plain commands and file writes. An agent that
   can run arbitrary code can still change them (a script that edits `~/.agentdetox` is not
   inspected), and nothing stops a person or process outside the agent.
@@ -238,8 +241,9 @@ command, `engine.py` runs the checks and reports signals, `policy.py` decides fr
 and the agent's abilities whether to block, ask or record, and the adapter formats the reply.
 `hooks.py` wires these together, and `session.py` runs the session-start check. The engine knows
 nothing about agents, so a new integration needs only an adapter. The detectors are in
-`hidden.py` and `persistence.py` (rules), `provenance.py` and `consistency.py` (contradictions).
-The snapshot store is in `integrity.py`, and the model server in `daemon.py`.
+`hidden.py` and `persistence.py` (rules), `provenance.py` (copied text) and `consistency.py`
+(contradictions). The snapshot store is in `integrity.py`, the ledger in `ledger.py`, and the model
+server in `daemon.py`.
 
 Installed hooks call a fixed executable, so updating it takes effect on the next hook call with
 no reinstall; a model server still running the old build is stopped by `update.sh`, and otherwise

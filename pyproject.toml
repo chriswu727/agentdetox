@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "agentdetox"
 dynamic = ["version"]
-description = "Poisoning protection for what AI agents know: detect, block and clean planted instructions and fabricated facts in agent memory, rules and knowledge bases."
+description = "Protection for what AI coding agents remember and obey: checks what they write to memory, rules, skills and config, records where each change came from, and puts back what was tampered with."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]

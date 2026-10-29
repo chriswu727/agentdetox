@@ -18,8 +18,8 @@ if any check fails with AgentDetox.
 Each scenario in `scenarios.py` has:
 
 - **`expect`**: what must hold with AgentDetox installed: a write denied or asked about, a
-  session-start notice, the user told, memory free of the planted text. Benign scenarios expect
-  silence, so a false alarm fails them.
+  session-start notice, the user told, memory free of the planted text, the origin the ledger
+  recorded. Benign scenarios expect silence, so a false alarm fails them.
 - **`landed`**: for attacks, whether the attack succeeded, measured in both arms. The difference
   between the arms is what AgentDetox adds. Today's models refuse much of the obvious injected text
   on their own; where the model already stops an attack, both arms show "no".

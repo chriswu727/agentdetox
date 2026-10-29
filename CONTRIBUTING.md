@@ -39,13 +39,17 @@ Windows support is still young.
 
 To release:
 
-1. Set the version in `src/agentdetox/__init__.py`, `plugins/agentdetox/.claude-plugin/plugin.json`
+1. Run the lab (`lab/README.md`) against the release candidate.
+2. Set the version in `src/agentdetox/__init__.py`, `plugins/agentdetox/.claude-plugin/plugin.json`
    and `VERSION=` in `plugins/agentdetox/scripts/hook`.
-2. Date the version's `CHANGELOG.md` heading (`## [0.3.0] - 2026-11-20`) and merge.
-3. Publish a GitHub release tagged `v0.3.0`. The release workflow checks that the tag, the three
+3. Date the version's `CHANGELOG.md` heading (`## [0.3.0] - 2026-11-20`) and merge.
+4. Publish a GitHub release tagged `v0.3.0`. The release workflow checks that the tag, the three
    versions and the dated changelog agree (`scripts/check_release.py`), runs the checks and tests,
    smoke-tests the built wheel in a clean environment, attaches the distributions to the release,
    and publishes to PyPI through trusted publishing. Nothing is uploaded if any step fails.
+
+PyPI accepts the upload only from this repository's `release.yml`, running in the `pypi`
+environment, as set in the project's trusted-publisher settings on PyPI.
 
 ## Where changes belong
 
@@ -63,6 +67,8 @@ See [docs/architecture.md](docs/architecture.md) for how the pieces fit.
 - **Shell commands**: `shell.py` parses them. It does not follow `cd` or expand variables, by design.
 - **Snapshots, restore, quarantine**: `integrity.py`. Never delete a user's file; move it to
   quarantine. Bump `SCHEMA_VERSION` and handle the old format when the store's layout changes.
+- **The ledger**: `ledger.py`. Entries are only ever appended, recording a change must never raise
+  in a hook, and store cleanup must keep every copy an entry refers to.
 - **Session start**: `session.py`. Only high-severity findings may interrupt a session.
 - **Messages**: say what changed, why it matters and what to do, in that order, with the id the
   user can allow and `~` paths.
