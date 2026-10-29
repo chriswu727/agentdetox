@@ -44,7 +44,7 @@ instruction and skill files, and config.
 - **Guard on AgentDetox's own state.** An agent needs approval to change AgentDetox's settings,
   allowlist or snapshots, or to run the commands that do.
 - **Experimental hooks for Codex and Cursor.** OpenClaw gets tamper detection only.
-- **Windows support**, so far tested only in simulation. Windows has no model server yet.
+- **Windows support**, tested in CI but not yet on a real machine. Windows has no model server yet.
 - **Benchmarks.** An agent memory poisoning benchmark (v0, built from public data only) and a
   provenance benchmark, in `bench/`.
 

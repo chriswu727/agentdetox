@@ -5,8 +5,8 @@ instruction and rules files, skills and config: it checks what the agent writes 
 changes behind its back, and puts things back.
 
 > **Status: preview.** Claude Code is supported. Codex and Cursor hooks are experimental, and
-> OpenClaw gets tamper detection only. Developed and tested on macOS; Windows support is new and
-> so far tested only in simulation. Where it is going:
+> OpenClaw gets tamper detection only. Developed on macOS; on Windows the tests run in CI, but it
+> has not yet been used on a real machine. Where it is going:
 > [ROADMAP.md](https://github.com/chriswu727/agentdetox/blob/main/ROADMAP.md).
 
 Agents learn from web pages, files, emails and tool output, and some of it is written into memory
@@ -33,6 +33,9 @@ it), and the file being restored. It runs the real hooks, so it doubles as a sel
 ```bash
 uv tool install agentdetox                # or: pipx install agentdetox
 ```
+
+Until 0.2.0 is on PyPI, install it from GitHub instead:
+`uv tool install git+https://github.com/chriswu727/agentdetox`.
 
 Then install the Claude Code plugin, from inside Claude Code:
 
