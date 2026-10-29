@@ -95,7 +95,7 @@ themselves improving at it. AgentDetox competes on what that field does not do.
   with the problem, the demo and a two-line install.
 - **Don't block what the user wrote.** Text the user typed or pasted in the session asks for
   confirmation instead of being denied outright.
-- **Distribution.** PyPI (TestPyPI first) and a Claude Code plugin.
+- **Distribution.** PyPI, published from GitHub Actions, and a Claude Code plugin.
 
 Done when: one command installs it; someone new can install it and see the demo within two minutes;
 a week of the maintainer's daily use produces no block that cannot be explained.
