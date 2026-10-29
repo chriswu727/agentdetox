@@ -30,7 +30,8 @@ In scope:
 - **Planted instructions the agent is steered into writing**, through its edit tools or a shell
   command, including text copied from web pages, MCP data or files it read.
 - **Changes made outside the agent**, by a dependency's install script, another program or a sync,
-  reported at the next session and reversible with `agentdetox agent restore`.
+  reported at the next session, recorded in the ledger, and reversible with
+  `agentdetox agent restore`.
 - **An agent changing its own guardrails**: hooks, MCP servers, permissions.
 - **An agent changing AgentDetox's own state**: its settings, allowlist and snapshots, by writing
   them or by running the commands that change them.
@@ -38,8 +39,8 @@ In scope:
 Out of scope, and stated in the README:
 
 - **Someone or something running code as the user** outside the agent's tool calls. It can edit
-  `~/.agentdetox` or remove the hooks; the session-start check and `agentdetox agent verify` report
-  what they can, but nothing on the same account can prevent it.
+  `~/.agentdetox`, the ledger included, or remove the hooks; the session-start check and
+  `agentdetox agent verify` report what they can, but nothing on the same account can prevent it.
 - **Adaptive evasion of the rules.** Detection is not a security boundary; a plausible false fact
   with nothing to contradict, or planted text the model rewrites, can pass.
 - **Everything else an agent does.** AgentDetox is not a firewall for tool calls or network access.

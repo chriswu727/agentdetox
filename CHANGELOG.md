@@ -3,7 +3,7 @@
 Notable changes to AgentDetox. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 before 1.0, a minor version may change commands, settings or the snapshot store.
 
-## [0.2.0] - unreleased
+## [0.2.0] - 2026-10-28
 
 The first release on PyPI. 0.1.0 was a knowledge-base scanner published on GitHub as `ragscan`;
 0.2.0 renames it AgentDetox and extends it to what agents trust and reload: memory, rules,
@@ -45,8 +45,9 @@ instruction and skill files, and config.
   allowlist or snapshots, or to run the commands that do.
 - **Experimental hooks for Codex and Cursor.** OpenClaw gets tamper detection only.
 - **Windows support**, tested in CI but not yet on a real machine. Windows has no model server yet.
-- **Benchmarks.** An agent memory poisoning benchmark (v0, built from public data only) and a
-  provenance benchmark, in `bench/`.
+- **Benchmarks and an evaluation lab.** An agent memory poisoning benchmark (v0, built from public
+  data only) and a provenance benchmark, in `bench/`. The lab in `lab/` replays attacks and
+  everyday use against real Claude Code sessions, with and without AgentDetox.
 
 ### Security
 

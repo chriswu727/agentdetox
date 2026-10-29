@@ -24,8 +24,10 @@ adapters.py   renders the Decision in the agent's reply format
 ```
 
 `hooks.py` wires these together and logs every decision that was not a plain allow to
-`events.jsonl`. After a write, the engine trusts the file as written and records the change in the
-ledger with where it came from. At session start, `session.py` compares every watched file with
+`events.jsonl`. Before a write, a file that no longer matches the last version AgentDetox knows is
+first recorded as changed outside the agent, so the agent is never credited with that change.
+After a write, the engine trusts the file as written and records the change in the ledger with
+where it came from. At session start, `session.py` compares every watched file with
 its snapshot, records changes made outside the agent, and tells the agent about suspicious ones.
 
 ## Modules

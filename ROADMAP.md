@@ -8,12 +8,12 @@ Last updated 2026-10-28. This says where AgentDetox is going and why; the
 An integrity layer for what AI agents remember and obey: their memory, instruction and rules files,
 skills, and the config that decides their tools and permissions.
 
-Today AgentDetox is a set of detectors (rules, a provenance check, a contradiction check) with
+AgentDetox began as a set of detectors (rules, a provenance check, a contradiction check) with
 snapshots underneath for recovery. The detectors judge content, and content judgement is an arms
 race: in real sessions the model already refuses obvious planted instructions, and what slips past
 the model, such as a plausible-looking line or a paraphrase, mostly slips past rules too. What only
 AgentDetox does is track these files across sessions: noticing when something the agent will obey
-changed, who changed it, and putting it back.
+changed, who changed it, and putting it back. 0.2 ships the first part of the ledger below.
 
 ## The bet: a ledger for agent context
 
@@ -100,10 +100,12 @@ themselves improving at it. AgentDetox competes on what that field does not do.
 Done when: one command installs it; someone new can install it and see the demo within two minutes;
 a week of the maintainer's daily use produces no block that cannot be explained.
 
+Where it stands, 28 October: built, with the release prepared; the week of daily use is under way.
+
 ### 0.3: The ledger
 
 - Change records with origin for every watched file, from hook-observed writes and from diffs of
-  changes the hooks did not see.
+  changes the hooks did not see (shipped early, in 0.2).
 - A check right after each shell command the agent runs, so a change made during the session by
   another program (an install script, say) is reported on the spot rather than at the next session.
 - `agentdetox log` and `agentdetox blame <file>` (shipped early, in 0.2), and rollback to a point in
