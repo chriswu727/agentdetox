@@ -47,6 +47,13 @@ def main(argv: list[str] | None = None) -> int:
     p_review.add_argument("id", nargs="?")
     p_review.add_argument("--since", help="show recent changes, e.g. 7d")
     p_review.add_argument("--all", action="store_true", help="include changes that need no attention")
+    p_review.add_argument("--project", type=Path, help="only this project's files and Claude auto memory")
+    p_review.add_argument("--file", type=Path, help="only this file (relative to --project when supplied)")
+    p_review.add_argument("--search", default="", help="match a path or finding description")
+    p_review.add_argument("--page", type=int, default=1)
+    p_review.add_argument("--page-size", type=int, default=20)
+    p_review.add_argument("--group-by", choices=["file", "change"], default="file")
+    p_review.add_argument("--interactive", action="store_true", help="browse and handle changes in a terminal")
     p_review.add_argument("--format", choices=["text", "json"], default="text")
     p_restore = sub.add_parser("restore", help="preview recovery of a recorded change")
     p_restore.add_argument("id")
@@ -603,6 +610,13 @@ if __name__ == "__main__":
 
 
 def _review_command(args) -> int:
+    if args.command == 'review' and args.interactive:
+        if args.action or args.id or args.format == 'json':
+            raise ValueError('Use --interactive with list filters, without an action, id or JSON format')
+        from . import review_ui
+
+        return review_ui.run(since=args.since, all_changes=args.all, project=args.project, file=args.file,
+                             search=args.search, page_number=args.page, page_size=args.page_size, group_by=args.group_by)
     if args.command == "history":
         result = review.prune(args.older_than, args.apply)
         print(f"{'Removed' if args.apply else 'Would remove'} {result['changes']} history entries and "
@@ -652,7 +666,7 @@ def _review_command(args) -> int:
         print(json.dumps({"change": review.get(args.action), "detail": detail}, ensure_ascii=False, indent=2)
               if args.format == "json" else detail)
     else:
-        rows = review.list_changes(args.since, args.all)
-        print(json.dumps(rows, indent=2, ensure_ascii=False) if args.format == "json" else
-              review.render_list(rows, bool(args.since or args.all)))
+        data = review.page(since=args.since, all_changes=args.all, project=args.project, file=args.file,
+                           search=args.search, page_number=args.page, page_size=args.page_size, group_by=args.group_by)
+        print(json.dumps(data, indent=2, ensure_ascii=False) if args.format == "json" else review.render_page(data))
     return 0

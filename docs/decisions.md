@@ -96,3 +96,12 @@ Real-agent validation records attempted commands, successful tool results confir
 hook decisions, user notification and task completion separately. A failed or incomplete session
 cannot be reported as an attack prevented. The headless lab refuses permission questions, so a
 correct guardrail may leave the user's requested change incomplete; report that explicitly.
+
+## ADR 15: Review files first, preserve version-specific actions
+
+Group the inbox by file, with a project filter covering repository paths and its Claude auto-memory
+folder. Shared user rules stay in the global view rather than being assigned to every project.
+Pagination removes the old 200-record ceiling; counts describe the full filtered selection.
+Interactive file selection opens individual changes, with explicit confirmation and the same
+hash checks as scripted actions. It does not bulk-accept a file's history. A real terminal is
+required so piped agent output cannot drive approval prompts.

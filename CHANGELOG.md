@@ -3,6 +3,14 @@
 Notable changes to AgentDetox. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 before 1.0, a minor version may change commands, settings or the snapshot store.
 
+## [Unreleased]
+
+### Added
+
+- Project-scoped review with file grouping, literal path/finding search and pagination beyond 200 changes.
+- Interactive terminal review with file history, confirmation before acceptance/recovery, and stale-version checks.
+- Review JSON pages include totals for the entire selection, operation/state counts and pagination metadata.
+
 ## [0.3.0] - 2026-10-30
 
 ### Added

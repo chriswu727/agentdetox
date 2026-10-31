@@ -13,7 +13,7 @@ from collections import Counter
 from pathlib import Path
 
 from . import events, ledger, storage
-from .context import short_path
+from .context import claude_memory_dir, short_path
 from .integrity import (
     StoreError,
     baseline_entries,
@@ -82,6 +82,89 @@ def render_list(rows: list[dict], summary: bool = False) -> str:
     return '\n'.join(lines)
 
 
+def page(*, since: str | None = None, all_changes: bool = False, project: Path | None = None,
+         file: Path | None = None, search: str = '', page_number: int = 1, page_size: int = 20,
+         group_by: str = 'file') -> dict:
+    if page_number < 1 or not 1 <= page_size <= 200:
+        raise ValueError('Page must be positive; page size must be between 1 and 200')
+    if group_by not in ('file', 'change'):
+        raise ValueError('Group by file or change')
+    clauses: list[str] = []
+    args: list = []
+    if not all_changes and not since:
+        clauses.append("c.review_state='pending'")
+    if since:
+        if not re.fullmatch(r'[1-9][0-9]*d', since):
+            raise ValueError('Use a duration such as --since 7d')
+        clauses.append('c.ts>=?')
+        args.append(time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(time.time() - int(since[:-1]) * 86400)))
+    if project:
+        project = Path(os.path.abspath(project.expanduser()))
+        roots = (project, claude_memory_dir(project))
+        clauses.append('(' + ' OR '.join('substr(c.path, 1, ?)=?' for _ in roots) + ')')
+        for root in roots:
+            prefix = str(root) + os.sep
+            args.extend((len(prefix), prefix))
+    if file:
+        target = file.expanduser()
+        if not target.is_absolute():
+            target = (project or Path.cwd()) / target
+        clauses.append('c.path=?')
+        args.append(os.path.abspath(target))
+    if search:
+        pattern = '%' + search.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
+        clauses.append("(c.path LIKE ? ESCAPE '\\' OR EXISTS "
+                       "(SELECT 1 FROM findings f WHERE f.change_id=c.id AND f.reason LIKE ? ESCAPE '\\'))")
+        args.extend((pattern, pattern))
+    where = ' WHERE ' + ' AND '.join(clauses) if clauses else ''
+    result: dict = dict(rows=[], page=page_number, page_size=page_size, pages=0, group_by=group_by,
+                        total_changes=0, total_files=0, states={}, operations={}, project=str(project) if project else None)
+    with storage.connection() as db:
+        if db is None:
+            return result
+        if not db.in_transaction:
+            db.execute('BEGIN')
+        counts = db.execute('SELECT count(*), count(DISTINCT path) FROM changes c' + where, args).fetchone()
+        result['total_changes'], result['total_files'] = counts
+        result['states'] = {r[0]: r[1] for r in db.execute(
+            'SELECT review_state, count(*) FROM changes c' + where + ' GROUP BY review_state', args)}
+        operation = "CASE WHEN after_hash IS NULL THEN 'deleted' WHEN before_hash IS NULL THEN 'added' ELSE 'modified' END"
+        result['operations'] = {r[0]: r[1] for r in db.execute(
+            'SELECT ' + operation + ', count(*) FROM changes c' + where + ' GROUP BY 1', args)}
+        total = result['total_files'] if group_by == 'file' else result['total_changes']
+        result['pages'] = (total + page_size - 1) // page_size
+        if group_by == 'file':
+            query = '''SELECT c.path, count(*) AS change_count, max(c.id) AS id, max(c.ts) AS ts,
+                sum(CASE WHEN c.review_state='pending' THEN 1 ELSE 0 END) AS pending_count
+                FROM changes c''' + where + ' GROUP BY c.path ORDER BY max(c.id) DESC LIMIT ? OFFSET ?'
+        else:
+            query = 'SELECT c.* FROM changes c' + where + ' ORDER BY c.id DESC LIMIT ? OFFSET ?'
+        result['rows'] = [dict(r) for r in db.execute(query, [*args, page_size, (page_number - 1) * page_size])]
+    return result
+
+
+def render_page(data: dict) -> str:
+    scope = f" in {short_path(data['project'])}" if data['project'] else ''
+    lines = [f"{data['total_changes']} changes across {data['total_files']} files{scope}."]
+    if not data['total_changes']:
+        return lines[0] + '\nNothing matches. Use --since 7d to include recent quiet changes.'
+    lines.append(', '.join(f'{n} {state}' for state, n in sorted(data['states'].items())) + '. ' +
+                 ', '.join(f'{n} {operation}' for operation, n in sorted(data['operations'].items())) + '.')
+    lines.append(f"Page {data['page']} of {data['pages']} · grouped by {data['group_by']}")
+    for index, row in enumerate(data['rows'], 1):
+        if data['group_by'] == 'file':
+            lines.append(f"{index}. {short_path(row['path'])}")
+            lines.append(f"   {row['change_count']} changes · {row['pending_count']} pending · latest matching C{row['id']} · {row['ts']}")
+        else:
+            lines.append(f"{index}. C{row['id']} [{row['review_state']}] {short_path(row['path'])} · {row['ts']}")
+    if not data['rows']:
+        lines.append('No entries on this page. Choose an earlier page.')
+    if data['page'] < data['pages']:
+        lines.append(f"Next page: repeat with --page {data['page'] + 1}.")
+    lines.append('Open: agentdetox review C<ID>. Browse and act: add --interactive.')
+    return '\n'.join(lines)
+
+
 def detail(change_id: str) -> str:
     row = get(change_id)
     data = json.loads(row['data'])
@@ -122,11 +205,13 @@ def accept(change_id: str) -> None:
         events.record("review_accepted", change=change_id, path=row["path"])
 
 
-def dismiss(finding_id: str) -> None:
+def dismiss(finding_id: str, change_id: str | None = None) -> None:
     with storage.connection(write=True) as db:
         row = db.execute("SELECT change_id FROM findings WHERE id=? AND status='pending'", (number(finding_id, 'F'),)).fetchone()
         if row is None:
             raise ValueError(f'Unknown or already handled finding {finding_id}')
+        if change_id is not None and row[0] != number(change_id):
+            raise ValueError(f'{finding_id} belongs to a different change; no finding was dismissed')
         db.execute("UPDATE findings SET status='dismissed' WHERE id=?", (number(finding_id, 'F'),))
         pending = db.execute("SELECT 1 FROM findings WHERE change_id=? AND status='pending'", (row[0],)).fetchone()
         events.record("review_dismissed", finding=finding_id)

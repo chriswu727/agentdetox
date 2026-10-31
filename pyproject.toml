@@ -69,7 +69,7 @@ files = ["src/agentdetox/engine.py", "src/agentdetox/policy.py", "src/agentdetox
          "src/agentdetox/context.py", "src/agentdetox/shell.py", "src/agentdetox/compat.py",
          "src/agentdetox/settings.py", "src/agentdetox/hooks.py", "src/agentdetox/session.py",
          "src/agentdetox/storage.py", "src/agentdetox/review.py", "src/agentdetox/ledger.py",
-         "src/agentdetox/integrity.py"]
+         "src/agentdetox/integrity.py", "src/agentdetox/review_ui.py"]
 follow_imports = "silent"
 check_untyped_defs = true
 warn_unused_ignores = true
