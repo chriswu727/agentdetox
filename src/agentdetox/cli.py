@@ -47,7 +47,9 @@ def main(argv: list[str] | None = None) -> int:
     p_review.add_argument("id", nargs="?")
     p_review.add_argument("--since", help="show recent changes, e.g. 7d")
     p_review.add_argument("--all", action="store_true", help="include changes that need no attention")
-    p_review.add_argument("--project", type=Path, help="only this project's files and Claude auto memory")
+    review_scope = p_review.add_mutually_exclusive_group()
+    review_scope.add_argument("--project", type=Path, help="only this project's files and Claude auto memory")
+    review_scope.add_argument("--global", dest="global_scope", action="store_true", help="include shared user context in interactive review")
     p_review.add_argument("--file", type=Path, help="only this file (relative to --project when supplied)")
     p_review.add_argument("--search", default="", help="match a path or finding description")
     p_review.add_argument("--page", type=int, default=1)
@@ -615,7 +617,7 @@ def _review_command(args) -> int:
             raise ValueError('Use --interactive with list filters, without an action, id or JSON format')
         from . import review_ui
 
-        return review_ui.run(since=args.since, all_changes=args.all, project=args.project, file=args.file,
+        return review_ui.run(global_scope=args.global_scope, since=args.since, all_changes=args.all, project=args.project, file=args.file,
                              search=args.search, page_number=args.page, page_size=args.page_size, group_by=args.group_by)
     if args.command == "history":
         result = review.prune(args.older_than, args.apply)

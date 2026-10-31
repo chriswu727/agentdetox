@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 _ACTIVE: ContextVar[tuple[Path, sqlite3.Connection] | None] = ContextVar('agentdetox_database', default=None)
-VERSION = 1
+VERSION = 2
 _SCHEMA = (
     'CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
     '''CREATE TABLE files (path TEXT PRIMARY KEY, checkpoint TEXT, observed_hash TEXT,
@@ -78,14 +78,17 @@ def connection(*, write: bool = False, seed: dict | None = None):
             version = db.execute('PRAGMA user_version').fetchone()[0]
             if version > VERSION:
                 raise StoreError('Metadata was written by a newer AgentDetox; upgrade before opening it')
-            if version == 0:
-                if not write:
+            if version < VERSION:
+                if not write and version == 0:
                     yield None
                     return
-                db.execute('BEGIN IMMEDIATE')
-                _migrate(db, seed)
-                db.execute(f'PRAGMA user_version={VERSION}')
-                db.commit()
+                if write:
+                    db.execute('BEGIN IMMEDIATE')
+                    if version == 0:
+                        _migrate(db, seed)
+                    _upgrade_observation(db)
+                    db.execute(f'PRAGMA user_version={VERSION}')
+                    db.commit()
             if write:
                 db.execute('BEGIN IMMEDIATE')
             token = _ACTIVE.set((path(), db))
@@ -119,6 +122,15 @@ def _json_lines(file: Path) -> list[dict]:
         except ValueError as e:
             raise StoreError(f'Cannot migrate {file.name}, line {n}: {e}; original files were kept') from e
     return out
+
+
+def _upgrade_observation(db) -> None:
+    db.execute('''CREATE TABLE tool_runs (id TEXT PRIMARY KEY, agent TEXT NOT NULL, session TEXT NOT NULL,
+        project TEXT NOT NULL, created REAL NOT NULL)''')
+    db.execute('CREATE INDEX tool_runs_created ON tool_runs(created)')
+    db.execute('''CREATE TABLE tool_versions (run_id TEXT NOT NULL, path TEXT NOT NULL, digest TEXT NOT NULL,
+        kind TEXT NOT NULL, scope TEXT NOT NULL, mode INTEGER NOT NULL, PRIMARY KEY(run_id, path),
+        FOREIGN KEY(run_id) REFERENCES tool_runs(id) ON DELETE CASCADE)''')
 
 
 def _migrate(db, seed: dict | None) -> None:
@@ -221,4 +233,7 @@ def references() -> set[str]:
         rows = db.execute('''SELECT before_hash FROM changes UNION SELECT after_hash FROM changes
             UNION SELECT accepted_hash FROM files UNION SELECT observed_hash FROM files
             UNION SELECT before_hash FROM operations UNION SELECT after_hash FROM operations''')
-        return {r[0] for r in rows if r[0]}
+        refs = {r[0] for r in rows if r[0]}
+        if db.execute('PRAGMA user_version').fetchone()[0] >= 2:
+            refs.update(r[0] for r in db.execute('SELECT digest FROM tool_versions'))
+        return refs

@@ -30,6 +30,13 @@ After a write, the engine records the observed version, attribution evidence and
 Eligible recovery checkpoint updates and history additions commit in one transaction. At session start, `session.py` compares every watched file with
 its snapshot, records changes made outside the agent, and tells the agent about suspicious ones.
 
+Shell tools with stable tool-use ids additionally pass through `observation.py`. A transaction stores
+pre-tool content references for the current project, its Claude auto memory and shared user-level
+Claude context. Success and failure hooks compare those files and discover additions. Records keep
+external authorship and before/after evidence, deduplicate versions already recorded by edit tools,
+and preserve the recovery checkpoint. A brief `systemMessage` reaches the terminal as well as the
+agent context. The observer hashes scoped contents; it does not rely on mtime as an integrity proof.
+
 ## Modules
 
 | Module | Role |
@@ -38,6 +45,7 @@ its snapshot, records changes made outside the agent, and tells the agent about 
 | `engine.py` | The checks; knows nothing about agents or settings |
 | `policy.py` | Block, ask or record |
 | `hooks.py` | Entry point for hook calls; fails open |
+| `observation.py` | Scoped shell start states, end comparison, immediate review findings and notices |
 | `session.py` | The session-start check |
 | `context.py` | Which files each agent reloads; classifying a path; Claude Code's folder names |
 | `shell.py` | What a shell command writes or deletes, and whether it changes AgentDetox |

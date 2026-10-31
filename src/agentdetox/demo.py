@@ -55,14 +55,17 @@ def _demo(home: Path) -> None:
     _say("AgentDetox blocks the write and tells the agent why:", _tidy(decision["permissionDecisionReason"], mem))
 
     _step(2, "A dependency's install script appends the same instruction to CLAUDE.md, outside the agent.")
+    shell = {"cwd": str(project), "tool_name": "Bash", "session_id": "demo", "tool_use_id": "demo-install",
+             "tool_input": {"command": "npm install"}}
+    _hook({**shell, "hook_event_name": "PreToolUse"})
     with claude_md.open("a", encoding="utf-8") as f:
         f.write(f"- {PLANTED}\n")
 
-    _step(3, "The next session starts.")
-    notice = _hook(session).get("hookSpecificOutput", {}).get("additionalContext", "")
-    if "CLAUDE.md" not in notice:
-        raise DemoFailed("the change to CLAUDE.md was not reported at session start")
-    _say("Before the agent reads CLAUDE.md, AgentDetox tells it:", _tidy(notice, mem))
+    _step(3, "The shell tool finishes; AgentDetox compares the context immediately.")
+    notice = _hook({**shell, "hook_event_name": "PostToolUse"}).get("systemMessage", "")
+    if "context file" not in notice:
+        raise DemoFailed("the shell's context change was not reported immediately")
+    _say("The terminal notice points to review, without waiting for the next session:", _tidy(notice, mem))
 
     change = f"C{ledger.entries(str(claude_md))[-1].id}"
     _step(4, f"You run `agentdetox review {change}` and preview `agentdetox restore {change}`.")

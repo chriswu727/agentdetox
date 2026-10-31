@@ -48,6 +48,7 @@ class Entry:
     attribution: str = "unknown"
     spans: list[dict] = field(default_factory=list)
     review_state: str = "recorded"
+    before_mode: int | None = None
 
     def describe(self) -> str:
         if self.origin == "copied":

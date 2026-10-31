@@ -1,0 +1,64 @@
+{
+  "platform": "macOS-15.7.4-arm64-arm-64bit",
+  "python": "3.12.13",
+  "results": [
+    {
+      "case": "Bash pre, no context write",
+      "samples": 100,
+      "p50_ms": 59.1,
+      "p95_ms": 63.8,
+      "budget_ms": 100,
+      "within_budget": true
+    },
+    {
+      "case": "Bash pre + post, no context write",
+      "samples": 100,
+      "p50_ms": 118.6,
+      "p95_ms": 120.6,
+      "budget_ms": 200,
+      "within_budget": true
+    },
+    {
+      "case": "Protected Edit pre, 50k history entries",
+      "samples": 100,
+      "p50_ms": 59.3,
+      "p95_ms": 60.8,
+      "budget_ms": 120,
+      "within_budget": true
+    },
+    {
+      "case": "Protected Write pre, 3889915 byte transcript",
+      "samples": 100,
+      "p50_ms": 143.0,
+      "p95_ms": 146.9,
+      "budget_ms": 200,
+      "within_budget": true
+    },
+    {
+      "case": "SessionStart, 1000 unchanged files",
+      "samples": 100,
+      "p50_ms": 174.2,
+      "p95_ms": 187.4,
+      "budget_ms": 250,
+      "within_budget": true
+    },
+    {
+      "case": "SessionStart, 100 changed of 1000 files, initially 10k history entries",
+      "samples": 100,
+      "p50_ms": 219.7,
+      "p95_ms": 227.5,
+      "budget_ms": 1000,
+      "within_budget": true
+    },
+    {
+      "case": "Bash pre + post, 1000 active memory files plus 1000 unrelated files",
+      "samples": 100,
+      "p50_ms": 223.5,
+      "p95_ms": 237.9,
+      "budget_ms": 350,
+      "within_budget": true
+    }
+  ],
+  "model": "disabled; no model or subscription usage",
+  "warmup": "one untimed call per case"
+}

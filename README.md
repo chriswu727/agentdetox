@@ -8,6 +8,7 @@ changes behind its back, and puts things back.
 > OpenClaw gets tamper detection only. Developed on macOS; on Windows the tests run in CI, but it
 > has not yet been used on a real machine. Where it is going:
 > [ROADMAP.md](https://github.com/chriswu727/agentdetox/blob/main/ROADMAP.md).
+> Features under `[Unreleased]` in the changelog are available from `main`; they may not yet be in the PyPI release.
 
 Agents learn from web pages, files, emails and tool output, and some of it is written into memory
 or rules that every later session trusts. One poisoned write can steer an agent for weeks, as
@@ -25,8 +26,7 @@ agentdetox demo
 
 In a throwaway folder, with nothing else read or changed, the demo shows an agent trying to save a
 planted instruction to its memory (blocked), a dependency's install script slipping the same
-instruction into CLAUDE.md (reported to the agent at the next session, with the command that undoes
-it), and the file being restored. It runs the real hooks, so it doubles as a self-test.
+instruction into CLAUDE.md (reported as soon as the shell tool finishes, with a review id), and the file being restored. It runs the real hooks, so it doubles as a self-test.
 
 ## Install
 
@@ -35,7 +35,7 @@ uv tool install agentdetox                # or: pipx install agentdetox
 ```
 
 To run the latest code from `main` instead:
-`uv tool install git+https://github.com/chriswu727/agentdetox`.
+`uv tool install --force git+https://github.com/chriswu727/agentdetox`.
 
 Then install the Claude Code plugin, from inside Claude Code:
 
@@ -46,7 +46,7 @@ Then install the Claude Code plugin, from inside Claude Code:
 or add the same hooks to your settings directly:
 
 ```bash
-agentdetox install claude-code --apply    # adds three hooks to ~/.claude/settings.json, backed up first
+agentdetox install claude-code --apply    # registers hooks in ~/.claude/settings.json, backed up first
 ```
 
 Restart Claude Code to load the hooks. Use one route, not both: `install` declines when the plugin
@@ -70,6 +70,13 @@ scans what is already there before recording recovery checkpoints; `agentdetox a
 - **After the write**, the observed version and available attribution evidence are recorded.
   A recovery checkpoint advances when the write passes the checks. This is separate from a
   version you explicitly accept in review.
+- **After a shell tool finishes or fails**, compare the current project's context, its auto memory,
+  and shared regular Claude context files with the versions captured before the tool. New, removed or changed files
+  enter review immediately, with a short terminal notice. Config counters do not produce changes;
+  security-relevant settings do. The record says the change happened during the tool, not which
+  process authored it. If a separate Write/Edit hook already recorded the final version, it keeps
+  that observed writer. Existing installations need updated hook registration (`install claude-code
+  --apply` or update the plugin); this requires agent-supplied tool-use ids.
 - **At session start**, files changed outside the agent since the last session are compared with
   the snapshot. Suspicious changes are reported to the agent, which is told not to follow them and
   to tell you, with the command that restores each file. Edits you made yourself that look benign
@@ -95,7 +102,9 @@ Accept and restore refuse if the file has changed since that record. The legacy
 `agentdetox agent restore <file>` still restores the recovery checkpoint directly.
 
 A missing or damaged metadata store is reported instead of silently rebuilt. Keep a backup of the
-whole store, including `objects/`. `agentdetox agent snapshot --reset` explicitly resets recovery
+whole store, including `objects/`. The unreleased shell observer upgrades SQLite metadata to schema 2;
+PyPI 0.3.0 cannot read that schema. Continue using the main checkout after that upgrade, or restore
+a full pre-upgrade store backup before returning to 0.3.0. `agentdetox agent snapshot --reset` explicitly resets recovery
 checkpoints; it does not erase history or make a corrupt database safe to use.
 
 ## Day to day
@@ -104,6 +113,7 @@ checkpoints; it does not erase history or make a corrupt database safe to use.
 agentdetox status                         # health and pending reviews
 agentdetox review                         # pending changes grouped by file
 agentdetox review --interactive           # browse this project and confirm actions in a terminal
+agentdetox review --interactive --global  # include shared user rules and configuration
 agentdetox review --project . --since 7d   # this project and its Claude auto memory
 agentdetox review --all --page 2          # page through older file groups
 agentdetox review --file CLAUDE.md --all --group-by change # one file's history
@@ -125,7 +135,8 @@ Review lists support `--page-size 1..200`, `--page`, `--group-by file|change`, `
 `--search`, and `--project`. Counts describe the entire filtered selection, not just the current
 page. A project filter includes files under that project and its Claude auto-memory directory;
 shared user-level rules remain in the unfiltered view. Historical records require no migration.
-Interactive review defaults to the current project and asks before accepting or applying recovery.
+Interactive review defaults to the current project; `--global` includes shared user rules and
+configuration. It asks before accepting or applying recovery.
 It requires a terminal; scripts use explicit id-based commands. Review JSON is a page object with
 `rows`, totals, state/operation counts and pagination metadata.
 
@@ -174,7 +185,8 @@ reports the removal.
 - Detection is not a security boundary. An adaptive attacker who knows these rules can evade them,
   and a plausible-looking false fact with nothing to contradict passes.
 - Planted text the model rewrites in its own words before saving it, unless a rule still matches.
-- A change made outside the agent is reported at the next session, not the moment it happens.
+- Changes outside the observed shell interval remain visible at the next session or before the next
+  observed edit. Background writes after a shell tool returns are outside that interval.
 - The ledger knows what the hooks saw. A change the agent makes with a shell command is recorded as
   made outside the agent, and text it copied in its own words as the agent's.
 - The guard on AgentDetox's own settings recognises plain commands and file writes. An agent that

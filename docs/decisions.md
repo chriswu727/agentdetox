@@ -105,3 +105,16 @@ Pagination removes the old 200-record ceiling; counts describe the full filtered
 Interactive file selection opens individual changes, with explicit confirmation and the same
 hash checks as scripted actions. It does not bulk-accept a file's history. A real terminal is
 required so piped agent output cannot drive approval prompts.
+
+## ADR 16: Observe shell intervals without guessing process authorship
+
+Capture hash-addressed versions before a Claude shell tool, then compare the scoped project,
+auto-memory folder and shared Claude context after either success or failure. Keep per-tool start
+states in SQLite so parallel calls cannot overwrite one another, and retain referenced objects
+through GC. Capture and upgrade failures roll back; observation errors never weaken a pre-existing
+permission question. A known edit-tool write keeps its observed attribution. Other changes enter
+review with an explicit unknown-process label, even when no injection rule matches. Config churn
+outside guarded sections stays quiet. This costs two scoped file reads per shell call; other
+projects' auto memory is excluded. Detached background writes and writes later reverted within the
+interval remain outside the evidence. Denied or abandoned tools leave start states that expire
+at the next capture after 24 hours.

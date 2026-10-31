@@ -17,13 +17,15 @@ from .engine import Write
 from .policy import Decision
 
 SHELL_TOOLS = {"bash", "shell", "exec", "exec_command", "local_shell", "run_terminal_cmd"}
-_EVENTS = {"pretooluse": "pre", "posttooluse": "post", "afterfileedit": "post", "sessionstart": "session"}
+_EVENTS = {"pretooluse": "pre", "posttooluse": "post", "posttoolusefailure": "post-failed",
+           "afterfileedit": "post", "sessionstart": "session"}
 _PATCH_FILE_RE = re.compile(r"^\*\*\* (Add|Update) File: (.+)$")
 
 
 class Adapter:
     name = "generic"
     can_ask = False         # whether the agent can put a question to the user mid-task
+    observes_shell = False
     session_chars = 6000    # how much session-start context the agent takes
 
     def event(self, payload: dict) -> str:
@@ -93,14 +95,24 @@ class Adapter:
     def render_allow(self) -> str:
         return ""
 
+    def render_observation(self, text: str, event: str) -> str:
+        return self.render_allow()
+
 
 class ClaudeCode(Adapter):
     name = "claude-code"
     can_ask = True
+    observes_shell = True
     session_chars = 9000
 
     def transcript(self, payload: dict) -> str | None:
         return payload.get("transcript_path")
+
+    def render_observation(self, text: str, event: str) -> str:
+        if not text:
+            return ''
+        return json.dumps({'systemMessage': text, 'hookSpecificOutput': {
+            'hookEventName': event, 'additionalContext': text}})
 
 
 class Codex(Adapter):

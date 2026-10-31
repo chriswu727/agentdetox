@@ -19,3 +19,25 @@ not a cross-platform latency guarantee. The raw report is [results/hooks-2026-10
 
 All five measured P95 budgets passed. These cases exclude optional NLI inference and initial legacy
 migration. Ordinary hooks no longer import NumPy; file history lookup uses SQLite's path index.
+
+## Unreleased shell observation, 2026-10-30
+
+The main checkout now measures Bash pre-checks with fresh agent tool-use ids and additionally
+measures the complete pre/post pair. The active-memory stress case has 1,000 files belonging to
+the current project plus 1,000 unrelated files, exercising the scope boundary. Each case has 100
+samples and one untimed warmup, with NLI disabled. Raw report:
+[results/hooks-self-use-2026-10-30.json](results/hooks-self-use-2026-10-30.json).
+
+| Case | P50 | P95 | Budget |
+|---|---:|---:|---:|
+| Ordinary Bash pre-check with observation capture | 59.1 ms | 63.8 ms | 100 ms |
+| Ordinary Bash pre + post | 118.6 ms | 120.6 ms | 200 ms |
+| Protected Edit, 50k history entries | 59.3 ms | 60.8 ms | 120 ms |
+| Protected Write, 3,889,915-byte transcript | 143.0 ms | 146.9 ms | 200 ms |
+| Session start, 1,000 unchanged files | 174.2 ms | 187.4 ms | 250 ms |
+| Session start, 100 changed / 1,000 files, initially 10k entries | 219.7 ms | 227.5 ms | 1,000 ms |
+| Bash pre + post, 1,000 active memory files and 1,000 unrelated | 223.5 ms | 237.9 ms | 350 ms |
+
+All seven measured P95 budgets passed. The two full-pair budgets are new and include two Python
+processes, durable start-state capture, scoped content reads and the end comparison. These are
+reference-machine measurements; the older five-case 0.3.0 report remains a separate baseline.
