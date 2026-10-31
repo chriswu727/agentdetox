@@ -67,3 +67,10 @@ while the ledger refers to them. Detection can be reworded around; origin cannot
 what makes `blame`, review and rollback possible. Trade-off: the store grows with use until pruning
 exists, and a change made by the agent's shell commands is recorded as "outside the agent's edit
 tools" until a post-command check tells the two apart.
+
+## ADR 11: Prepare recovery before replacing a file
+
+Recovery verifies the stored content hash, writes a temporary replacement with the saved permissions,
+and verifies a unique quarantine copy before replacing the target. Deleted files retain their
+checkpoints. A failed preparation leaves the current file in place; unsupported symbolic links are
+rejected rather than followed. Legacy checkpoints without permissions restore as 0600.

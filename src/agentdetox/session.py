@@ -38,7 +38,7 @@ def _check(project: Path, mode: str) -> str:
     files = discover(project=project)
     roots = [home_dir(), project]
     known = baseline_paths()
-    first_run = not any(str(cf.path) in known for cf in files)
+    first_run = not known
     conflicts: list[Contradiction] = []
     changed = []
     if first_run:

@@ -3,6 +3,14 @@
 Notable changes to AgentDetox. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 before 1.0, a minor version may change commands, settings or the snapshot store.
 
+## [Unreleased]
+
+### Fixed
+
+- Preserve deleted files’ recovery checkpoints and report disabled Claude Code hooks.
+- Validate recovery copies before changing files, preserve permissions and use unique quarantine backups.
+- Report hook failures in events, doctor and status; optional models no longer count as health failures.
+
 ## [0.2.0] - 2026-10-28
 
 The first release on PyPI. 0.1.0 was a knowledge-base scanner published on GitHub as `ragscan`;

@@ -110,7 +110,7 @@ def text_findings(text: str) -> list[tuple[str, str, int]]:
 
 _GUARDED_KEYS = {
     # Claude Code, Cursor, OpenClaw (JSON)
-    "hooks", "mcpServers", "mcp", "permissions", "enabledPlugins", "plugins", "statusLine",
+    "hooks", "disableAllHooks", "mcpServers", "mcp", "permissions", "enabledPlugins", "plugins", "statusLine",
     # Codex config.toml
     "mcp_servers", "approval_policy", "sandbox_mode", "sandbox_workspace_write", "features", "notify",
 }

@@ -46,6 +46,8 @@ def handle(agent: str, payload: dict) -> tuple[int, str]:
             return 0, adapter.render_session(notice)
         return 0, adapter.render_allow()
     except Exception as e:  # noqa: BLE001
+        events.record("hook_error", agent=agent, stage=str(payload.get("hook_event_name", "unknown")),
+                      error=type(e).__name__)
         print(f"agentdetox: hook error ignored (failing open): {type(e).__name__}: {e}", file=sys.stderr)
         return 0, adapter.render_allow()
 
