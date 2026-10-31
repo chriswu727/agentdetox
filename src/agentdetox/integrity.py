@@ -238,7 +238,7 @@ def verify(files: list[ContextFile], roots: list[Path]) -> tuple[list[Change], l
     for path, entry in baseline.items():
         if path not in current and any(path.startswith(r) for r in root_strs) and not Path(path).exists():
             changes.append(Change(path, "deleted", entry["kind"]))
-            if entry["kind"] == "config" and is_self_hook(json.dumps(entry.get("sections", {}))):
+            if entry["kind"] == "config" and any(is_self_hook(value) for value in entry.get("sections", {}).values()):
                 findings.append(Finding(path, path, "self-protection", "high",
                                         "a config file that registered AgentDetox hooks was deleted"))
     return changes, findings
