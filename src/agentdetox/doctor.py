@@ -10,7 +10,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import __version__, allowlist, compat, daemon, settings
+from . import __version__, allowlist, compat, daemon, events, settings
 from .consistency import NLI, NLI_MODEL
 from .context import home_dir
 from .install import claude_code_plugin, claude_code_settings, default_settings_path, plugin_command
@@ -30,6 +30,12 @@ def run(project: Path) -> list[Check]:
     checks += _nli()
     checks += _store()
     checks += _other_agents(project)
+    errors = [r for r in events.read(None) if r.get("event") == "hook_error"]
+    if errors:
+        last = errors[-1]
+        checks.append(Check("fail", f"Protection degraded: {len(errors)} hook check(s) failed; last at "
+                                   f"{last.get('ts', 'unknown')} ({last.get('stage')}: {last.get('error')}). "
+                                   "Inspect `agentdetox events` and fix the failing check."))
     return checks
 
 
@@ -50,6 +56,17 @@ def _claude_code_hooks(project: Path) -> list[Check]:
         if commands:
             in_settings = True
             found.append(_check_claude_settings(path, settings, commands[0]))
+    disabled = False
+    for path in (default_settings_path("claude-code", "user", project),
+                 project / ".claude/settings.json", project / ".claude/settings.local.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if "disableAllHooks" in data:
+                disabled = data["disableAllHooks"] is True
+        except (OSError, ValueError, TypeError):
+            continue
+    if disabled:
+        found.append(Check("fail", "Claude Code: disableAllHooks is true; AgentDetox hooks are disabled"))
     plugin = claude_code_plugin(project)
     if plugin:
         found.append(_check_plugin(plugin))
@@ -128,9 +145,9 @@ def _nli() -> list[Check]:
     # Reports on this interpreter; the hooks' own install is checked via its --version only.
     nli = NLI()
     if not NLI.installed():
-        return [Check("warn", "contradiction detection off: install 'agentdetox[nli]', then `agentdetox fetch-models`")]
+        return [Check("ok", "optional contradiction detection inactive: install 'agentdetox[nli]', then `agentdetox fetch-models`")]
     if not nli.available():
-        return [Check("warn", "contradiction detection off: model not downloaded; run `agentdetox fetch-models`")]
+        return [Check("ok", "optional contradiction detection inactive: model not downloaded; run `agentdetox fetch-models`")]
     how = {"ask": "asks on conflicts", "off": "turned off"}.get(settings.mode("contradiction"),
                                                                "records conflicts in the background")
     checks = [Check("ok", f"contradiction detection {how} ({NLI_MODEL})")]

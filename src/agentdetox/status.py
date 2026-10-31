@@ -30,6 +30,8 @@ def describe(row: dict) -> tuple[str, str, str]:
             target = target[:69] + "…" if str(row.get("tool", "")).lower() in SHELL_TOOLS else "…" + target[-69:]
         if target:
             text = f"{target}: {text}"
+    elif event == "hook_error":
+        label, text = "check failed", f"{row.get('stage')}: {row.get('error')} (protection degraded)"
     elif event == "contradiction":
         label, text = "contradiction", f'"{row.get("new", "")}" vs "{row.get("existing", "")}"'
     elif event == "session_notice":

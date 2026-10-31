@@ -299,7 +299,8 @@ def test_status_after_activity(env, capsys):
     assert main(["status", "--project", str(project)]) == 0
     out = capsys.readouterr().out
     health = out.split("Watching")[0]
-    assert "failure" not in health and "contradiction detection off" in health and "context files" in out
+    assert "failure" not in health and "OK" in health and "context files" in out
+    assert "inactive: model not installed" in out
     assert "contradictions: record (inactive: model not installed)" in out
     assert "1 blocked, 1 asked, 0 recorded" in out
     assert "copied from untrusted input: record (config file)" in out

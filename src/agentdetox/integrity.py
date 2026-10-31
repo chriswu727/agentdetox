@@ -13,9 +13,11 @@ import hashlib
 import json
 import os
 import re
-import shutil
+import stat
+import tempfile
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -61,7 +63,7 @@ def _sha(data: bytes) -> str:
 
 
 # 0: 0.1.0 before versioning (same layout, no "version" key). 1: adds "version" and "last_gc".
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 GC_INTERVAL = 24 * 3600
 LOCK_TIMEOUT = 10.0
 
@@ -160,8 +162,7 @@ def reset_baseline() -> Path | None:
 
 
 def snapshot(files: list[ContextFile], roots: list[Path]) -> int:
-    """Record the current state of `files` as trusted. Entries under `roots` that no
-    longer exist are dropped; entries for other projects are kept."""
+    """Record recovery checkpoints without forgetting deleted files."""
     with store_lock():
         return _snapshot(files, roots)
 
@@ -170,11 +171,6 @@ def _snapshot(files: list[ContextFile], roots: list[Path]) -> int:
     baseline = _load_baseline()
     private_dir(store_dir())
     objects = private_dir(store_dir() / "objects")
-    root_strs = [str(r) + os.sep for r in roots]
-    baseline["files"] = {
-        p: e for p, e in baseline["files"].items()
-        if not any(p.startswith(r) for r in root_strs) or Path(p).exists()
-    }
     for cf in files:
         data = cf.path.read_bytes()
         digest = _sha(data)
@@ -184,6 +180,7 @@ def _snapshot(files: list[ContextFile], roots: list[Path]) -> int:
         text = data.decode("utf-8", errors="replace")
         baseline["files"][str(cf.path)] = {
             "sha256": digest,
+            "mode": stat.S_IMODE(cf.path.stat().st_mode),
             "agent": cf.agent,
             "kind": cf.kind,
             "scope": cf.scope,
@@ -241,7 +238,7 @@ def verify(files: list[ContextFile], roots: list[Path]) -> tuple[list[Change], l
     for path, entry in baseline.items():
         if path not in current and any(path.startswith(r) for r in root_strs) and not Path(path).exists():
             changes.append(Change(path, "deleted", entry["kind"]))
-            if entry["kind"] == "config" and is_self_hook(json.dumps(entry.get("sections", {}))):
+            if entry["kind"] == "config" and any(is_self_hook(value) for value in entry.get("sections", {}).values()):
                 findings.append(Finding(path, path, "self-protection", "high",
                                         "a config file that registered AgentDetox hooks was deleted"))
     return changes, findings
@@ -254,7 +251,10 @@ def _config_changes(doc_id: str, path: Path, new: str, old_sections: dict) -> li
         before, after = old_sections.get(key), new_sections.get(key)
         if before == after:
             continue
-        if before and is_self_hook(before) and (after is None or not is_self_hook(after)):
+        if key == "disableAllHooks" and after == "true":
+            findings.append(Finding(doc_id, str(path), "self-protection", "high",
+                                    "all non-managed hooks were disabled", "disableAllHooks: true"))
+        elif before and is_self_hook(before) and (after is None or not is_self_hook(after)):
             findings.append(Finding(doc_id, str(path), "self-protection", "high",
                                     f"AgentDetox hooks were removed from {key}", ""))
         else:
@@ -301,23 +301,44 @@ def _restore(path: Path) -> Path | None:
     entry = _load_baseline()["files"].get(str(path))
     if entry is None:
         raise KeyError(f"{path} is not in the snapshot")
-    obj = store_dir() / "objects" / entry["sha256"]
-    quarantined = None
-    if path.exists():
-        private_dir(store_dir() / "quarantine")
-        qdir = private_dir(store_dir() / "quarantine" / time.strftime("%Y%m%d-%H%M%S"))
-        # Flattening the full path overflows the 255-byte name limit for deep paths
-        # such as Claude Code's per-project memory dirs, so use a short hashed name and
-        # record the original location in a manifest.
-        quarantined = qdir / f"{_sha(str(path).encode())[:12]}-{path.name}"
-        shutil.move(str(path), quarantined)
-        os.chmod(quarantined, 0o600)
-        manifest = qdir / "manifest.json"
-        entries = json.loads(manifest.read_text(encoding="utf-8")) if manifest.exists() else {}
-        entries[quarantined.name] = str(path)
-        write_private(manifest, json.dumps(entries, indent=1).encode())
+    return restore_object(path, entry["sha256"], entry.get("mode", 0o600))
+
+
+def restore_object(path: Path, digest: str, mode: int = 0o600) -> Path | None:
+    if path.is_symlink():
+        raise StoreError(f"Cannot restore a symbolic link: {path}")
+    obj = store_dir() / "objects" / digest
+    try:
+        data = obj.read_bytes()
+    except OSError as e:
+        raise StoreError(f"Cannot read recovery copy for {path}: {e}") from e
+    if _sha(data) != digest:
+        raise StoreError(f"Recovery copy for {path} failed its integrity check")
     path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(obj, path)
+    fd, name = tempfile.mkstemp(prefix=".agentdetox-restore-", dir=path.parent)
+    tmp = Path(name)
+    quarantined = None
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, mode & 0o777)
+        if path.exists():
+            current = path.read_bytes()
+            qdir = private_dir(store_dir() / "quarantine" / uuid.uuid4().hex)
+            quarantined = qdir / "content"
+            write_private(quarantined, current)
+            with quarantined.open("r+b") as f:
+                os.fsync(f.fileno())
+            if quarantined.read_bytes() != current:
+                raise StoreError(f"Could not verify quarantine copy for {path}")
+            write_private(qdir / "manifest.json", json.dumps({"content": str(path)}).encode())
+            if path.is_symlink() or path.read_bytes() != current:
+                raise StoreError(f"{path} changed during restore; review it again")
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)
     return quarantined
 
 
