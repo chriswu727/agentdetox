@@ -168,7 +168,7 @@ def test_one_id_covers_the_write_check_session_notice_and_scan(env, capsys):
     hook_ids = set(ids_in(reason))
     (mem / "MEMORY.md").write_text((mem / "MEMORY.md").read_text(encoding="utf-8") + POISON + "\n", encoding="utf-8")   # out of band
     notice = session(project)
-    assert all(f"[id {i}]" in notice for i in hook_ids) and "agentdetox allow <id>" in notice
+    assert all(f"[id {i}]" in notice for i in hook_ids) and "agentdetox review C" in notice
     assert "MEMORY.md" in session(project)                 # nags until fixed or allowed
     main(["allow", *hook_ids])
     assert session(project) == ""

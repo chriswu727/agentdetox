@@ -84,7 +84,7 @@ def test_cli_and_hooks_run_without_fcntl_or_unix_sockets(env):
         sys.exit(main(["daemon", "status"]) or main(["agent", "snapshot", "--project", project]))
     """, project, mem), capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert out.returncode == 0, out.stderr
-    assert "not available on Windows yet" in out.stdout and (store_dir() / "baseline.json").exists()
+    assert "not available on Windows yet" in out.stdout and (store_dir() / "state.sqlite3").exists()
 
 
 WRITER = """
@@ -219,11 +219,10 @@ def test_snapshot_copies_keep_their_bytes(tmp_path):
     assert (tmp_path / "copy").read_bytes() == data
 
 
-def test_event_log_lines_end_in_a_bare_newline():
+def test_event_records_survive_platform_newline_differences():
     events.record("asked", path="/x/notes.md")
     events.record("asked", path="/x/more.md")
-    raw = events.log_path().read_bytes()
-    assert raw.count(b"\n") == 2 and b"\r" not in raw and len(events.read()) == 2
+    assert [r["path"] for r in events.read()] == ["/x/notes.md", "/x/more.md"]
 
 
 def test_cli_output_survives_a_cp1252_pipe(monkeypatch):

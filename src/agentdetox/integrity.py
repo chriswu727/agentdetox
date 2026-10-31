@@ -112,6 +112,12 @@ _RESET_HINT = ("Check the agent's memory, rules and config, then run `agentdetox
 
 
 def _load_baseline() -> dict:
+    from . import storage
+
+    return storage.baseline() or _load_legacy_baseline()
+
+
+def _load_legacy_baseline() -> dict:
     path = store_dir() / "baseline.json"
     if not path.exists():
         objects = store_dir() / "objects"
@@ -142,23 +148,43 @@ def baseline_entries() -> dict[str, dict]:
 
 
 def _save_baseline(baseline: dict) -> None:
-    baseline["version"] = SCHEMA_VERSION
-    tmp = private_dir(store_dir()) / "baseline.json.tmp"
-    write_private(tmp, json.dumps(baseline, indent=1, sort_keys=True).encode())
-    tmp.replace(store_dir() / "baseline.json")
+    from . import storage
+
+    storage.save_baseline(baseline)
 
 
 def reset_baseline() -> Path | None:
     """Start a new snapshot list after the old one was damaged or deleted. The old file is
     kept beside it; returns where, or None if there was none."""
+    from . import storage
+
+    kept: Path | None = None
     with store_lock():
+        import sqlite3
+
+        if storage.path().exists():
+            with sqlite3.connect(storage.path()) as probe:
+                incomplete = probe.execute("PRAGMA user_version").fetchone()[0] == 0
+            if incomplete:
+                storage.path().unlink()
+        if storage.exists():
+
+            kept = store_dir() / f"state.sqlite3.backup-{uuid.uuid4().hex}"
+            with storage.connection(write=True) as db:
+                with sqlite3.connect(kept) as backup:
+                    # Backup on a separate read connection avoids waiting on our own write transaction.
+                    with sqlite3.connect(storage.path()) as reader:
+                        reader.backup(backup)
+                os.chmod(kept, 0o600)
+                db.execute('UPDATE files SET checkpoint=NULL')
+            return kept
         path = store_dir() / "baseline.json"
         kept = None
         if path.exists():
-            kept = path.with_name(f"baseline.json.broken-{time.strftime('%Y%m%d-%H%M%S')}")
+            kept = path.with_name(f"baseline.json.broken-{uuid.uuid4().hex}")
             path.replace(kept)
         _save_baseline({"version": SCHEMA_VERSION, "files": {}})
-    return kept
+        return kept
 
 
 def snapshot(files: list[ContextFile], roots: list[Path]) -> int:
@@ -170,13 +196,14 @@ def snapshot(files: list[ContextFile], roots: list[Path]) -> int:
 def _snapshot(files: list[ContextFile], roots: list[Path]) -> int:
     baseline = _load_baseline()
     private_dir(store_dir())
-    objects = private_dir(store_dir() / "objects")
+    private_dir(store_dir() / "objects")
     for cf in files:
         data = cf.path.read_bytes()
         digest = _sha(data)
-        obj = objects / digest
-        if not obj.exists():
-            write_private(obj, data)
+        store_object(data)
+        previous = baseline["files"].get(str(cf.path))
+        if previous and previous["sha256"] == digest and previous.get("mode") == stat.S_IMODE(cf.path.stat().st_mode):
+            continue
         text = data.decode("utf-8", errors="replace")
         baseline["files"][str(cf.path)] = {
             "sha256": digest,
@@ -280,8 +307,20 @@ def store_object(data: bytes) -> str:
     private_dir(store_dir())
     digest = _sha(data)
     obj = private_dir(store_dir() / "objects") / digest
-    if not obj.exists():
-        write_private(obj, data)
+    if obj.exists():
+        if _sha(obj.read_bytes()) != digest:
+            raise StoreError(f"Stored object {digest} is corrupt; recovery data was not overwritten")
+        return digest
+    fd, name = tempfile.mkstemp(prefix=".object-", dir=obj.parent)
+    tmp = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        tmp.replace(obj)
+    finally:
+        tmp.unlink(missing_ok=True)
     return digest
 
 
@@ -304,9 +343,14 @@ def _restore(path: Path) -> Path | None:
     return restore_object(path, entry["sha256"], entry.get("mode", 0o600))
 
 
-def restore_object(path: Path, digest: str, mode: int = 0o600) -> Path | None:
+def restore_object(path: Path, digest: str, mode: int = 0o600, expected: str | None | bool = False,
+                   quarantine_dir: Path | None = None) -> Path | None:
     if path.is_symlink():
         raise StoreError(f"Cannot restore a symbolic link: {path}")
+    if expected is not False:
+        actual = _sha(path.read_bytes()) if path.exists() else None
+        if actual != expected:
+            raise StoreError(f"{path} changed since review; recovery was not applied")
     obj = store_dir() / "objects" / digest
     try:
         data = obj.read_bytes()
@@ -326,7 +370,7 @@ def restore_object(path: Path, digest: str, mode: int = 0o600) -> Path | None:
         os.chmod(tmp, mode & 0o777)
         if path.exists():
             current = path.read_bytes()
-            qdir = private_dir(store_dir() / "quarantine" / uuid.uuid4().hex)
+            qdir = private_dir(quarantine_dir or store_dir() / "quarantine" / uuid.uuid4().hex)
             quarantined = qdir / "content"
             write_private(quarantined, current)
             with quarantined.open("r+b") as f:
@@ -336,6 +380,10 @@ def restore_object(path: Path, digest: str, mode: int = 0o600) -> Path | None:
             write_private(qdir / "manifest.json", json.dumps({"content": str(path)}).encode())
             if path.is_symlink() or path.read_bytes() != current:
                 raise StoreError(f"{path} changed during restore; review it again")
+        if path.is_symlink():
+            raise StoreError(f"{path} became a symbolic link during recovery")
+        if expected is not False and (_sha(path.read_bytes()) if path.exists() else None) != expected:
+            raise StoreError(f"{path} changed during recovery; original was left in place")
         tmp.replace(path)
     finally:
         tmp.unlink(missing_ok=True)

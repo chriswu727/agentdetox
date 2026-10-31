@@ -3,7 +3,25 @@
 Notable changes to AgentDetox. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 before 1.0, a minor version may change commands, settings or the snapshot store.
 
-## [Unreleased]
+## [0.3.0] - 2026-10-30
+
+### Added
+
+- `review`: diffs and evidence, exact-version acceptance, per-finding dismissal and `--since 7d` summaries.
+- `restore C<ID>` previews recovery; `--apply` backs up the current file and refuses stale versions.
+- Transactional SQLite metadata with indexed history, validated legacy migration and unchanged original files.
+- Separate observed writers, per-added-line text attribution, recovery checkpoints and accepted versions.
+- Copied-source and background contradiction findings attached to their observed changes.
+- JSONL export and opt-in history pruning that preserves pending, accepted and recovery-critical records.
+- Recovery operation journaling and explicit acknowledgement of investigated health failures.
+
+### Changed
+
+- Load numerical libraries only for checks that use them. Five hook latency cases meet their documented
+  P95 budgets with 100 samples each on the reference Mac; see `bench/HOOK_LATENCY.md`.
+- Real-agent lab results distinguish command attempts, confirmed execution, notification and task completion.
+- The demo now exercises review, recovery preview and explicit application.
+
 
 ### Fixed
 

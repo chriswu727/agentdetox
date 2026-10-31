@@ -56,7 +56,7 @@ says so at session start instead of failing on every tool call.
 
 A tool install keeps AgentDetox in an environment of its own; `pip install agentdetox` works too.
 If you move Claude Code's folder with `CLAUDE_CONFIG_DIR`, AgentDetox follows it. The first session
-scans what is already there before trusting it; `agentdetox agent scan` does the same at any time.
+scans what is already there before recording recovery checkpoints; `agentdetox agent scan` does the same at any time.
 
 ## What it does in Claude Code
 
@@ -67,8 +67,9 @@ scans what is already there before trusting it; `agentdetox agent scan` does the
   you could not see what you pasted). An agent changing its own hooks,
   MCP servers or permissions needs your approval, and the prompt says exactly what is added or
   removed.
-- **After the write**, the file is trusted as it now is, and the change is recorded with where it
-  came from.
+- **After the write**, the observed version and available attribution evidence are recorded.
+  A recovery checkpoint advances when the write passes the checks. This is separate from a
+  version you explicitly accept in review.
 - **At session start**, files changed outside the agent since the last session are compared with
   the snapshot. Suspicious changes are reported to the agent, which is told not to follow them and
   to tell you, with the command that restores each file. Edits you made yourself that look benign
@@ -86,35 +87,50 @@ injection phrasing. Memory that points package installs at a registry other than
 and the big public mirrors asks rather than blocks, since teams do run private registries. English
 and Chinese.
 
-**Cleaning up.** `agentdetox agent verify` shows what changed and why it is suspicious;
-`agentdetox agent restore <file>` puts back the last trusted version and moves the current one to
-`~/.agentdetox/quarantine`, never deleting it. Snapshot copies that no longer back any file are
-deleted once a day (`agentdetox agent gc` does it now); quarantined files are kept. If the snapshot
-list itself is damaged, or deleted while its copies remain, AgentDetox says so at every session
-instead of quietly trusting whatever is on disk, until you check and run
-`agentdetox agent snapshot --reset`.
+**Cleaning up.** `agentdetox review` lists changes needing attention, with a `C` id for each
+change. `agentdetox review C42` shows the diff, observed writer, attribution evidence and individual
+`F` finding ids. `agentdetox restore C42` previews the recovery; add `--apply` to restore the version
+before that change. The current file is backed up in `~/.agentdetox/quarantine` before replacement.
+Accept and restore refuse if the file has changed since that record. The legacy
+`agentdetox agent restore <file>` still restores the recovery checkpoint directly.
+
+A missing or damaged metadata store is reported instead of silently rebuilt. Keep a backup of the
+whole store, including `objects/`. `agentdetox agent snapshot --reset` explicitly resets recovery
+checkpoints; it does not erase history or make a corrupt database safe to use.
 
 ## Day to day
 
 ```bash
-agentdetox status                         # health, what is watched, how checks are set, recent activity
-agentdetox events                         # everything blocked, asked, recorded or noticed
-agentdetox log                            # every change to memory, rules and config, and where it came from
-agentdetox blame ~/.claude/CLAUDE.md      # where each line of a file came from
-agentdetox allow 3f9c2a1b7e               # stop flagging something you reviewed
-agentdetox config copied record           # change a check
-agentdetox doctor                         # check the hooks are installed, current and runnable
+agentdetox status                         # health and pending reviews
+agentdetox review                         # changes needing attention
+agentdetox review C42                     # diff, evidence, and findings
+agentdetox review accept C42              # accept only this exact file version
+agentdetox review dismiss F7              # dismiss one finding; no permanent exception
+agentdetox restore C42                    # preview; add --apply to restore
+agentdetox review --since 7d               # recent context changes, including quiet activity
+agentdetox log                            # all recorded changes
+agentdetox blame ~/.claude/CLAUDE.md      # per-line attribution evidence
+agentdetox events                         # hook decisions and health events
+agentdetox doctor                         # verify effective hooks and store health
+agentdetox export --format jsonl          # export change records
+agentdetox history prune --older-than 90d # preview retention; add --apply to remove
 ```
 
-Each change AgentDetox sees is recorded with its origin: your own words, the agent, a web page or
-tool output the agent copied (named), or a change made outside the agent's edit tools.
-`agentdetox blame <file>` shows that per line; lines from before AgentDetox was installed show as
-"earlier", and lines changed since the last recorded change as "unrecorded".
+The ledger separates the **observed writer** (an agent tool, external change or recovery) from
+**content attribution**. A match to your message or a tool result is text evidence, not proof of
+who authored it. Added lines are compared separately, so user wording and model additions in the
+same write receive different labels. Unmatched text is unknown; older migrated records retain a
+legacy-inference label. `blame` marks content predating the ledger as "earlier" and unseen edits as
+"unrecorded". Paraphrases and shell-command authorship remain unresolved.
 
-Every message from AgentDetox carries an id. If what it flagged is fine, `agentdetox allow <id>`
-stops it being flagged again in write checks, session notices and scans alike. An id stands for the
-flagged line, the pair of contradicting entries, or the source text was copied from (that file, page
-or command), not for one occurrence; `agentdetox allow --list` and `--remove` review and undo.
+Accepting `C42` applies only to that exact version. Dismissing `F7` leaves the recovery checkpoint
+and file unchanged. Neither adds a source to the allowlist. The advanced `agentdetox allow <id>`
+command still grants a persistent exception across checks, scans and future versions;
+`agentdetox allow --list` and `--remove` inspect and undo it.
+
+Pending findings, explicitly accepted versions and each file's latest record survive history
+pruning. Unreferenced content objects are removed by the daily GC, or `agentdetox agent gc`.
+Quarantine backups and legacy migration files are never automatically deleted.
 
 Settings live in `~/.agentdetox/config.toml` (`agentdetox config` shows them). Each check is `ask`,
 `record` (the write goes through and is logged) or `off`; agents without an ask prompt record
@@ -128,10 +144,15 @@ instead of asking. An `AGENTDETOX_<KEY>` environment variable overrides the file
 
 The settings, the allowlist and the snapshots are guarded like the agent's own config: an agent
 writing under `~/.agentdetox`, deleting it, or running `agentdetox allow`, `config <key> <value>`,
-`install`, `uninstall`, `agent snapshot` or `agent restore` needs your approval, or an injected
+`install`, `uninstall`, `agent snapshot`, review mutations or recovery needs your approval, or an injected
 instruction could switch a check off or allow itself.
 
-Hooks fail open: if AgentDetox itself errors, the agent's action proceeds. If an attacker deletes
+Hooks fail open: if AgentDetox itself errors, the agent's action proceeds, and an unresolved failure
+remains visible in `doctor` and `status`. After investigating, acknowledge its event id with
+`agentdetox health acknowledge <event-id>`. A missing optional model is an inactive feature, not
+a protection failure. Interrupted recoveries show their backup location in doctor; after inspection,
+`health acknowledge-recovery <id>` verifies the file matches one side of that recovery before
+acknowledging it. SQLite fallback errors use `health acknowledge fallback`. `disableAllHooks` is also checked. If an attacker deletes
 the hooks, the session-start check cannot run; `agentdetox agent verify` (by hand or in CI) still
 reports the removal.
 
@@ -168,7 +189,7 @@ Optional: `uv tool install 'agentdetox[nli]'`, then `agentdetox fetch-models`. A
 contradicts what the agent already knows is a common sign of a fabricated fact. This uses a
 multilingual NLI model (mDeBERTa-v3, about 560 MB) and **records instead of asking**: after a
 write, the hook hands the check to a background model server and returns (about 0.1 s), and
-conflicts are logged (`agentdetox events`). The server loads the model on first use (about 1 GB of
+conflicts are logged (`agentdetox events`) and attached to the matching version in `review`. The server loads the model on first use (about 1 GB of
 memory) and exits after 30 minutes without work; `agentdetox daemon status` shows it. On real memory
 the model still misreads fragments of notes as contradicting each other, which is why it does not
 ask; `agentdetox config contradiction ask` makes it ask. Windows has no model server yet: each
@@ -234,7 +255,9 @@ what is stored and read.
 
 `lab/` replays attacks and everyday use against real Claude Code sessions, with and without
 AgentDetox ([lab/README.md](https://github.com/chriswu727/agentdetox/blob/main/lab/README.md));
-its latest results are in `lab/results/latest.md`.
+its latest results are in `lab/results/latest.md`. The local hook performance suite is
+`python -m bench.hook_latency --samples 100`; recorded budgets and results are in
+[bench/HOOK_LATENCY.md](bench/HOOK_LATENCY.md).
 
 How a hook call flows: `adapters.py` turns an agent's event into a planned write or a shell
 command, `engine.py` runs the checks and reports signals, `policy.py` decides from your settings
@@ -242,7 +265,8 @@ and the agent's abilities whether to block, ask or record, and the adapter forma
 `hooks.py` wires these together, and `session.py` runs the session-start check. The engine knows
 nothing about agents, so a new integration needs only an adapter. The detectors are in
 `hidden.py` and `persistence.py` (rules), `provenance.py` (copied text) and `consistency.py`
-(contradictions). The snapshot store is in `integrity.py`, the ledger in `ledger.py`, and the model
+(contradictions). Recovery objects are managed by `integrity.py`, transactional metadata by `storage.py`,
+the ledger by `ledger.py`, review actions by `review.py`, and the model
 server in `daemon.py`.
 
 Installed hooks call a fixed executable, so updating it takes effect on the next hook call with

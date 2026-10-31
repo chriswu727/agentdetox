@@ -1,0 +1,48 @@
+{
+  "platform": "macOS-15.7.4-arm64-arm-64bit",
+  "python": "3.12.13",
+  "results": [
+    {
+      "case": "Bash pre, no context write",
+      "samples": 100,
+      "p50_ms": 63.1,
+      "p95_ms": 78.0,
+      "budget_ms": 100,
+      "within_budget": true
+    },
+    {
+      "case": "Protected Edit pre, 50k history entries",
+      "samples": 100,
+      "p50_ms": 62.5,
+      "p95_ms": 73.5,
+      "budget_ms": 120,
+      "within_budget": true
+    },
+    {
+      "case": "Protected Write pre, 3889915 byte transcript",
+      "samples": 100,
+      "p50_ms": 145.8,
+      "p95_ms": 155.8,
+      "budget_ms": 200,
+      "within_budget": true
+    },
+    {
+      "case": "SessionStart, 1000 unchanged files",
+      "samples": 100,
+      "p50_ms": 178.1,
+      "p95_ms": 209.3,
+      "budget_ms": 250,
+      "within_budget": true
+    },
+    {
+      "case": "SessionStart, 100 changed of 1000 files, initially 10k history entries",
+      "samples": 100,
+      "p50_ms": 229.5,
+      "p95_ms": 260.5,
+      "budget_ms": 1000,
+      "within_budget": true
+    }
+  ],
+  "model": "disabled; no model or subscription usage",
+  "warmup": "one untimed call per case"
+}

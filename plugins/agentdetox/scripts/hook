@@ -3,7 +3,7 @@
 # through to it. Uses the installed command if there is one, otherwise this plugin's
 # release through uvx. With neither, the agent works unchecked and the user is told so
 # at session start: a hook that failed would only show errors on every tool call.
-VERSION=0.2.0
+VERSION=0.3.0
 
 if [ -x "$HOME/.local/bin/agentdetox" ]; then
   exec "$HOME/.local/bin/agentdetox" hook claude-code

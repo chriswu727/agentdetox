@@ -48,7 +48,9 @@ def changes_agentdetox(tokens: list[str]) -> bool:
         words = [a for a in args if not a.startswith("-")]
         sub = words[0] if words else ""
         rest = args[args.index(sub) + 1:] if sub else []
-        if (sub == "uninstall" or (sub == "install" and "--apply" in rest)
+        applies = any(a.startswith('--') and '--apply'.startswith(a) for a in rest)
+        if ((sub in ("history", "restore", "install") and applies) or sub == "health"
+                or (sub == "review" and any(a in ("accept", "dismiss") for a in rest)) or sub == "uninstall"
                 or (sub == "allow" and any(a not in ("--list", "-h", "--help") for a in rest))
                 or (sub == "config" and len(words) >= 3)
                 or (sub == "agent" and words[1:2] in (["snapshot"], ["restore"]))):

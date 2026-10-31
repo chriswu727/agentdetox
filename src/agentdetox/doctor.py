@@ -10,7 +10,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import __version__, allowlist, compat, daemon, events, settings
+from . import __version__, allowlist, compat, daemon, events, settings, storage
 from .consistency import NLI, NLI_MODEL
 from .context import home_dir
 from .install import claude_code_plugin, claude_code_settings, default_settings_path, plugin_command
@@ -30,7 +30,20 @@ def run(project: Path) -> list[Check]:
     checks += _nli()
     checks += _store()
     checks += _other_agents(project)
-    errors = [r for r in events.read(None) if r.get("event") == "hook_error"]
+    try:
+        with storage.connection() as db:
+            interrupted = db.execute("SELECT * FROM operations WHERE stage NOT IN ('completed', 'acknowledged')").fetchall() if db else []
+        for operation in interrupted:
+            checks.append(Check("fail", f"Recovery {operation['id']} for {operation['path']} is incomplete; "
+                                       f"backup: {operation['backup']}; error: {operation['error'] or 'process interrupted'}. "
+                                       "Inspect both, then retry or run `agentdetox health acknowledge-recovery "
+                                       f"{operation['id']}`"))
+    except StoreError:
+        pass
+    try:
+        errors = [r for r in events.read(None) if r.get("event") == "hook_error" and not r.get("resolved")]
+    except StoreError:
+        errors = []
     if errors:
         last = errors[-1]
         checks.append(Check("fail", f"Protection degraded: {len(errors)} hook check(s) failed; last at "
@@ -166,7 +179,7 @@ def _nli() -> list[Check]:
 
 def _store() -> list[Check]:
     store = store_dir()
-    if not (store / "baseline.json").exists():
+    if not (store / "baseline.json").exists() and not storage.path().exists() and not (store / "sqlite-migrated").exists():
         return [Check("warn", f"snapshot store {store} is empty; it is created on install or first session")]
     try:
         tracked = usage()["tracked"]

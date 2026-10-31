@@ -10,11 +10,12 @@ from __future__ import annotations
 import difflib
 import functools
 import hashlib
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import allowlist, daemon, events, ledger, shell
+from . import allowlist, daemon, events, ledger, shell, storage
 from .agentscan import read_text, scan_text
 from .allowlist import Flag, contradiction_flag, copy_flag, finding_flag, source_id
 from .consistency import (
@@ -30,7 +31,15 @@ from .context import ContextFile, classify, related_files, short_path
 from .findings import Finding
 from .integrity import baseline_entries, object_text, snapshot, store_dir, store_lock
 from .persistence import guard_changes, guarded_sections
-from .provenance import CopyFinding, Transcript, copied_from_untrusted, origin_of, read_transcript, typed_by_user
+from .provenance import (
+    CopyFinding,
+    Transcript,
+    attribute_lines,
+    copied_from_untrusted,
+    origin_of,
+    read_transcript,
+    typed_by_user,
+)
 
 # What a signal is about. The last three are also the names of the user's settings.
 PLANTED = "planted"          # a clear-cut planted instruction
@@ -145,7 +154,7 @@ def after_write(paths: list[Path], project: Path, record_contradictions: bool, t
         # A file that keeps a clear-cut finding the user did not write stays untrusted; the
         # agent's edit to it is still recorded.
         trusted = not high or bool(t and t.human and all(typed_by_user(f, t.human) for f in high))
-        with store_lock():  # cleanup must not run between the snapshot and the ledger entry
+        with store_lock(), storage.connection(write=True):  # commit checkpoint and history together
             before = previous_version(str(path))
             old = object_text(before) if before else ""
             data = path.read_bytes()
@@ -153,8 +162,14 @@ def after_write(paths: list[Path], project: Path, record_contradictions: bool, t
                 snapshot([cf], roots=[])
             if hashlib.sha256(data).hexdigest() != before:
                 origin, source, requested = origin_of(_added_text(old, data.decode("utf-8", errors="replace")), t)
-                ledger.record(path, origin, before, data, agent=agent, session=session, tool=tool, source=source,
-                              requested=requested)
+                entry = ledger.record(path, origin, before, data, agent=agent, session=session, tool=tool, source=source,
+                              requested=requested, findings=allowlist.unsuppressed(scan_text(str(path), str(path),
+                                  data.decode("utf-8", errors="replace") if cf.kind == "config" else
+                                  _added_text(old, data.decode("utf-8", errors="replace")), cf.kind)), spans=attribute_lines(old, data.decode("utf-8", errors="replace"), t))
+                copied = _copied(cf, _added_text(old, data.decode("utf-8", errors="replace")), t)
+                if copied and entry:
+                    flag = copy_flag(copied)
+                    ledger.add_finding(entry.id, flag.id, "medium", flag.what + " (text-match inference)")
         if trusted and record_contradictions:
             record_in_background(cf, old, project)
 
@@ -174,15 +189,20 @@ def before_write(paths: list[Path], project: Path) -> None:
             data = path.read_bytes()
             if known is None or hashlib.sha256(data).hexdigest() == known:
                 continue
-            flagged = _worst(allowlist.unsuppressed(scan_text(str(path), str(path), read_text(path), cf.kind))) == "high"
-            ledger.record(path, "external", known, data, flagged=flagged)
+            findings = allowlist.unsuppressed(scan_text(str(path), str(path), read_text(path), cf.kind))
+            ledger.record(path, "external", known, data, flagged=_worst(findings) == "high", findings=findings)
 
 
 def previous_version(path: str) -> str | None:
     """The newest version AgentDetox knows of `path`: the trusted snapshot, or a later
     change the ledger recorded without trusting it."""
-    snap = baseline_entries().get(path)
-    history = ledger.entries(path)
+    with storage.connection() as db:
+        if db is not None:
+            row = db.execute('SELECT checkpoint FROM files WHERE path=?', (path,)).fetchone()
+            snap = json.loads(row[0]) if row and row[0] else None
+        else:
+            snap = baseline_entries().get(path)
+    history = ledger.entries(path, limit=1)
     if history and (snap is None or history[-1].ts >= snap.get("taken", "")):
         return history[-1].after
     return snap["sha256"] if snap else None
@@ -276,11 +296,21 @@ def record_contradictions(path: Path, project: Path, old: str, nli=None) -> int:
     cf = classify(path, project=project)
     if cf is None or not path.is_file():
         return 0
-    conflicts = contradictions(cf, old, read_text(path), project, nli)
+    content = path.read_bytes()
+    digest = hashlib.sha256(content).hexdigest()
+    conflicts = contradictions(cf, old, content.decode("utf-8", errors="replace"), project, nli)
     for c in conflicts:
         events.record("contradiction", id=contradiction_flag(c).id, path=str(path), new=c.new.text[:300],
                       existing=c.existing.text[:300], existing_source=c.existing.source,
                       probability=round(c.probability, 3))
+    if conflicts:
+        with storage.connection(write=True) as db:
+            row = db.execute('SELECT id FROM changes WHERE path=? AND after_hash=? ORDER BY id DESC LIMIT 1',
+                             (str(path), digest)).fetchone()
+            if row:
+                for conflict in conflicts:
+                    flag = contradiction_flag(conflict)
+                    ledger.add_finding(row[0], flag.id, "medium", flag.what)
     return len(conflicts)
 
 

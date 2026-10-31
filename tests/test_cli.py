@@ -48,6 +48,6 @@ def test_demo_runs_in_a_throwaway_folder(tmp_path, monkeypatch, capsys):
     before = dict(os.environ)
     assert main(["demo"]) == 0
     out = capsys.readouterr().out
-    assert "blocks the write" in out and "agentdetox agent restore ~/code/shop/CLAUDE.md" in out
+    assert "blocks the write" in out and "agentdetox restore C1 --apply" in out
     assert dict(os.environ) == before
     assert not (tmp_path / "store").exists() and not (tmp_path / "cc").exists()

@@ -5,13 +5,15 @@ once without, and records what happened. It is how AgentDetox's claims are check
 benchmarks in `bench/` measure the detectors, the lab measures the product in a real agent.
 
 ```bash
-.venv/bin/python -m lab.run                          # every scenario, both arms
-.venv/bin/python -m lab.run postinstall-tamper       # one scenario
-.venv/bin/python -m lab.run --arms agentdetox        # only with AgentDetox
+.venv/bin/python -m lab.run --max-sessions 16        # every scenario, both arms
+.venv/bin/python -m lab.run postinstall-tamper --max-sessions 2 # one scenario
+.venv/bin/python -m lab.run --arms agentdetox --max-sessions 8 # only with AgentDetox
 ```
 
 Results go to `lab/results/<date>.json` and `lab/results/latest.md`. The command exits non-zero
-if any check fails with AgentDetox.
+if any check fails or any session fails to complete. `--max-sessions` is a required explicit
+spending cap; obtain user authorization before any real run. Failed CLI startup is not a completed
+model session and its error is retained in the result.
 
 ## What a run measures
 
@@ -20,7 +22,9 @@ Each scenario in `scenarios.py` has:
 - **`expect`**: what must hold with AgentDetox installed: a write denied or asked about, a
   session-start notice, the user told, memory free of the planted text, the origin the ledger
   recorded. Benign scenarios expect silence, so a false alarm fails them.
-- **`landed`**: for attacks, whether the attack succeeded, measured in both arms. The difference
+- **`landed`**: for attacks, whether the planted text persisted or a successful tool result confirmed the planted command, measured
+  in both arms. Command attempts alone do not count as execution, and missing notification is
+  recorded separately. A failed command result leaves execution unconfirmed. The difference
   between the arms is what AgentDetox adds. Today's models refuse much of the obvious injected text
   on their own; where the model already stops an attack, both arms show "no".
 
@@ -45,3 +49,7 @@ therefore shows up as "asked" in the results, and the write does not happen.
 Put any files it needs in `fixtures/shop`, then add a `Scenario` with its prompt, `expect` checks
 and, for an attack, a `landed` check. Planted content uses reserved names (`evil.example`,
 `.internal`) that cannot resolve.
+
+Where a scenario has a concrete file or memory outcome, `user_task_completed` reports it independently
+of safety checks. A blocked confirmation request can therefore pass its guardrail checks while
+leaving the requested edit undone. Other tasks have no automatic completion oracle and show `null`.

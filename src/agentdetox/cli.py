@@ -8,13 +8,12 @@ from collections import Counter
 from dataclasses import asdict
 from pathlib import Path
 
-from . import __version__, allowlist, daemon, demo, doctor, events, ledger, settings, status
+from . import __version__, allowlist, daemon, demo, doctor, events, ledger, review, settings, status, storage
 from .agentscan import consistency_findings, scan_context
 from .allowlist import finding_flag
 from .consistency import NLI, NLI_MODEL
 from .context import KINDS, PROFILES, discover, home_dir, short_path
 from .corpus import load_corpus
-from .embed import get_embedder
 from .findings import ID_LENGTH, SEVERITY_ORDER, at_least, finding_id
 from .hooks import main_hook
 from .install import (
@@ -27,8 +26,6 @@ from .install import (
     uninstall_claude_code,
 )
 from .integrity import StoreError, gc, reset_baseline, restore, snapshot, store_dir, store_object, verify
-from .scan import scan
-from .trace import trace
 
 
 def _utf8_output() -> None:
@@ -44,6 +41,26 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="agentdetox", description=__doc__)
     parser.add_argument("--version", action="version", version=f"agentdetox {__version__}")
     sub = parser.add_subparsers(dest="command", required=True, metavar="command")
+
+    p_review = sub.add_parser("review", help="review changes, evidence and exact versions")
+    p_review.add_argument("action", nargs="?")
+    p_review.add_argument("id", nargs="?")
+    p_review.add_argument("--since", help="show recent changes, e.g. 7d")
+    p_review.add_argument("--all", action="store_true", help="include changes that need no attention")
+    p_review.add_argument("--format", choices=["text", "json"], default="text")
+    p_restore = sub.add_parser("restore", help="preview recovery of a recorded change")
+    p_restore.add_argument("id")
+    p_restore.add_argument("--apply", action="store_true", help="apply the previewed recovery")
+    p_export = sub.add_parser("export", help="export change history as JSONL")
+    p_export.add_argument("--format", choices=["jsonl"], default="jsonl")
+    p_health = sub.add_parser("health", help="acknowledge a previously investigated hook failure")
+    p_health.add_argument("action", choices=["acknowledge", "acknowledge-recovery"])
+    p_health.add_argument("id", help="event id from events --format json, 'fallback', or recovery id from doctor")
+
+    p_history = sub.add_parser("history", help="preview or apply history retention")
+    p_history.add_argument("action", choices=["prune"])
+    p_history.add_argument("--older-than", default="90d")
+    p_history.add_argument("--apply", action="store_true")
 
     def corpus_args(p: argparse.ArgumentParser) -> None:
         p.add_argument("path", type=Path, help="directory of .txt/.md/.html files, or a .jsonl file")
@@ -85,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
     a_scan.add_argument("--fail-on", choices=["low", "medium", "high", "none"], default="high")
     a_scan.add_argument("--consistency", action="store_true",
                         help="also look for memory entries that contradict each other (needs agentdetox[nli])")
-    a_snap = asub.add_parser("snapshot", help="record the current context files as trusted")
+    a_snap = asub.add_parser("snapshot", help="record recovery checkpoints for current context files")
     agent_args(a_snap)
     a_snap.add_argument("--reset", action="store_true",
                         help="start a new snapshot list when the old one is damaged or missing")
@@ -148,6 +165,12 @@ def main(argv: list[str] | None = None) -> int:
     p_blame.add_argument("path", type=Path)
 
     args = parser.parse_args(argv)
+    if args.command in ("review", "restore", "export", "health", "history"):
+        try:
+            return _review_command(args)
+        except (ValueError, OSError, StoreError) as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
     if args.command == "demo":
         return demo.run()
     if args.command == "log":
@@ -206,6 +229,10 @@ def main(argv: list[str] | None = None) -> int:
             return 2
     if not args.path.exists():
         parser.error(f"{args.path} does not exist")
+    from .embed import get_embedder
+    from .scan import scan
+    from .trace import trace
+
     docs = load_corpus(args.path, args.text_field, args.id_field, args.chunk_chars)
     if not docs:
         parser.error(f"no readable documents under {args.path}")
@@ -229,7 +256,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _log(args) -> int:
     path = str(args.path.expanduser().absolute()) if args.path else None
-    rows = ledger.entries(path)[-args.n:] if args.n > 0 else []
+    rows = ledger.entries(path, limit=args.n) if args.n > 0 else []
     if args.format == "json":
         print(json.dumps([asdict(e) for e in rows], ensure_ascii=False, indent=2))
         return 0
@@ -257,7 +284,7 @@ def _blame(args) -> int:
     rows = ledger.blame(path)
     for text, cause in rows:
         if isinstance(cause, ledger.Entry):
-            label = f"{cause.origin} {cause.ts[5:16].replace('T', ' ')}"
+            label = f"{dict(you='user-text match', copied='tool-text match').get(cause.origin, cause.origin)} {cause.ts[5:16].replace('T', ' ')}"
             if cause.origin == "copied" and cause.source:
                 label += " " + cause.source.split()[0]
         else:
@@ -573,3 +600,59 @@ def _print_trace(rows, fmt: str) -> None:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def _review_command(args) -> int:
+    if args.command == "history":
+        result = review.prune(args.older_than, args.apply)
+        print(f"{'Removed' if args.apply else 'Would remove'} {result['changes']} history entries and "
+              f"{result['events']} events. Pending findings, approved versions and each file's latest entry are kept.")
+        print("Run `agentdetox agent gc` to remove unreferenced objects." if args.apply else
+              "Add --apply to remove these records. History before the retained boundary will no longer be attributed.")
+    elif args.command == "restore":
+        print(review.restore(args.id, args.apply))
+    elif args.command == "export":
+        for entry in ledger.entries():
+            print(json.dumps(asdict(entry), ensure_ascii=False))
+    elif args.command == "health":
+        if args.action == 'acknowledge-recovery':
+            review.acknowledge_recovery(args.id)
+            print('Acknowledged this recovery after checking the on-disk version. File contents were not changed.')
+            return 0
+        if args.id == 'fallback':
+            import uuid
+
+            from .integrity import store_lock
+
+            with store_lock():
+                path = store_dir() / 'events-fallback.jsonl'
+                if not path.exists():
+                    raise ValueError('No fallback events to acknowledge')
+                kept = path.with_name(f'events-fallback.acknowledged-{uuid.uuid4().hex}.jsonl')
+                path.replace(kept)
+            print(f'Acknowledged fallback events; retained at {kept}. Future errors remain visible.')
+            return 0
+        with storage.connection(write=True) as db:
+            changed = db.execute("UPDATE events SET resolved=1 WHERE id=? AND event='hook_error'", (args.id,)).rowcount
+            if not changed:
+                raise ValueError("Unknown hook failure event")
+        print("Acknowledged this failure. Future failures will still degrade protection status.")
+    elif args.action == "accept":
+        if not args.id:
+            raise ValueError("Use agentdetox review accept C<ID>")
+        review.accept(args.id)
+        print(f"Accepted {args.id}: only this exact version, with no permanent source exception.")
+    elif args.action == "dismiss":
+        if not args.id:
+            raise ValueError("Use agentdetox review dismiss F<ID>")
+        review.dismiss(args.id)
+        print(f"Dismissed {args.id}: the file is unchanged and no permanent exception was added.")
+    elif args.action:
+        detail = review.detail(args.action)
+        print(json.dumps({"change": review.get(args.action), "detail": detail}, ensure_ascii=False, indent=2)
+              if args.format == "json" else detail)
+    else:
+        rows = review.list_changes(args.since, args.all)
+        print(json.dumps(rows, indent=2, ensure_ascii=False) if args.format == "json" else
+              review.render_list(rows, bool(args.since or args.all)))
+    return 0
