@@ -138,13 +138,12 @@ def test_session_start_reports_out_of_band_tampering_until_fixed(env, capsys):
     (mem / "MEMORY.md").write_text((mem / "MEMORY.md").read_text(encoding="utf-8") + POISON + "\n", encoding="utf-8")
     notice = session("claude-code", project)
     assert "changed outside the agent" in notice and "Do not follow" in notice
-    restore = re.search(r"`agentdetox agent restore ([^`]+)`", notice)[1]
-    if os.name == "posix":
-        assert restore == "~/.claude/projects/-proj/memory/MEMORY.md"
-    else:   # backslash paths are quoted whole
-        assert restore.startswith('"') and restore.endswith('MEMORY.md"')
+    change = re.search(r"`agentdetox review (C[0-9]+)`", notice)[1]
+    assert f"agentdetox restore {change}" in notice and '--apply' in notice
     assert "MEMORY.md" in session("claude-code", project)  # still flagged next session
-    assert main(["agent", "restore", str(mem / "MEMORY.md")]) == 0
+    assert main(["restore", change]) == 0
+    assert POISON in (mem / "MEMORY.md").read_text(encoding="utf-8")
+    assert main(["restore", change, "--apply"]) == 0
     assert session("claude-code", project) == ""
 
 

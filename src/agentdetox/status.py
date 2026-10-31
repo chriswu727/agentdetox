@@ -7,7 +7,7 @@ from collections import Counter
 from dataclasses import asdict
 from pathlib import Path
 
-from . import __version__, allowlist, daemon, doctor, events, settings
+from . import __version__, allowlist, daemon, doctor, events, settings, storage
 from .adapters import SHELL_TOOLS
 from .consistency import NLI
 from .context import home_dir
@@ -31,6 +31,7 @@ def describe(row: dict) -> tuple[str, str, str]:
         if target:
             text = f"{target}: {text}"
     elif event == "hook_error":
+        ids = str(row.get("event_id", ""))
         label, text = "check failed", f"{row.get('stage')}: {row.get('error')} (protection degraded)"
     elif event == "contradiction":
         label, text = "contradiction", f'"{row.get("new", "")}" vs "{row.get("existing", "")}"'
@@ -54,11 +55,17 @@ def collect(project: Path, days: int = 7) -> dict:
     except StoreError:
         files, store = {}, None  # doctor's failure, shown under Health, says why
     current, _ = settings.load()
-    rows = events.read(None)
+    try:
+        rows = events.read(None)
+        with storage.connection() as db:
+            pending = db.execute("SELECT count(*) FROM changes WHERE review_state='pending'").fetchone()[0] if db else 0
+    except StoreError:
+        rows, pending = [], 0
     since = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(time.time() - days * 86400))
     activity = Counter(_bucket(r) for r in rows if r.get("ts", "") >= since)
     return {
         "version": __version__,
+        "pending_reviews": pending,
         "health": [asdict(c) for c in problems],
         "watching": {
             "files": len(files),
@@ -122,6 +129,8 @@ def render(data: dict) -> str:
                      + (f" ({st['unreferenced']} superseded, cleaned daily)" if st["unreferenced"] else "")
                      + f", {st['quarantined']} quarantined file(s)")
 
+    row("Review", f"{data.get('pending_reviews', 0)} change(s) need attention; `agentdetox review`",
+        "Weekly changes: `agentdetox review --since 7d`")
     row("Allowlist", f"{data['allowed']} id(s)" + (" (`agentdetox allow --list`)" if data["allowed"] else ""))
     a = data["activity"]
     row(f"Last {data['days']} days", f"{a['blocked']} blocked, {a['asked']} asked, {a['recorded']} recorded, "

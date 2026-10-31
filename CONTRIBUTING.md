@@ -67,8 +67,9 @@ See [docs/architecture.md](docs/architecture.md) for how the pieces fit.
 - **Shell commands**: `shell.py` parses them. It does not follow `cd` or expand variables, by design.
 - **Snapshots, restore, quarantine**: `integrity.py`. Never delete a user's file; move it to
   quarantine. Bump `SCHEMA_VERSION` and handle the old format when the store's layout changes.
-- **The ledger**: `ledger.py`. Entries are only ever appended, recording a change must never raise
-  in a hook, and store cleanup must keep every copy an entry refers to.
+- **The ledger**: `ledger.py`. Changes append transactionally; failures reach the fail-open hook boundary and become visible
+  health events. Explicit retention may remove old resolved records. Cleanup must keep every
+  referenced content object.
 - **Session start**: `session.py`. Only high-severity findings may interrupt a session.
 - **Messages**: say what changed, why it matters and what to do, in that order, with the id the
   user can allow and `~` paths.

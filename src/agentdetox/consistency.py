@@ -15,8 +15,10 @@ import re
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import numpy as np
+if TYPE_CHECKING:
+    import numpy as np
 
 NLI_MODEL = "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7"
 CONTRADICTION_THRESHOLD = 0.8
@@ -229,6 +231,8 @@ def _tokens(text: str) -> list[str]:
 
 
 def _vectors(texts: list[str]) -> np.ndarray:
+    import numpy as np
+
     rows = [{zlib.crc32(t.encode()) % _DIM: 0.0 for t in _tokens(x)} for x in texts]
     for row, x in zip(rows, texts):
         for t in _tokens(x):
@@ -250,6 +254,8 @@ def candidate_pairs(new: list[Statement], existing: list[Statement],
                     k: int = CANDIDATES_PER_STATEMENT, min_sim: float | None = None) -> list[tuple[int, int]]:
     if not new or not existing:
         return []
+    import numpy as np
+
     min_sim = MIN_SIMILARITY if min_sim is None else min_sim
     v = _vectors([s.text for s in new + existing])
     sims = v[: len(new)] @ v[len(new) :].T

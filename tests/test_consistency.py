@@ -203,7 +203,7 @@ def test_post_tool_use_hands_contradictions_to_the_model_server(env, monkeypatch
     assert engine.record_contradictions(Path(job["path"]), Path(job["project"]), job["old"]) == 1
     [row] = [r for r in events.read() if r["event"] == "contradiction"]
     assert "skip-checks" in row["new"] and row["probability"] > 0.9
-    assert os.name == "nt" or oct(events.log_path().stat().st_mode & 0o777) == "0o600"   # Windows: ACLs
+    assert os.name == "nt" or oct((events.store_dir() / "state.sqlite3").stat().st_mode & 0o777) == "0o600"   # Windows: ACLs
 
 
 def test_events_command(env, capsys):

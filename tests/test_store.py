@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from agentdetox import hooks
+from agentdetox import hooks, storage
 from agentdetox.cli import main
 from agentdetox.context import classify, discover
 from agentdetox.integrity import (
@@ -45,29 +45,36 @@ def baseline_file():
     return store_dir() / "baseline.json"
 
 
+def legacy_store(project):
+    snapshot(discover(project=project), [project])
+    data = storage.baseline()
+    storage.path().unlink()
+    (store_dir() / "sqlite-migrated").unlink()
+    baseline_file().write_text(json.dumps(data), encoding="utf-8")
+    return data
+
+
 # Schema version -----------------------------------------------------------------------
 
 def test_new_store_is_versioned(env):
     _, project, _ = env
     snapshot(discover(project=project), [project])
-    assert json.loads(baseline_file().read_text(encoding="utf-8"))["version"] == SCHEMA_VERSION
+    assert storage.baseline()["version"] == SCHEMA_VERSION
 
 
 def test_unversioned_store_from_0_1_0_is_read_and_upgraded(env):
     _, project, _ = env
-    snapshot(discover(project=project), [project])
-    data = json.loads(baseline_file().read_text(encoding="utf-8"))
+    data = legacy_store(project)
     del data["version"]
     baseline_file().write_text(json.dumps(data), encoding="utf-8")
     assert len(baseline_entries()) == len(data["files"])
     snapshot(discover(project=project), [project])
-    assert json.loads(baseline_file().read_text(encoding="utf-8"))["version"] == SCHEMA_VERSION
+    assert storage.baseline()["version"] == SCHEMA_VERSION
 
 
 def test_store_from_a_newer_version_is_left_alone(env, capsys):
     _, project, _ = env
-    snapshot(discover(project=project), [project])
-    data = json.loads(baseline_file().read_text(encoding="utf-8"))
+    data = legacy_store(project)
     baseline_file().write_text(json.dumps({**data, "version": SCHEMA_VERSION + 1}), encoding="utf-8")
     before = baseline_file().read_text(encoding="utf-8")
     with pytest.raises(StoreError, match="newer AgentDetox"):
@@ -79,7 +86,7 @@ def test_store_from_a_newer_version_is_left_alone(env, capsys):
 
 def test_damaged_store_is_reported_not_silently_rebuilt(env, capsys):
     _, project, _ = env
-    session(project)
+    legacy_store(project)
     (project / "CLAUDE.md").write_text("# Project\nUse pnpm.\n" + POISON, encoding="utf-8")
     baseline_file().write_text("{not json", encoding="utf-8")
     notice = session(project)
@@ -97,7 +104,7 @@ def test_damaged_store_is_reported_not_silently_rebuilt(env, capsys):
 
 def test_deleted_snapshot_list_is_reported(env):
     _, project, _ = env
-    session(project)
+    legacy_store(project)
     (project / "CLAUDE.md").write_text("# Project\nUse pnpm.\n" + POISON, encoding="utf-8")
     baseline_file().unlink()
     assert "may have been deleted" in session(project)
@@ -172,7 +179,7 @@ def test_gc_removes_superseded_copies_but_keeps_restorable_and_quarantined_ones(
 def test_gc_runs_at_most_daily_and_clears_stale_job_files(env):
     _, project, _ = env
     session(project)                                   # first session runs it
-    assert json.loads(baseline_file().read_text(encoding="utf-8"))["last_gc"] > 0
+    assert storage.baseline()["last_gc"] > 0
     assert gc() is None
     pending = store_dir() / "pending"
     pending.mkdir()

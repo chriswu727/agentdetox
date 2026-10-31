@@ -24,10 +24,10 @@ adapters.py   renders the Decision in the agent's reply format
 ```
 
 `hooks.py` wires these together and logs every decision that was not a plain allow to
-`events.jsonl`. Before a write, a file that no longer matches the last version AgentDetox knows is
+SQLite. Before a write, a file that no longer matches the last version AgentDetox knows is
 first recorded as changed outside the agent, so the agent is never credited with that change.
-After a write, the engine trusts the file as written and records the change in the ledger with
-where it came from. At session start, `session.py` compares every watched file with
+After a write, the engine records the observed version, attribution evidence and findings.
+Eligible recovery checkpoint updates and history additions commit in one transaction. At session start, `session.py` compares every watched file with
 its snapshot, records changes made outside the agent, and tells the agent about suspicious ones.
 
 ## Modules
@@ -47,6 +47,8 @@ its snapshot, records changes made outside the agent, and tells the agent about 
 | `consistency.py` | Splitting memory into statements and finding contradictions with an NLI model |
 | `daemon.py` | The model server (Unix socket), or a job queue where there is none (Windows) |
 | `integrity.py` | Snapshot store: baseline, content-addressed copies, verify, restore, quarantine, locking |
+| `storage.py` | SQLite schema, transactional legacy migration, indexed metadata and references |
+| `review.py` | Diff, exact-version accept, finding dismissal, recovery journal and retention |
 | `ledger.py` | Each change with its origin, the versions before and after, and `blame` |
 | `allowlist.py`, `events.py`, `settings.py` | Allowed ids, the event log, the settings file |
 | `install.py`, `doctor.py`, `status.py`, `demo.py`, `cli.py` | Installing hooks, health, the commands |
@@ -55,9 +57,21 @@ its snapshot, records changes made outside the agent, and tells the agent about 
 ## Data
 
 See [PRIVACY.md](../PRIVACY.md) for what each file in `~/.agentdetox` holds. Writes to the store
-take `store.lock`; the baseline is written to a temporary file and renamed, so a crash leaves the
-old baseline intact. A missing or damaged baseline is reported at every session instead of being
-silently rebuilt, since deleting it would otherwise launder tampering.
+take `store.lock` and a SQLite transaction. Content objects are hash-validated and atomically
+replaced before metadata references them. Migration validates every referenced object, commits
+schema and metadata together, and preserves the original JSON files. A migration marker prevents
+silent fallback to those stale files if the database later disappears.
+
+Recovery uses a durable operation record, a verified backup, and an atomic replacement. If the
+process stops between filesystem and metadata updates, the unfinished operation remains visible
+in doctor with its intended hashes and backup path. File updates and database commits cannot be
+one OS transaction; the journal exposes that gap rather than hiding it. External processes do not
+honor the store lock, so recovery rechecks the observed hash before replacing a file.
+
+Checkpoints, observed versions and explicit user acceptance are separate fields. An automatic
+checkpoint is recoverable state, not proof of user intent. Finding dismissal is specific to a
+change and never grants permanent source trust. History retention is opt-in and preserves pending
+findings, accepted versions, the latest per-file record and content needed for recovery.
 
 ## Distribution
 

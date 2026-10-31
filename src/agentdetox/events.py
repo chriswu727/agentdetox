@@ -10,9 +10,8 @@ import os
 import time
 from pathlib import Path
 
-from .integrity import private_dir, store_dir, store_lock
-
-MAX_BYTES = 5_000_000
+from . import storage
+from .integrity import StoreError, private_dir, store_dir
 
 
 def log_path() -> Path:
@@ -20,13 +19,16 @@ def log_path() -> Path:
 
 
 def record(event: str, **fields) -> None:
-    path = log_path()
+    path = store_dir() / 'events-fallback.jsonl'
+    row = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "event": event, **fields}
+    try:
+        with storage.connection(write=True) as db:
+            storage.append_event(db, row)
+        return
+    except (OSError, StoreError):
+        pass
     try:
         private_dir(store_dir())
-        if path.exists() and path.stat().st_size > MAX_BYTES:
-            with store_lock():
-                if path.exists() and path.stat().st_size > MAX_BYTES:
-                    path.replace(path.with_suffix(".jsonl.1"))  # keep one rotated generation
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_BINARY", 0), 0o600)
         with os.fdopen(fd, "a", encoding="utf-8", newline="\n") as f:
             f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "event": event, **fields},
@@ -37,14 +39,26 @@ def record(event: str, **fields) -> None:
 
 def read(limit: int | None = 50) -> list[dict]:
     """The most recent `limit` events, oldest first; None for all of them."""
-    path = log_path()
+    rows = storage.events(limit)
+    if rows is not None:
+        rows += _read_file(store_dir() / 'events-fallback.jsonl', limit)
+        rows.sort(key=lambda row: row.get('ts', ''))
+        return rows[-limit:] if limit else rows
+    return _read_file(log_path(), limit) + _read_file(store_dir() / 'events-fallback.jsonl', limit)
+
+
+def _read_file(path: Path, limit: int | None) -> list[dict]:
     if not path.exists():
         return []
     out = []
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     for line in lines[-limit:] if limit else lines:
         try:
-            out.append(json.loads(line))
+            row = json.loads(line)
+            if isinstance(row, dict):
+                if path.name == "events-fallback.jsonl":
+                    row["event_id"] = "fallback"
+                out.append(row)
         except ValueError:
             continue
     return out

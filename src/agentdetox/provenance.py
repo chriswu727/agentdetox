@@ -9,6 +9,7 @@ not ask to keep is worth a question. Paraphrased text is not caught here.
 
 from __future__ import annotations
 
+import difflib
 import json
 import re
 import unicodedata
@@ -177,7 +178,7 @@ def origin_of(text: str, transcript: Transcript | None) -> tuple[str, str, bool]
     n = min(SHINGLE, len(tokens))  # short text is matched whole
     new = _shingles(tokens, n)
     said = set().union(*(_shingles(_tokens(h), n) for h in transcript.human))
-    if len(new & said) >= len(new) / 2:
+    if new <= said:
         return "you", "", requested
     best, source = 0.0, None
     for src in transcript.sources:
@@ -212,3 +213,18 @@ def _squash(text: str) -> str:
 def _excerpt(body: str, shared: set[tuple[str, ...]]) -> str:
     words = " ".join(next(iter(shared))) if shared else ""
     return words[:120] or body.strip()[:120]
+
+
+def attribute_lines(old: str, new: str, transcript: Transcript | None) -> list[dict]:
+    spans = []
+    after = new.splitlines()
+    for tag, _, _, start, end in difflib.SequenceMatcher(None, old.splitlines(), after, autojunk=False).get_opcodes():
+        if tag not in ("insert", "replace"):
+            continue
+        for index in range(start, end):
+            origin, source, _ = origin_of(after[index], transcript)
+            spans.append({"line": index + 1, "origin": origin, "source": source,
+                          "method": "text-match" if origin in ("you", "copied") else "unknown",
+                          "attribution": {"you": "matches user text", "copied": "matches tool output"}.get(origin,
+                                                                                                         "unknown")})
+    return spans
