@@ -163,7 +163,7 @@ def reset_baseline() -> Path | None:
         import sqlite3
 
         if storage.path().exists():
-            with sqlite3.connect(storage.path()) as probe:
+            with contextlib.closing(sqlite3.connect(storage.path())) as probe:
                 incomplete = probe.execute("PRAGMA user_version").fetchone()[0] == 0
             if incomplete:
                 storage.path().unlink()
@@ -171,9 +171,9 @@ def reset_baseline() -> Path | None:
 
             kept = store_dir() / f"state.sqlite3.backup-{uuid.uuid4().hex}"
             with storage.connection(write=True) as db:
-                with sqlite3.connect(kept) as backup:
+                with contextlib.closing(sqlite3.connect(kept)) as backup:
                     # Backup on a separate read connection avoids waiting on our own write transaction.
-                    with sqlite3.connect(storage.path()) as reader:
+                    with contextlib.closing(sqlite3.connect(storage.path())) as reader:
                         reader.backup(backup)
                 os.chmod(kept, 0o600)
                 db.execute('UPDATE files SET checkpoint=NULL')
