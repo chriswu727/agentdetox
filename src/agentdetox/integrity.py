@@ -329,7 +329,7 @@ def restore_object(path: Path, digest: str, mode: int = 0o600) -> Path | None:
             qdir = private_dir(store_dir() / "quarantine" / uuid.uuid4().hex)
             quarantined = qdir / "content"
             write_private(quarantined, current)
-            with quarantined.open("rb") as f:
+            with quarantined.open("r+b") as f:
                 os.fsync(f.fileno())
             if quarantined.read_bytes() != current:
                 raise StoreError(f"Could not verify quarantine copy for {path}")
