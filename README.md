@@ -102,7 +102,12 @@ checkpoints; it does not erase history or make a corrupt database safe to use.
 
 ```bash
 agentdetox status                         # health and pending reviews
-agentdetox review                         # changes needing attention
+agentdetox review                         # pending changes grouped by file
+agentdetox review --interactive           # browse this project and confirm actions in a terminal
+agentdetox review --project . --since 7d   # this project and its Claude auto memory
+agentdetox review --all --page 2          # page through older file groups
+agentdetox review --file CLAUDE.md --all --group-by change # one file's history
+agentdetox review --search permissions    # match a path or finding
 agentdetox review C42                     # diff, evidence, and findings
 agentdetox review accept C42              # accept only this exact file version
 agentdetox review dismiss F7              # dismiss one finding; no permanent exception
@@ -115,6 +120,14 @@ agentdetox doctor                         # verify effective hooks and store hea
 agentdetox export --format jsonl          # export change records
 agentdetox history prune --older-than 90d # preview retention; add --apply to remove
 ```
+
+Review lists support `--page-size 1..200`, `--page`, `--group-by file|change`, `--file`,
+`--search`, and `--project`. Counts describe the entire filtered selection, not just the current
+page. A project filter includes files under that project and its Claude auto-memory directory;
+shared user-level rules remain in the unfiltered view. Historical records require no migration.
+Interactive review defaults to the current project and asks before accepting or applying recovery.
+It requires a terminal; scripts use explicit id-based commands. Review JSON is a page object with
+`rows`, totals, state/operation counts and pagination metadata.
 
 The ledger separates the **observed writer** (an agent tool, external change or recovery) from
 **content attribution**. A match to your message or a tool result is text evidence, not proof of
