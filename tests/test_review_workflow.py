@@ -151,3 +151,15 @@ def test_interactive_default_scope_is_current_project(projects, monkeypatch):
     assert main(['review', '--interactive', '--group-by', 'change']) == 0
     assert review.page(project=first)['total_changes'] == 0
     assert review.page(project=second)['total_changes'] == 1
+
+
+def test_global_interactive_review_can_handle_shared_user_context(projects, monkeypatch):
+    from agentdetox.context import home_dir
+    first, _ = projects
+    shared = home_dir() / '.claude/CLAUDE.md'
+    shared.write_text(POISON)
+    session.notice(first, 'off')
+    monkeypatch.chdir(first)
+    terminal(monkeypatch, ['1', '1', 'a', 'y', 'q', 'q'])
+    assert main(['review', '--interactive', '--global']) == 0
+    assert review.page()['total_changes'] == 0

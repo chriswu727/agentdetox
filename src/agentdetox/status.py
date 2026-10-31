@@ -37,6 +37,10 @@ def describe(row: dict) -> tuple[str, str, str]:
         label, text = "contradiction", f'"{row.get("new", "")}" vs "{row.get("existing", "")}"'
     elif event == "session_notice":
         label, text = "notice", " ".join(row.get("notice", "").splitlines()[1:])
+    elif event == 'shell_context_changed':
+        label = 'context changed'
+        ids = ', '.join(row.get('changes', []))
+        text = f"{len(row.get('changes', []))} context files changed across a shell tool; writing process unknown"
     else:
         label, text = event, ""
     return label, " ".join(str(text).split()), ids

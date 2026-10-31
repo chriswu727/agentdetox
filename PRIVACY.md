@@ -27,7 +27,7 @@ Everything lives in `~/.agentdetox` (or `AGENTDETOX_HOME`), private to your user
 | Path | Contents |
 |---|---|
 | `objects/` | Full copies of each watched file at its last trusted version, and of the earlier versions the ledger refers to, named by hash. These include settings files, so any secret written in them (an MCP server's token, say) is copied too |
-| `state.sqlite3` | Transactional checkpoints, observed and accepted hashes, changes and per-line attribution evidence, findings and review state, hook events and recovery operations. Event payloads include file paths, reasons and excerpts |
+| `state.sqlite3` | Transactional checkpoints, observed and accepted hashes, changes and per-line attribution evidence, findings and review state, hook events and recovery operations. Shell start states store scoped paths, hashes, file kinds, permissions and tool/session ids until completion. No shell command text is stored by this observation feature |
 | `baseline.json`, `ledger.jsonl`, `events.jsonl` | Original pre-0.3 files retained unchanged after a successful migration. No longer the authoritative store |
 | `quarantine/` | Unique recovery backups and manifests; never automatically deleted |
 | `events-fallback.jsonl` | Events written while SQLite was unavailable; retained until `health acknowledge fallback` moves them to an acknowledged archive |
@@ -35,6 +35,10 @@ Everything lives in `~/.agentdetox` (or `AGENTDETOX_HOME`), private to your user
 | `pending/` | Contradiction-check jobs waiting for the model server, including the earlier text of the file just written; removed once checked |
 | `config.toml`, `allowlist.json` | Your settings and the ids you allowed |
 | `daemon.log`, `*.lock`, `nli.sock` | The model server's log, locks and socket |
+
+Unfinished shell start states expire after 24 hours at the next observed shell start. Hash-addressed
+content referenced by a start state survives GC until completion or expiry. These copies can include
+configuration secrets under the same private-store permissions as other snapshots.
 
 Copies that neither back a watched file nor a ledger entry are deleted once a day; quarantined files
 are not. History grows until you explicitly run `history prune --older-than 90d --apply`. Preview first

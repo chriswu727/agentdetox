@@ -145,7 +145,9 @@ def page(*, since: str | None = None, all_changes: bool = False, project: Path |
 
 def render_page(data: dict) -> str:
     scope = f" in {short_path(data['project'])}" if data['project'] else ''
-    lines = [f"{data['total_changes']} changes across {data['total_files']} files{scope}."]
+    change_word = 'change' if data['total_changes'] == 1 else 'changes'
+    file_word = 'file' if data['total_files'] == 1 else 'files'
+    lines = [f"{data['total_changes']} {change_word} across {data['total_files']} {file_word}{scope}."]
     if not data['total_changes']:
         return lines[0] + '\nNothing matches. Use --since 7d to include recent quiet changes.'
     lines.append(', '.join(f'{n} {state}' for state, n in sorted(data['states'].items())) + '. ' +
@@ -154,7 +156,8 @@ def render_page(data: dict) -> str:
     for index, row in enumerate(data['rows'], 1):
         if data['group_by'] == 'file':
             lines.append(f"{index}. {short_path(row['path'])}")
-            lines.append(f"   {row['change_count']} changes · {row['pending_count']} pending · latest matching C{row['id']} · {row['ts']}")
+            change_word = 'change' if row['change_count'] == 1 else 'changes'
+            lines.append(f"   {row['change_count']} {change_word} · {row['pending_count']} pending · latest matching C{row['id']} · {row['ts']}")
         else:
             lines.append(f"{index}. C{row['id']} [{row['review_state']}] {short_path(row['path'])} · {row['ts']}")
     if not data['rows']:
@@ -232,7 +235,9 @@ def restore(change_id: str, apply: bool = False) -> str:
             return detail(change_id) + f'\nRestore the version before this change: agentdetox restore {change_id} --apply\nThe current version will be backed up; file permissions will be preserved.'
         operation = uuid.uuid4().hex
         backup_path = store_dir() / 'quarantine' / operation / 'content'
-        mode = baseline_entries().get(str(path), {}).get('mode', 0o600)
+        mode = json.loads(row['data']).get('before_mode')
+        if mode is None:
+            mode = baseline_entries().get(str(path), {}).get('mode', 0o600)
         with storage.connection(write=True) as db:
             db.execute('INSERT INTO operations(id, path, before_hash, after_hash, stage, backup) VALUES (?, ?, ?, ?, ?, ?)',
                        (operation, str(path), row['after_hash'], row['before_hash'], 'preparing', str(backup_path)))
@@ -269,6 +274,7 @@ def restore(change_id: str, apply: bool = False) -> str:
                     value = json.loads(checkpoint[0])
                     assert data is not None
                     value['sha256'] = store_object(data)
+                    value['mode'] = mode
                     from .persistence import guarded_sections
                     value['sections'] = guarded_sections(path, data.decode('utf-8', errors='replace')) if value['kind'] == 'config' else {}
                     db.execute('UPDATE files SET checkpoint=? WHERE path=?', (json.dumps(value), str(path)))

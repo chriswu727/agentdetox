@@ -33,7 +33,8 @@ def claude_code_settings(existing: dict, command: str) -> dict:
     wanted = {
         "SessionStart": {"hooks": [{"type": "command", "command": command}]},
         "PreToolUse": {"matcher": "Write|Edit|MultiEdit|Bash", "hooks": [{"type": "command", "command": command}]},
-        "PostToolUse": {"matcher": "Write|Edit|MultiEdit", "hooks": [{"type": "command", "command": command}]},
+        "PostToolUse": {"matcher": "Write|Edit|MultiEdit|Bash", "hooks": [{"type": "command", "command": command}]},
+        "PostToolUseFailure": {"matcher": "Bash", "hooks": [{"type": "command", "command": command}]},
     }
     for event, group in wanted.items():
         groups = [g for g in hooks.get(event, []) if not any(is_self_hook(h.get("command", "")) for h in g.get("hooks", []))]

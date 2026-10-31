@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 from agentdetox import session, storage
-from agentdetox.context import discover
+from agentdetox.context import claude_memory_dir, discover
 from agentdetox.integrity import baseline_entries, snapshot
 
 
@@ -55,18 +55,31 @@ def main() -> int:
         target.write_text('Use pnpm.\n', encoding='utf-8')
         snapshot(discover(project=project), [home, project])
         digest = baseline_entries()[str(target)]['sha256']
+        sequence = 0
 
-        def hook(event, tool='', inputs=None, transcript=None):
+        def hook(event, tool='', inputs=None, transcript=None, tool_id=None):
+            nonlocal sequence
             payload = dict(hook_event_name=event, cwd=str(project), tool_name=tool, tool_input=inputs or {})
+            if tool == 'Bash':
+                if tool_id is None:
+                    sequence += 1
+                    tool_id = f'benchmark-{sequence}'
+                payload.update(session_id='benchmark', tool_use_id=tool_id)
             if transcript:
                 payload['transcript_path'] = str(transcript)
             done = subprocess.run([sys.executable, '-m', 'agentdetox', 'hook', 'claude-code'],
                                   input=json.dumps(payload), text=True, capture_output=True, cwd=project, check=True)
             if done.stderr:
                 raise RuntimeError(done.stderr)
+            return tool_id
 
         measure('Bash pre, no context write', 100,
                 lambda: hook('PreToolUse', 'Bash', {'command': 'git status --short'}))
+        def shell_round_trip():
+            identifier = hook('PreToolUse', 'Bash', {'command': 'git status --short'})
+            hook('PostToolUse', 'Bash', {'command': 'git status --short'}, tool_id=identifier)
+
+        measure('Bash pre + post, no context write', 200, shell_round_trip)
         with storage.connection(write=True) as db:
             entry = dict(ts='2020-01-01T00:00:00', path=str(target), origin='agent', before=digest, after=digest)
             for _ in range(50_000):
@@ -101,6 +114,11 @@ def main() -> int:
 
         measure('SessionStart, 100 changed of 1000 files, initially 10k history entries', 1000,
                 lambda: hook('SessionStart'), change)
+        active_memory = claude_memory_dir(project)
+        active_memory.mkdir(parents=True)
+        for n in range(1000):
+            (active_memory / f'note-{n}.md').write_bytes((mem / f'note-{n}.md').read_bytes())
+        measure('Bash pre + post, 1000 active memory files plus 1000 unrelated files', 350, shell_round_trip)
     report = dict(platform=platform.platform(), python=platform.python_version(), results=results,
                   model='disabled; no model or subscription usage', warmup='one untimed call per case')
     if args.output:

@@ -1,8 +1,8 @@
 """Agent hook entry point: an agent's event in, its reply out.
 
 PreToolUse   checks a planned write to persistent context and denies or asks.
-PostToolUse  re-trusts a context file the agent just wrote, so the snapshot only ever
-             lags behind writes that bypassed the agent's tools.
+PostToolUse records edit-tool writes or compares context across a shell tool.
+PostToolUseFailure compares shell context even when the tool failed.
 SessionStart reports context changed out-of-band since the last check.
 
 adapters.py reads each agent's protocol, engine.py checks, policy.py decides, and
@@ -17,7 +17,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from . import adapters, engine, events, policy, session, settings
+from . import adapters, engine, events, observation, policy, session, settings
 from .context import short_path
 
 
@@ -32,7 +32,19 @@ def handle(agent: str, payload: dict) -> tuple[int, str]:
                               decision=decision.action if decision.action != "allow" else "record",
                               tool=payload.get("tool_name"), target=_target(adapter, payload, project),
                               reason=decision.reason[:500], flags=[asdict(f) for f in decision.flags])
+            if (adapter.observes_shell and adapter.command(payload) is not None
+                    and payload.get('tool_use_id') and decision.action != 'deny'):
+                try:
+                    observation.start(adapter.name, adapter.session(payload), str(payload['tool_use_id']), project)
+                except Exception as error:
+                    _report_error(agent, 'shell-start', error)
             return 0, adapter.render_pre(decision)
+        if event in ('post', 'post-failed') and adapter.command(payload) is not None:
+            text = ''
+            if adapter.observes_shell and payload.get('tool_use_id'):
+                text = observation.finish(adapter.name, adapter.session(payload), str(payload['tool_use_id']),
+                                          project, failed=event == 'post-failed')
+            return 0, adapter.render_observation(text, str(payload.get('hook_event_name')))
         if event == "post":
             engine.after_write(adapter.written(payload, project), project,
                                record_contradictions=settings.mode("contradiction") == "record",
@@ -46,10 +58,13 @@ def handle(agent: str, payload: dict) -> tuple[int, str]:
             return 0, adapter.render_session(notice)
         return 0, adapter.render_allow()
     except Exception as e:  # noqa: BLE001
-        events.record("hook_error", agent=agent, stage=str(payload.get("hook_event_name", "unknown")),
-                      error=type(e).__name__)
-        print(f"agentdetox: hook error ignored (failing open): {type(e).__name__}: {e}", file=sys.stderr)
+        _report_error(agent, str(payload.get("hook_event_name", "unknown")), e)
         return 0, adapter.render_allow()
+
+
+def _report_error(agent: str, stage: str, error: Exception) -> None:
+    events.record('hook_error', agent=agent, stage=stage, error=type(error).__name__)
+    print(f'agentdetox: hook error ignored (failing open): {type(error).__name__}: {error}', file=sys.stderr)
 
 
 def _target(adapter: adapters.Adapter, payload: dict, project: Path) -> str:

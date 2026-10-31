@@ -7,6 +7,8 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ### Added
 
+- Immediate review of scoped context changes across successful or failed shell tools, with terminal notices,
+  transactional start-state capture, parallel-call isolation and unknown-process attribution.
 - Project-scoped review with file grouping, literal path/finding search and pagination beyond 200 changes.
 - Interactive terminal review with file history, confirmation before acceptance/recovery, and stale-version checks.
 - Review JSON pages include totals for the entire selection, operation/state counts and pagination metadata.

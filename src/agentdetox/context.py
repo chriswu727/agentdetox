@@ -178,6 +178,19 @@ def discover(agents: list[str] | None = None, project: Path | None = None, home:
     return list(found.values())
 
 
+def discover_session(project: Path, agent: str) -> list[ContextFile]:
+    home = home_dir()
+    found: dict[Path, ContextFile] = {}
+    for scope, root, kind, pattern in _globs(PROFILES[agent], home, project):
+        if pattern in ('.claude/projects/*/memory/*.md', 'projects/*/memory/*.md'):
+            root, pattern = claude_memory_dir(project, home), '*.md'
+        for value in sorted(glob.glob(str(root / pattern), recursive=True, include_hidden=True)):
+            path = Path(value)
+            if path.is_file() and not path.is_symlink():
+                found.setdefault(path, ContextFile(agent, kind, scope, path))
+    return list(found.values())
+
+
 def classify(path: Path, agents: list[str] | None = None, project: Path | None = None,
              home: Path | None = None) -> ContextFile | None:
     """Return the ContextFile `path` would be, whether or not it exists yet."""

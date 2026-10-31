@@ -9,10 +9,13 @@ from . import review
 from .integrity import StoreError
 
 
-def run(**filters) -> int:
+def run(*, global_scope: bool = False, **filters) -> int:
     if not sys.stdin.isatty():
         raise ValueError('--interactive needs a terminal; use review C<ID> and explicit action commands in scripts')
-    filters['project'] = filters.get('project') or Path.cwd()
+    if global_scope and filters.get('project'):
+        raise ValueError('Choose global scope or a project')
+    if not global_scope:
+        filters['project'] = filters.get('project') or Path.cwd()
     page_number = filters.pop('page_number', 1)
     while True:
         data = review.page(**filters, page_number=page_number)
@@ -28,7 +31,7 @@ def run(**filters) -> int:
             row = data['rows'][int(choice) - 1]
             if data['group_by'] == 'file':
                 print('Reviewing this file. Use q to return to the file list.')
-                run(**{**filters, 'file': Path(row['path']), 'group_by': 'change'})
+                run(global_scope=global_scope, **{**filters, 'file': Path(row['path']), 'group_by': 'change'})
             else:
                 _change(f"C{row['id']}")
             page_number = min(page_number, max(review.page(**filters)['pages'], 1))

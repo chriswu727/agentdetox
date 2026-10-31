@@ -33,12 +33,13 @@ scenarios cannot establish those outcomes.
 
 ## Next: Better observation
 
-- Observe context changes immediately after shell commands, without rescanning the whole store
-  on every tool call. Today these appear at session start or before the next observed edit.
+- Implemented on main: project-scoped shell-interval observation after successful or failed tools.
+  Detached background writes and changes outside these intervals still need later reconciliation.
 - Associate changed context with later sessions that loaded it. Do not claim downstream impact
   until the available transcript evidence supports it.
 - Explore paraphrase attribution with explicit uncertainty and benign-project controls.
-- Improve review navigation and summary grouping based on actual usage.
+- Implemented on main: project/file filtering, file grouping, search, pagination and terminal review.
+  Continue improving these against the maintainer's own work and reproducible local scenarios.
 
 ## Teams and CI
 
