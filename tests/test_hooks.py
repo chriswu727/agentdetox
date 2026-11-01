@@ -708,6 +708,10 @@ def test_a_contradiction_is_attached_only_to_the_version_that_was_checked(env, m
     ("if cd .claude; then echo '{}' > settings.json; fi", "ask"),
     ("{ cd .claude; }; echo '{}' > settings.json", "ask"),
     ("export F=CLAUDE.md; echo note >> $F", "ask"),
+    ("true || cd /tmp; echo '{}' > .claude/settings.json", "ask"),     # a skipped cd moves nothing
+    ("cd /nonexistent; echo '{}' > .claude/settings.json", "ask"),     # nor a failed one
+    ("false && HOME=/tmp; echo '{}' > $HOME/.claude/settings.json", "ask"),
+    ("cd .claude || echo '{}' > settings.json", "allow"),              # runs only if the cd failed
 ])
 def test_more_shell_forms_that_write_context(env, command, expected):
     _, project, _ = env

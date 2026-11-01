@@ -187,6 +187,21 @@ def _commands(tokens: list[str]) -> list[tuple[list[str], list[str], str | None,
     return out
 
 
+class _Scope:
+    """What one shell level knows: the folders relative paths may be relative to, and the
+    possible values of variables. A `cd` can fail and a branch can be skipped, so a change
+    adds a possibility rather than replacing one, except where it is certain: the commands
+    chained after `cd x &&` run only if it worked."""
+
+    def __init__(self, cwds: list[str], env: dict[str, list[str]]) -> None:
+        self.cwds = cwds
+        self.env = env
+        self.after_chain: list[str] | None = None   # folders once the current && / || chain ends
+
+    def copy(self) -> _Scope:
+        return _Scope(list(self.cwds), {k: list(v) for k, v in self.env.items()})
+
+
 def write_targets(tokens: list[str], depth: int = 0) -> list[str]:
     """Paths a shell command writes to or deletes: redirect and tee targets, sed -i and
     perl -i files, the destination of cp/mv, rm arguments, git checkout/restore paths,
@@ -194,39 +209,74 @@ def write_targets(tokens: list[str], depth: int = 0) -> list[str]:
     same inside `bash -c` and `eval`. A `cd` and variables set earlier in the same command
     are followed where the shell would keep them; anything decided at run time is not."""
     targets: list[str] = []
-    # (folder relative paths are relative to, variables) for each subshell level; a cd
-    # inside `( … )` is gone after it.
-    scopes: list[tuple[str, dict[str, str]]] = [("", {"HOME": "~"})]
+    scopes = [_Scope([""], {"HOME": ["~"]})]        # one per `( … )` level
     for words, redirects, before, after, level in _commands(tokens):
         while len(scopes) - 1 < level:
-            scopes.append((scopes[-1][0], dict(scopes[-1][1])))
+            scopes.append(scopes[-1].copy())
         del scopes[level + 1:]
-        cwd, env = scopes[-1]
-        words = [_expand(w, env) for w in words]
-        body = _unwrap(words)
+        scope = scopes[-1]
+        if before in (None, ";", "\n", "&", "(", ")") and scope.after_chain is not None:
+            scope.cwds, scope.after_chain = scope.after_chain, None
         # A cd or assignment in a pipeline or in the background runs in a subshell of its own.
         lasting = before != "|" and after not in ("|", "&")
-        found: list[str] = []
-        if body and compat.program(body[0]) == "cd":
-            if lasting:
-                target = body[1] if len(body) > 1 else "~"
-                scopes[-1] = (_under(cwd, target) if "$" not in target and target != "-" else cwd, env)
-        elif words and all(_ASSIGN.match(w) for w in (words[1:] if words[0] == "export" else words)):
-            if lasting:
-                env.update((w.partition("=")[0], w.partition("=")[2]) for w in words if _ASSIGN.match(w))
-        else:
-            inner = _inner(body) if body else None
-            if inner is not None:
-                found = write_targets(split(inner), depth + 1) if depth < _MAX_DEPTH else []
+        for variant in _variants(words + redirects, scope.env):
+            words_now, redirects_now = variant[:len(words)], variant[len(words):]
+            body = _unwrap(words_now)
+            found: list[str] = []
+            if not (body and compat.program(body[0]) == "cd") and not _assignments(words_now):
+                inner = _inner(body) if body else None
+                if inner is not None:
+                    found = write_targets(split(inner), depth + 1) if depth < _MAX_DEPTH else []
+                else:
+                    found = _segment_targets(body)
+            # A command's own redirections are opened before it runs, in the folder it starts in.
+            targets += [_under(cwd, t) for cwd in scope.cwds for t in redirects_now + found]
+        body = _unwrap(words)
+        if lasting and body and compat.program(body[0]) == "cd":
+            target = body[1] if len(body) > 1 else "~"
+            new = [_under(cwd, target) for cwd in scope.cwds] if "$" not in target and target != "-" else []
+            if after in ("&&", "||"):
+                scope.after_chain = _bounded((scope.after_chain or scope.cwds) + new)
+                if after == "&&":
+                    scope.cwds = new or scope.cwds
             else:
-                found = _segment_targets(body)
-        # A command's own redirections are opened before it runs, in the folder it starts in.
-        targets += [_under(cwd, t) for t in [_expand(r, env) for r in redirects] + found]
+                scope.cwds = _bounded(scope.cwds + new)
+        elif lasting and _assignments(words):
+            for name, value in _assignments(words):
+                certain = before not in ("&&", "||")
+                scope.env[name] = [value] if certain else _bounded(scope.env.get(name, ["$" + name]) + [value], 8)
     return list(dict.fromkeys(targets))
 
 
-def _expand(word: str, env: dict[str, str]) -> str:
-    return _VAR.sub(lambda m: env.get(m.group(1) or m.group(2), m.group(0)), word)
+_MAX_CWDS = 16
+_MAX_VARIANTS = 8
+
+
+def _bounded(values: list[str], limit: int = _MAX_CWDS) -> list[str]:
+    """At most `limit` possibilities, always keeping the first (where the command started)."""
+    values = list(dict.fromkeys(values))
+    return values if len(values) <= limit else [values[0], *values[-(limit - 1):]]
+
+
+def _assignments(words: list[str]) -> list[tuple[str, str]]:
+    """The variables a command made only of assignments (or `export` of them) sets."""
+    rest = words[1:] if words[:1] == ["export"] else words
+    if not rest or not all(_ASSIGN.match(w) for w in rest):
+        return []
+    return [(w.partition("=")[0], w.partition("=")[2]) for w in rest]
+
+
+def _variants(words: list[str], env: dict[str, list[str]]) -> list[list[str]]:
+    """`words` with variables replaced by each combination of their possible values."""
+    names = sorted({m.group(1) or m.group(2) for w in words for m in _VAR.finditer(w)} & env.keys())
+    combos: list[dict[str, str]] = [{}]
+    for name in names:
+        combos = [{**c, name: v} for c in combos for v in env[name]][:_MAX_VARIANTS]
+
+    def fill(word: str, values: dict[str, str]) -> str:
+        return _VAR.sub(lambda m: values.get(m.group(1) or m.group(2), m.group(0)), word)
+
+    return [[fill(w, c) for w in words] for c in combos]
 
 
 def _under(cwd: str, target: str) -> str:
