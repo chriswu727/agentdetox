@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .agentscan import read_text, scan_text
-from .compat import hook_executable, release, try_lock
+from .compat import hook_executable, quote_executable, release, try_lock
 from .context import ContextFile
 from .findings import Finding
 from .persistence import RUNS_CODE, guarded_sections, leaves
@@ -40,20 +40,33 @@ def is_self_hook(text: str) -> bool:
     return bool(_SELF_RE.search(text))
 
 
+_HOOK_AGENTS = ("claude-code", "codex", "cursor")
+# The plugin from this repository's marketplace; a plugin of the same name from another
+# marketplace is someone else's code.
+OWN_PLUGIN = "agentdetox@agentdetox"
+
+
 def is_own_hook(command: str) -> bool:
-    """A hook command that runs this AgentDetox installation. A command that only looks like
-    ours, such as a planted `/tmp/x/agentdetox hook claude-code`, does not count."""
+    """A hook command that is exactly how `install` runs this AgentDetox installation.
+    A look-alike (`/tmp/x/agentdetox hook claude-code`) or our command with anything
+    appended (`...; sh payload.sh`) does not count."""
     if not is_self_hook(command):
         return False
     try:
-        exe = Path(hook_executable(command)).resolve()
+        exe = hook_executable(command)
+        resolved = Path(exe).resolve()
     except (ValueError, IndexError, OSError):
         return False
     python = Path(sys.executable)
-    ours = {python, python.with_name("agentdetox.exe" if os.name == "nt" else "agentdetox")}
-    if found := shutil.which("agentdetox"):
-        ours.add(Path(found))
-    return exe in {p.resolve() for p in ours}
+    agentdetox = python.with_name("agentdetox.exe" if os.name == "nt" else "agentdetox")
+    which = shutil.which("agentdetox")
+    if resolved in {agentdetox.resolve(), *([Path(which).resolve()] if which else [])}:
+        exact = {f"{quote_executable(exe)} hook {agent}" for agent in _HOOK_AGENTS}
+    elif resolved == python.resolve():
+        exact = {f"{quote_executable(exe)} -I -m agentdetox hook {agent}" for agent in _HOOK_AGENTS}
+    else:
+        return False
+    return command in exact
 
 
 def _without_own(key: str, section: str) -> str:
@@ -76,7 +89,7 @@ def _without_own(key: str, section: str) -> str:
                     kept.append(g)
             data[event] = kept
     elif name == "enabledPlugins" and isinstance(data, dict):
-        data = {k: v for k, v in data.items() if not str(k).startswith("agentdetox@")}
+        data = {k: v for k, v in data.items() if k != OWN_PLUGIN}
     return json.dumps(data, sort_keys=True, ensure_ascii=False)
 
 
@@ -86,8 +99,8 @@ def runs_code_added(key: str, before: str | None, after: str | None) -> list[str
     if after is None or key.rsplit(".", 1)[-1] not in RUNS_CODE:
         return []
     try:
-        old = leaves({key: _without_own(key, before)}) if before else set()
-        new = leaves({key: _without_own(key, after)})
+        old = leaves({key: _without_own(key, before)}, ordered=True) if before else set()
+        new = leaves({key: _without_own(key, after)}, ordered=True)
     except ValueError:
         return []
     return [f"{k}: {v}" for k, v in sorted(new - old)]

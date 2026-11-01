@@ -214,7 +214,10 @@ def guard_changes(path: Path, old_text: str, new_text: str, limit: int = 4) -> l
     return phrases[:limit] + ([f"and {len(phrases) - limit} more"] if len(phrases) > limit else [])
 
 
-def leaves(sections: dict[str, str]) -> set[tuple[str, str]]:
+def leaves(sections: dict[str, str], ordered: bool = False) -> set[tuple[str, str]]:
+    """(path, value) for every scalar in the sections. List order is ignored unless `ordered`,
+    which keeps the position of scalars in a list: reordering a command's arguments can
+    change what it runs."""
     out: set[tuple[str, str]] = set()
 
     def walk(node, where: str) -> None:
@@ -222,8 +225,8 @@ def leaves(sections: dict[str, str]) -> set[tuple[str, str]]:
             for k, v in node.items():
                 walk(v, f"{where}.{k}")
         elif isinstance(node, list):
-            for v in node:
-                walk(v, where)
+            for i, v in enumerate(node):
+                walk(v, f"{where}[{i}]" if ordered and not isinstance(v, (dict, list)) else where)
         else:
             out.add((where, str(node)))
 
