@@ -5,6 +5,14 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ## [Unreleased]
 
+### Security
+
+- A hook, helper command (`apiKeyHelper` and the like), MCP server, environment variable or plugin
+  added outside the agent is reported at the next session start instead of being accepted
+  silently. AgentDetox's own hooks count only when they run this installation.
+- Agent writes that change `env`, helper commands or MCP auto-enable settings need approval, and
+  setting an `AGENTDETOX_*` variable through them is denied.
+
 ### Added
 
 - Immediate review of scoped context changes across successful or failed shell tools, with terminal notices,

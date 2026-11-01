@@ -64,9 +64,10 @@ scans what is already there before recording recovery checkpoints; `agentdetox a
   command such as a redirect, `tee`, `sed -i`, `cp`, `mv` or `rm`), the new content is checked.
   Planted instructions are denied, with the reason sent to the agent. If the flagged text is
   something you typed or pasted yourself, you are asked instead (hidden text is still denied, since
-  you could not see what you pasted). An agent changing its own hooks,
-  MCP servers or permissions needs your approval, and the prompt says exactly what is added or
-  removed.
+  you could not see what you pasted). An agent changing its own hooks, MCP servers, permissions,
+  environment variables or helper commands (`apiKeyHelper` and the like) needs your approval, and
+  the prompt says exactly what is added or removed. Setting an `AGENTDETOX_*` variable through the
+  agent's settings is denied.
 - **After the write**, the observed version and available attribution evidence are recorded.
   A recovery checkpoint advances when the write passes the checks. This is separate from a
   version you explicitly accept in review.
@@ -79,8 +80,10 @@ scans what is already there before recording recovery checkpoints; `agentdetox a
   --apply` or update the plugin); this requires agent-supplied tool-use ids.
 - **At session start**, files changed outside the agent since the last session are compared with
   the snapshot. Suspicious changes are reported to the agent, which is told not to follow them and
-  to tell you, with the command that restores each file. Edits you made yourself that look benign
-  are accepted silently, and recorded as made outside the agent.
+  to tell you, with the command that restores each file. So is anything new that would run on
+  your machine: a hook, a helper command, an MCP server, an environment variable or a plugin, other
+  than AgentDetox's own. Other edits you made yourself that look benign, such as a new permission,
+  are accepted silently and recorded as made outside the agent.
 
 **Where memory came from.** A memory write that is mostly copied from web pages, MCP data, command
 output or files the agent just read asks for approval, unless you asked the agent to remember it.

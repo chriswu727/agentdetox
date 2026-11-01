@@ -9,7 +9,7 @@ from .context import ContextFile, related_files
 from .corpus import Doc
 from .findings import Finding, line_at, pair_anchor, snippet
 from .hidden import normalize, scan_doc
-from .persistence import config_commands, text_findings
+from .persistence import config_commands, own_env_keys, text_findings
 
 
 def read_text(path) -> str:
@@ -34,6 +34,9 @@ def _scan_config(doc_id: str, source: str, text: str) -> list[Finding]:
         for severity, label, _ in text_findings(command):
             findings.append(Finding(doc_id, source, "config-command", severity, f"{label} ({where})", command[:200],
                                     anchor=command))
+    for name in own_env_keys(Path(source), text):
+        findings.append(Finding(doc_id, source, "config-command", "high",
+                                "sets AgentDetox's own settings through the agent's environment", name, anchor=name))
     return findings
 
 

@@ -95,7 +95,9 @@ TEXT_RULES: list[tuple[str, str, re.Pattern]] = [
     ("medium", "points package installs at a non-default registry", re.compile(_REGISTRY, re.I | re.M)),
 ]
 
-_COMMAND_KEYS = {"command", "args", "url", "notify"}
+# Claude Code settings whose value is a shell command it runs (for credentials or telemetry).
+_HELPER_KEYS = {"apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "otelHeadersHelper"}
+_COMMAND_KEYS = {"command", "args", "url", "notify"} | _HELPER_KEYS
 
 
 def text_findings(text: str) -> list[tuple[str, str, int]]:
@@ -111,10 +113,17 @@ def text_findings(text: str) -> list[tuple[str, str, int]]:
 _GUARDED_KEYS = {
     # Claude Code, Cursor, OpenClaw (JSON)
     "hooks", "disableAllHooks", "mcpServers", "mcp", "permissions", "enabledPlugins", "plugins", "statusLine",
+    # Claude Code: the environment of every command it runs, helper commands, MCP auto-enable,
+    # and plugin sources
+    "env", *_HELPER_KEYS, "enableAllProjectMcpServers", "enabledMcpjsonServers", "extraKnownMarketplaces",
     # Codex config.toml
     "mcp_servers", "approval_policy", "sandbox_mode", "sandbox_workspace_write", "features", "notify",
 }
 WHOLE_FILE = "(whole file)"
+# Guarded keys where an addition makes something new run on the machine, as opposed to
+# a permission or a toggle. Added outside the agent, these interrupt the next session.
+RUNS_CODE = {"hooks", "statusLine", "mcpServers", "mcp", "mcp_servers", "notify", "env", *_HELPER_KEYS,
+             "enableAllProjectMcpServers", "enabledMcpjsonServers", "enabledPlugins", "extraKnownMarketplaces"}
 
 
 def _parse_config(path: Path, text: str):
@@ -150,6 +159,26 @@ def config_commands(path: Path, text: str) -> list[tuple[str, str]]:
     return out
 
 
+def own_env_keys(path: Path, text: str) -> list[str]:
+    """AGENTDETOX_* variables a config file sets for the commands the agent runs, AgentDetox's
+    hooks among them: a way to point it at an empty store or switch its checks off."""
+    data = _parse_config(path, text)
+    out: list[str] = []
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k == "env" and isinstance(v, dict):
+                    out.extend(name for name in v if str(name).upper().startswith("AGENTDETOX_"))
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(data)
+    return out
+
+
 def guarded_sections(path: Path, text: str) -> dict[str, str]:
     """Security-relevant subtrees of a config file (hooks, MCP servers, permissions),
     canonicalised. Unparseable or unstructured files count as one whole section."""
@@ -179,13 +208,16 @@ def guard_changes(path: Path, old_text: str, new_text: str, limit: int = 4) -> l
     new = guarded_sections(path, new_text)
     if WHOLE_FILE in old or WHOLE_FILE in new:
         return []
-    before, after = _leaves(old), _leaves(new)
+    before, after = leaves(old), leaves(new)
     phrases = [f'adds {k} "{v[:100]}"' for k, v in sorted(after - before)]
     phrases += [f'removes {k} "{v[:100]}"' for k, v in sorted(before - after)]
     return phrases[:limit] + ([f"and {len(phrases) - limit} more"] if len(phrases) > limit else [])
 
 
-def _leaves(sections: dict[str, str]) -> set[tuple[str, str]]:
+def leaves(sections: dict[str, str], ordered: bool = False) -> set[tuple[str, str]]:
+    """(path, value) for every scalar in the sections. List order is ignored unless `ordered`,
+    which keeps the position of scalars in a list: reordering a command's arguments can
+    change what it runs."""
     out: set[tuple[str, str]] = set()
 
     def walk(node, where: str) -> None:
@@ -193,8 +225,8 @@ def _leaves(sections: dict[str, str]) -> set[tuple[str, str]]:
             for k, v in node.items():
                 walk(v, f"{where}.{k}")
         elif isinstance(node, list):
-            for v in node:
-                walk(v, where)
+            for i, v in enumerate(node):
+                walk(v, f"{where}[{i}]" if ordered and not isinstance(v, (dict, list)) else where)
         else:
             out.add((where, str(node)))
 
