@@ -19,6 +19,7 @@ from pathlib import Path
 
 from . import adapters, engine, events, observation, policy, session, settings
 from .context import short_path
+from .integrity import StoreError
 
 
 def handle(agent: str, payload: dict) -> tuple[int, str]:
@@ -85,7 +86,12 @@ def _pre_tool_use(adapter: adapters.Adapter, payload: dict, project: Path, cwd: 
         return policy.decide(engine.check_command(command, project, cwd), adapter.can_ask, modes)
     run, transcript = policy.checks_to_run(modes), adapter.transcript(payload)
     writes = adapter.writes(payload, cwd)
-    engine.before_write([w.path for w in writes], project)
+    try:
+        engine.before_write([w.path for w in writes], project)
+    except StoreError as error:
+        # Bookkeeping only: the content check below must still run, or holding the store
+        # lock would let any write through.
+        _report_error(adapter.name, 'before-write', error)
     return policy.combine([policy.decide(engine.check_write(w, project, run, transcript), adapter.can_ask, modes)
                            for w in writes])
 

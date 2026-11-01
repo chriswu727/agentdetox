@@ -493,3 +493,26 @@ def test_review_shows_terminal_escapes_instead_of_running_them(env):
     session("claude-code", project)
     shown = review.detail(f"C{ledger.entries(str(mem / 'MEMORY.md'), limit=1)[0].id}")
     assert "\x1b" not in shown and "\\u001b[2K" in shown
+
+
+def test_holding_the_store_lock_does_not_let_writes_through_or_blind_session_start(env, monkeypatch):
+    import subprocess
+    import sys
+
+    from agentdetox import integrity
+    _, project, _ = env
+    session("claude-code", project)
+    holder = subprocess.Popen([sys.executable, "-c",
+                               "import time; from agentdetox.integrity import store_lock\n"
+                               "with store_lock():\n    print('held', flush=True); time.sleep(30)"],
+                              env=os.environ.copy(), stdout=subprocess.PIPE, text=True)
+    try:
+        assert holder.stdout.readline().strip() == "held"
+        monkeypatch.setattr(integrity, "LOCK_TIMEOUT", 0.3)
+        out = pre("claude-code", project, "Edit", {"file_path": str(project / "CLAUDE.md"),
+                                                   "old_string": "Use pnpm.", "new_string": "Use pnpm.\n" + POISON})
+        assert decision(out) == "deny"
+        assert "locked by another process" in session("claude-code", project)
+    finally:
+        holder.kill()
+        holder.wait(10)
