@@ -15,7 +15,7 @@ from pathlib import Path
 
 from . import allowlist, events, ledger, storage
 from .agentscan import scan_text
-from .context import classify, claude_memory_dir, short_path
+from .context import classify, claude_memory_dir, display_path, short_path
 from .findings import printable
 from .integrity import (
     StoreError,
@@ -143,7 +143,48 @@ def page(*, since: str | None = None, all_changes: bool = False, project: Path |
         else:
             query = 'SELECT c.* FROM changes c' + where + ' ORDER BY c.id DESC LIMIT ? OFFSET ?'
         result['rows'] = [dict(r) for r in db.execute(query, [*args, page_size, (page_number - 1) * page_size])]
+        for row in result['rows']:
+            row.update(_summary(db, row['id']))
     return result
+
+
+_WRITERS = {'you': 'the agent, with your words', 'agent': 'the agent', 'external': 'outside the agent',
+            'restored': 'restored by AgentDetox'}
+_SEVERITY_RANK = "CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END"
+
+
+def _summary(db, change_id: int) -> dict:
+    """What a change was, in a few words: who wrote it, its size, and its most serious open finding."""
+    change = db.execute('SELECT * FROM changes WHERE id=?', (change_id,)).fetchone()
+    data = json.loads(change['data'])
+    origin = data.get('origin', '')
+    if origin == 'copied' and data.get('source'):
+        writer = f"copied by the agent from {data['source']}"
+    elif origin == 'external' and data.get('method') == 'before-after':
+        writer = 'during a shell command, writer unknown'
+    else:
+        writer = _WRITERS.get(origin, origin)
+    added: int | None
+    removed: int | None
+    try:
+        before, after = _object_text(change['before_hash']), _object_text(change['after_hash'])
+        old_lines, new_lines = before.splitlines(), after.splitlines()
+        opcodes = difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False).get_opcodes()
+        added = sum(j2 - j1 for op, _, _, j1, j2 in opcodes if op in ('insert', 'replace'))
+        removed = sum(i2 - i1 for op, i1, i2, _, _ in opcodes if op in ('delete', 'replace'))
+    except StoreError:
+        added = removed = None
+    top = db.execute(f"SELECT severity, reason FROM findings WHERE change_id=? AND status='pending' "
+                     f"ORDER BY {_SEVERITY_RANK}, id LIMIT 1", (change_id,)).fetchone()
+    operation = ('deleted' if change['after_hash'] is None else 'added' if change['before_hash'] is None
+                 else 'changed')
+    return {'writer': writer, 'operation': operation, 'added': added, 'removed': removed,
+            'finding': {'severity': top['severity'], 'reason': top['reason']} if top else None}
+
+
+def _describe(row: dict) -> str:
+    size = f" +{row['added']} −{row['removed']} lines" if row['added'] is not None else ''
+    return f"C{row['id']} · {printable(row['writer'])} · {row['operation']}{size} · {row['ts'].replace('T', ' ')[:16]}"
 
 
 def render_page(data: dict) -> str:
@@ -158,11 +199,15 @@ def render_page(data: dict) -> str:
     lines.append(f"Page {data['page']} of {data['pages']} · grouped by {data['group_by']}")
     for index, row in enumerate(data['rows'], 1):
         if data['group_by'] == 'file':
-            lines.append(f"{index}. {short_path(row['path'])}")
             change_word = 'change' if row['change_count'] == 1 else 'changes'
-            lines.append(f"   {row['change_count']} {change_word} · {row['pending_count']} pending · latest matching C{row['id']} · {row['ts']}")
+            lines.append(f"{index}. {display_path(row['path'])}  ({row['change_count']} {change_word}, "
+                         f"{row['pending_count']} pending)")
+            lines.append(f"   latest: {_describe(row)}")
         else:
-            lines.append(f"{index}. C{row['id']} [{row['review_state']}] {short_path(row['path'])} · {row['ts']}")
+            lines.append(f"{index}. [{row['review_state']}] {display_path(row['path'])}")
+            lines.append(f"   {_describe(row)}")
+        if row['finding']:
+            lines.append(f"   {row['finding']['severity'].upper()}: {printable(row['finding']['reason'])}")
     if not data['rows']:
         lines.append('No entries on this page. Choose an earlier page.')
     if data['page'] < data['pages']:
