@@ -12,7 +12,7 @@ from . import __version__, allowlist, daemon, demo, doctor, events, ledger, revi
 from .agentscan import consistency_findings, scan_context
 from .allowlist import finding_flag
 from .consistency import NLI, NLI_MODEL
-from .context import KINDS, PROFILES, discover, home_dir, short_path
+from .context import KINDS, PROFILES, discover, display_path, home_dir, short_path
 from .corpus import load_corpus
 from .findings import ID_LENGTH, SEVERITY_ORDER, at_least, finding_id, printable
 from .hooks import main_hook
@@ -273,15 +273,8 @@ def _log(args) -> int:
         print("no recorded changes" + (f" to {short_path(path)}" if path else "") + " yet")
     for e in rows:
         session = f" [session {e.session[:8]}]" if e.session else ""
-        print(f"{e.ts.replace('T', ' ')}  {e.origin:<9} {_display_path(e.path)}: {e.describe()}{session}")
+        print(f"{e.ts.replace('T', ' ')}  {e.origin:<9} {display_path(e.path)}: {e.describe()}{session}")
     return 0
-
-
-def _display_path(path: str) -> str:
-    # Claude Code names memory folders after the whole project path; keep their ends, where
-    # the project's own name is.
-    parts = short_path(path).split(os.sep)
-    return os.sep.join(p if len(p) <= 40 else "…" + p[-28:] for p in parts)
 
 
 def _blame(args) -> int:

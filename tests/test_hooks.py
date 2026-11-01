@@ -749,3 +749,17 @@ def test_a_cd_elsewhere_moves_the_write_out_of_the_project(env):
     other.mkdir()
     command = f"cd {other.as_posix()} && echo note > CLAUDE.md"
     assert decision(pre("claude-code", project, "Bash", {"command": command})) == "allow"
+
+
+def test_the_review_list_says_who_changed_what_and_the_worst_finding(env):
+    from agentdetox import review
+    _, project, mem = env
+    session("claude-code", project)
+    (mem / "MEMORY.md").write_text((mem / "MEMORY.md").read_text(encoding="utf-8") + POISON + "\n", encoding="utf-8")
+    session("claude-code", project)
+    data = review.page()
+    row = data["rows"][0]
+    assert row["writer"] == "outside the agent" and row["operation"] == "changed"
+    assert (row["added"], row["removed"]) == (1, 0) and row["finding"]["severity"] == "high"
+    shown = review.render_page(data)
+    assert "outside the agent · changed +1 −0 lines" in shown and "HIGH: " in shown
