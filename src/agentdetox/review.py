@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import time
 import uuid
 from collections import Counter
@@ -234,67 +235,109 @@ def restore(change_id: str, apply: bool = False) -> str:
     with store_lock():
         row = get(change_id)
         path = _check_current(row)
-        target = _object_text(row['before_hash'])
-        cf = classify(path, project=path.parent)
-        kind = cf.kind if cf else 'config' if path.suffix in ('.json', '.toml') else 'memory'
-        residual = [f for f in allowlist.unsuppressed(scan_text(str(path), str(path), target, kind))
-                    if f.severity in ('medium', 'high')]
-        warning = ('\nWARNING: the recovery version still has rule findings: ' +
-                   printable('; '.join(sorted({f.message for f in residual}))) + '. Restoring it does not clear these findings.') if residual else ''
+        residual, warning = _residual(path, row['before_hash'])
         if not apply:
             return detail(change_id) + f'\nRestore the version before this change: agentdetox restore {change_id} --apply\nThe current version will be backed up; file permissions will be preserved. Recovery does not certify that a version is safe.' + warning
-        operation = uuid.uuid4().hex
-        backup_path = store_dir() / 'quarantine' / operation / 'content'
         mode = json.loads(row['data']).get('before_mode')
         if mode is None:
             mode = baseline_entries().get(str(path), {}).get('mode', 0o600)
-        with storage.connection(write=True) as db:
-            db.execute('INSERT INTO operations(id, path, before_hash, after_hash, stage, backup) VALUES (?, ?, ?, ?, ?, ?)',
-                       (operation, str(path), row['after_hash'], row['before_hash'], 'preparing', str(backup_path)))
-        backup = None
-        data: bytes | None = None
-        try:
-            _check_current(row)
-            if row['before_hash'] is not None:
-                backup = restore_object(path, row['before_hash'], mode, row['after_hash'], backup_path.parent)
-            elif path.exists():
-                data = path.read_bytes()
-                qdir = private_dir(store_dir() / 'quarantine' / operation)
-                backup = qdir / 'content'
-                write_private(backup, data)
-                with backup.open('r+b') as f:
-                    os.fsync(f.fileno())
-                write_private(qdir / 'manifest.json', json.dumps({'content': str(path)}).encode())
-                if backup.read_bytes() != data or _digest(path) != row['after_hash']:
-                    raise StoreError('File changed during recovery; original was left in place')
-                path.unlink()
-            with storage.connection(write=True) as db:
-                data = path.read_bytes() if path.exists() else None
-                if (hashlib.sha256(data).hexdigest() if data is not None else None) != row['before_hash']:
-                    raise StoreError('File changed during recovery; inspect it and the backup')
-                entry = ledger.record(path, 'restored', row['after_hash'], data, findings=residual)
-                if entry is None:
-                    raise StoreError('Could not record recovery')
-                db.execute("UPDATE changes SET review_state='restored' WHERE id=?", (row['id'],))
-                db.execute("UPDATE findings SET status='restored' WHERE change_id=?", (row['id'],))
-                checkpoint = db.execute('SELECT checkpoint FROM files WHERE path=?', (str(path),)).fetchone()
-                if row['before_hash'] is None:
-                    db.execute('UPDATE files SET checkpoint=NULL WHERE path=?', (str(path),))
-                elif checkpoint and checkpoint[0] and not any(f.severity == 'high' for f in residual):
-                    value = json.loads(checkpoint[0])
-                    assert data is not None
-                    value['sha256'] = store_object(data)
-                    value['mode'] = mode
-                    from .persistence import guarded_sections
-                    value['sections'] = guarded_sections(path, data.decode('utf-8', errors='replace')) if value['kind'] == 'config' else {}
-                    db.execute('UPDATE files SET checkpoint=? WHERE path=?', (json.dumps(value), str(path)))
-                db.execute("UPDATE operations SET stage='completed', backup=? WHERE id=?", (str(backup) if backup else None, operation))
-        except (OSError, StoreError) as e:
-            with storage.connection(write=True) as db:
-                db.execute("UPDATE operations SET stage='failed', backup=?, error=? WHERE id=?",
-                           (str(backup_path), str(e), operation))
-            raise
+        backup = _recover(path, row['before_hash'], row['after_hash'], mode, residual, row['id'])
         return f'Restored {short_path(str(path))}. Backup: {backup or "file was absent"}.' + warning
+
+
+def restore_trusted(path: Path) -> str:
+    """Put back the last trusted version of `path` (its snapshot checkpoint), through the same
+    journalled, stale-checked recovery as `restore`."""
+    with store_lock():
+        entry = baseline_entries().get(str(path))
+        if entry is None:
+            raise KeyError(f'{path} is not in the snapshot')
+        if path.is_symlink():
+            raise StoreError(f'Cannot restore a symbolic link: {path}')
+        current = _digest(path) if path.exists() else None
+        mode = entry.get('mode', 0o600)
+        if current == entry['sha256']:
+            if os.name != 'nt' and stat.S_IMODE(path.stat().st_mode) != mode & 0o777:
+                os.chmod(path, mode & 0o777)
+                return f'Put back the permissions of {short_path(str(path))}; its content is the last trusted version.'
+            return f'{short_path(str(path))} is already the last trusted version.'
+        residual, warning = _residual(path, entry['sha256'])
+        backup = _recover(path, entry['sha256'], current, mode, residual, None)
+        return (f'Restored {short_path(str(path))}'
+                + (f' (previous version quarantined at {backup})' if backup else '') + '.' + warning)
+
+
+def _residual(path: Path, target_hash: str | None) -> tuple[list, str]:
+    """Rule findings that the version being restored still has, and the warning saying so."""
+    target = _object_text(target_hash)
+    cf = classify(path, project=path.parent)
+    kind = cf.kind if cf else 'config' if path.suffix in ('.json', '.toml') else 'memory'
+    residual = [f for f in allowlist.unsuppressed(scan_text(str(path), str(path), target, kind))
+                if f.severity in ('medium', 'high')]
+    warning = ('\nWARNING: the recovery version still has rule findings: ' +
+               printable('; '.join(sorted({f.message for f in residual}))) + '. Restoring it does not clear these findings.') if residual else ''
+    return residual, warning
+
+
+def _recover(path: Path, target_hash: str | None, current_hash: str | None, mode: int, residual: list,
+             change_id: int | None) -> Path | None:
+    """Replace `path`, now `current_hash`, with the stored `target_hash` version: journalled,
+    refused if the file changes meanwhile, the current version kept in quarantine, and the
+    result recorded in the same transaction. Call with the store lock held."""
+    operation = uuid.uuid4().hex
+    backup_path = store_dir() / 'quarantine' / operation / 'content'
+    with storage.connection(write=True) as db:
+        db.execute('INSERT INTO operations(id, path, before_hash, after_hash, stage, backup) VALUES (?, ?, ?, ?, ?, ?)',
+                   (operation, str(path), current_hash, target_hash, 'preparing', str(backup_path)))
+    backup = None
+    data: bytes | None = None
+    try:
+        original = path.read_bytes() if path.exists() else None
+        if (hashlib.sha256(original).hexdigest() if original is not None else None) != current_hash:
+            raise StoreError('The file changed since it was checked; review it again')
+        if original is not None:
+            store_object(original)  # the recovery's own record must be reviewable and undoable
+        if target_hash is not None:
+            backup = restore_object(path, target_hash, mode, current_hash, backup_path.parent)
+        elif path.exists():
+            data = path.read_bytes()
+            qdir = private_dir(store_dir() / 'quarantine' / operation)
+            backup = qdir / 'content'
+            write_private(backup, data)
+            with backup.open('r+b') as f:
+                os.fsync(f.fileno())
+            write_private(qdir / 'manifest.json', json.dumps({'content': str(path)}).encode())
+            if backup.read_bytes() != data or _digest(path) != current_hash:
+                raise StoreError('File changed during recovery; original was left in place')
+            path.unlink()
+        with storage.connection(write=True) as db:
+            data = path.read_bytes() if path.exists() else None
+            if (hashlib.sha256(data).hexdigest() if data is not None else None) != target_hash:
+                raise StoreError('File changed during recovery; inspect it and the backup')
+            entry = ledger.record(path, 'restored', current_hash, data, findings=residual)
+            if entry is None:
+                raise StoreError('Could not record recovery')
+            if change_id is not None:
+                db.execute("UPDATE changes SET review_state='restored' WHERE id=?", (change_id,))
+                db.execute("UPDATE findings SET status='restored' WHERE change_id=?", (change_id,))
+            checkpoint = db.execute('SELECT checkpoint FROM files WHERE path=?', (str(path),)).fetchone()
+            if target_hash is None:
+                db.execute('UPDATE files SET checkpoint=NULL WHERE path=?', (str(path),))
+            elif checkpoint and checkpoint[0] and not any(f.severity == 'high' for f in residual):
+                value = json.loads(checkpoint[0])
+                assert data is not None
+                value['sha256'] = store_object(data)
+                value['mode'] = mode
+                from .persistence import guarded_sections
+                value['sections'] = guarded_sections(path, data.decode('utf-8', errors='replace')) if value['kind'] == 'config' else {}
+                db.execute('UPDATE files SET checkpoint=? WHERE path=?', (json.dumps(value), str(path)))
+            db.execute("UPDATE operations SET stage='completed', backup=? WHERE id=?", (str(backup) if backup else None, operation))
+    except (OSError, StoreError) as e:
+        with storage.connection(write=True) as db:
+            db.execute("UPDATE operations SET stage='failed', backup=?, error=? WHERE id=?",
+                       (str(backup_path), str(e), operation))
+        raise
+    return backup
 
 
 def handled_findings() -> set[tuple[str, str | None, str]]:
