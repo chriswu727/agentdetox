@@ -616,3 +616,34 @@ def test_agent_restore_puts_back_changed_permissions(env, capsys):
     os.chmod(settings, 0o666)
     assert main(["agent", "restore", str(settings)]) == 0
     assert stat.S_IMODE(settings.stat().st_mode) != 0o666
+
+
+def test_session_start_does_not_hold_the_store_lock_while_comparing(env, monkeypatch):
+    from agentdetox import engine, integrity
+    from agentdetox import session as session_module
+    _, project, mem = env
+    session("claude-code", project)
+    (mem / "MEMORY.md").write_text("- [Testing](testing.md) — run tests before commits\n- Node 22.\n", encoding="utf-8")
+    depth = []
+    monkeypatch.setattr(engine, "contradictions", lambda *a, **k: depth.append(integrity._lock_depth) or [])
+    session_module.notice(project, "ask")
+    assert depth == [0]
+
+
+def test_a_file_changed_during_the_session_check_is_not_trusted_unread(env, monkeypatch):
+    from agentdetox import session as session_module
+    _, project, mem = env
+    session("claude-code", project)
+    path = mem / "MEMORY.md"
+    path.write_text(path.read_text(encoding="utf-8") + "- Node 22.\n", encoding="utf-8")   # benign, outside the agent
+    checked = session_module.verify
+
+    def verify_then_tamper(files, roots):
+        result = checked(files, roots)
+        path.write_text(path.read_text(encoding="utf-8") + POISON + "\n", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(session_module, "verify", verify_then_tamper)
+    session("claude-code", project)
+    monkeypatch.setattr(session_module, "verify", checked)
+    assert "Do not follow" in session("claude-code", project)

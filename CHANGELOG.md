@@ -42,6 +42,10 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ### Fixed
 
+- Session start compares and scans without holding the store lock, taking it only to record the
+  result, so parallel hooks no longer wait on it (or time out during a contradiction check in
+  `ask` mode). A file that changes while the check runs is left for the next check instead of
+  being trusted unread.
 - The newest known version of a file is taken from the order changes were recorded, not by
   comparing local timestamps, so a clock change (daylight saving, travel) cannot make AgentDetox
   credit the agent with a change made outside it, or the reverse.
