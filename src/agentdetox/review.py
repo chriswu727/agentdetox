@@ -12,8 +12,9 @@ import uuid
 from collections import Counter
 from pathlib import Path
 
-from . import events, ledger, storage
-from .context import claude_memory_dir, short_path
+from . import allowlist, events, ledger, storage
+from .agentscan import scan_text
+from .context import classify, claude_memory_dir, short_path
 from .integrity import (
     StoreError,
     baseline_entries,
@@ -231,8 +232,15 @@ def restore(change_id: str, apply: bool = False) -> str:
     with store_lock():
         row = get(change_id)
         path = _check_current(row)
+        target = _object_text(row['before_hash'])
+        cf = classify(path, project=path.parent)
+        kind = cf.kind if cf else 'config' if path.suffix in ('.json', '.toml') else 'memory'
+        residual = [f for f in allowlist.unsuppressed(scan_text(str(path), str(path), target, kind))
+                    if f.severity in ('medium', 'high')]
+        warning = ('\nWARNING: the recovery version still has rule findings: ' +
+                   '; '.join(sorted({f.message for f in residual})) + '. Restoring it does not clear these findings.') if residual else ''
         if not apply:
-            return detail(change_id) + f'\nRestore the version before this change: agentdetox restore {change_id} --apply\nThe current version will be backed up; file permissions will be preserved.'
+            return detail(change_id) + f'\nRestore the version before this change: agentdetox restore {change_id} --apply\nThe current version will be backed up; file permissions will be preserved. Recovery does not certify that a version is safe.' + warning
         operation = uuid.uuid4().hex
         backup_path = store_dir() / 'quarantine' / operation / 'content'
         mode = json.loads(row['data']).get('before_mode')
@@ -262,7 +270,7 @@ def restore(change_id: str, apply: bool = False) -> str:
                 data = path.read_bytes() if path.exists() else None
                 if (hashlib.sha256(data).hexdigest() if data is not None else None) != row['before_hash']:
                     raise StoreError('File changed during recovery; inspect it and the backup')
-                entry = ledger.record(path, 'restored', row['after_hash'], data)
+                entry = ledger.record(path, 'restored', row['after_hash'], data, findings=residual)
                 if entry is None:
                     raise StoreError('Could not record recovery')
                 db.execute("UPDATE changes SET review_state='restored' WHERE id=?", (row['id'],))
@@ -270,7 +278,7 @@ def restore(change_id: str, apply: bool = False) -> str:
                 checkpoint = db.execute('SELECT checkpoint FROM files WHERE path=?', (str(path),)).fetchone()
                 if row['before_hash'] is None:
                     db.execute('UPDATE files SET checkpoint=NULL WHERE path=?', (str(path),))
-                elif checkpoint and checkpoint[0]:
+                elif checkpoint and checkpoint[0] and not any(f.severity == 'high' for f in residual):
                     value = json.loads(checkpoint[0])
                     assert data is not None
                     value['sha256'] = store_object(data)
@@ -284,7 +292,7 @@ def restore(change_id: str, apply: bool = False) -> str:
                 db.execute("UPDATE operations SET stage='failed', backup=?, error=? WHERE id=?",
                            (str(backup_path), str(e), operation))
             raise
-        return f'Restored {short_path(str(path))}. Backup: {backup or "file was absent"}.'
+        return f'Restored {short_path(str(path))}. Backup: {backup or "file was absent"}.' + warning
 
 
 def handled_findings() -> set[tuple[str, str | None, str]]:

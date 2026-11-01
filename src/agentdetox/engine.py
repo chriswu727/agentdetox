@@ -232,9 +232,10 @@ def _copied(cf: ContextFile, added: str, t: Transcript | None) -> CopyFinding | 
 
 
 def _added_text(old: str, new: str) -> str:
+    after = new.splitlines()
     return "\n".join(
-        line[1:] for line in difflib.unified_diff(old.splitlines(), new.splitlines(), lineterm="", n=0)
-        if line.startswith("+") and not line.startswith("+++")
+        line for tag, _, _, start, end in difflib.SequenceMatcher(None, old.splitlines(), after).get_opcodes()
+        if tag in ("insert", "replace") for line in after[start:end]
     )
 
 

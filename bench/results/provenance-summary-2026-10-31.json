@@ -1,0 +1,127 @@
+{
+  "protocol": "existing synthetic-transcript public-data test split; rerun, not a new held-out evaluation",
+  "cases": 1431,
+  "decision_changes_from_previous_run": 0,
+  "model_calls": 0,
+  "groups": [
+    {
+      "kind": "benign_auto_copy",
+      "language": "en",
+      "cases": 100,
+      "flagged": 100,
+      "by_provenance": 100,
+      "by_rules": 0
+    },
+    {
+      "kind": "benign_auto_copy",
+      "language": "zh",
+      "cases": 24,
+      "flagged": 24,
+      "by_provenance": 24,
+      "by_rules": 0
+    },
+    {
+      "kind": "benign_own_words",
+      "language": "en",
+      "cases": 20,
+      "flagged": 0,
+      "by_provenance": 0,
+      "by_rules": 0
+    },
+    {
+      "kind": "benign_own_words",
+      "language": "zh",
+      "cases": 12,
+      "flagged": 0,
+      "by_provenance": 0,
+      "by_rules": 0
+    },
+    {
+      "kind": "benign_remember_copy",
+      "language": "en",
+      "cases": 100,
+      "flagged": 0,
+      "by_provenance": 0,
+      "by_rules": 0
+    },
+    {
+      "kind": "benign_remember_copy",
+      "language": "zh",
+      "cases": 24,
+      "flagged": 0,
+      "by_provenance": 0,
+      "by_rules": 0
+    },
+    {
+      "kind": "benign_user_pasted",
+      "language": "en",
+      "cases": 50,
+      "flagged": 0,
+      "by_provenance": 0,
+      "by_rules": 0
+    },
+    {
+      "kind": "benign_user_pasted",
+      "language": "zh",
+      "cases": 12,
+      "flagged": 0,
+      "by_provenance": 0,
+      "by_rules": 0
+    },
+    {
+      "kind": "poison_fact_mixed",
+      "language": "en",
+      "cases": 150,
+      "flagged": 144,
+      "by_provenance": 144,
+      "by_rules": 0
+    },
+    {
+      "kind": "poison_fact_partial",
+      "language": "en",
+      "cases": 150,
+      "flagged": 144,
+      "by_provenance": 144,
+      "by_rules": 0
+    },
+    {
+      "kind": "poison_fact_verbatim",
+      "language": "en",
+      "cases": 150,
+      "flagged": 150,
+      "by_provenance": 150,
+      "by_rules": 0
+    },
+    {
+      "kind": "poison_injection_mixed",
+      "language": "en",
+      "cases": 213,
+      "flagged": 142,
+      "by_provenance": 131,
+      "by_rules": 12
+    },
+    {
+      "kind": "poison_injection_partial",
+      "language": "en",
+      "cases": 213,
+      "flagged": 163,
+      "by_provenance": 154,
+      "by_rules": 10
+    },
+    {
+      "kind": "poison_injection_verbatim",
+      "language": "en",
+      "cases": 213,
+      "flagged": 206,
+      "by_provenance": 195,
+      "by_rules": 12
+    }
+  ],
+  "dataset_sha256": {
+    "squad_clean.jsonl": "b7a6ba9380ab6a39badbe3a802f9a1a109e5e718aef170c1169a6f92ef877f0a",
+    "injections.jsonl": "32c4584d4d2de91e4d616377f940b2b06be58c59e4c30da3668540b11be1345f",
+    "nq.json": "44df711454a9bada08e72e9e4a003a2cc845c43707ac93a3493e5168ec415cf2",
+    "hotpotqa.json": "5119d6f9fd53cb0ecb3f33de939bd940d77cbaf80284b7ccd3d256f63a430537",
+    "msmarco.json": "d6bf508ebb0e31e09095995061bd483678e2ae8634f6ba5de1611e4adf9b1987"
+  }
+}

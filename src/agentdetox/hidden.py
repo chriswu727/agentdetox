@@ -141,14 +141,17 @@ def match_injection(text: str) -> list[tuple[str, str, int]]:
     norm = normalize(text)
     hits = []
     for severity, label, pattern in _PATTERNS:
-        m = pattern.search(norm)
-        if m:
+        quoted = False
+        for m in pattern.finditer(norm):
             # Security docs and skills quote attack phrases as examples to watch for.
             # A quoted phrase is still reported, but not at a level that blocks.
             if severity == "high" and _is_quoted(norm, m.start(), m.end()):
-                hits.append(("medium", f"{label} (quoted, possibly describing an attack)", m.start()))
+                if not quoted:
+                    hits.append(("medium", f"{label} (quoted, possibly describing an attack)", m.start()))
+                    quoted = True
             else:
                 hits.append((severity, label, m.start()))
+                break
     return hits
 
 

@@ -40,6 +40,25 @@ _REMEMBER_RE = re.compile(
     r"|记住|记下|记一下|记得|存到记忆|保存到记忆|写进记忆|加到记忆|备忘",
     re.I,
 )
+_QUOTED_RE = re.compile(
+    r'```.*?(?:```|\Z)|`[^`\n]*`|"[^"\n]*"|(?<!\w)\x27[^\x27\n]*\x27(?!\w)'
+    r'|“[^”\n]*”|‘[^’\n]*’|「[^」\n]*」|『[^』\n]*』', re.S,
+)
+_NEGATED_REQUEST_RE = re.compile(
+    r"\b(?:do\s+not|don't|never|must\s+not|should\s+not|shouldn't|cannot|can't)\s+(?:\w+\s+){0,3}$"
+    r"|(?:不要|别|切勿|不得|无需|不必|不能|不想|不需要)[^。！？；;.!?\n]{0,30}$", re.I,
+)
+_DONT_FORGET_RE = re.compile(
+    r"\b(?:do\s+not|don't|never)\s+forget\s+to\s*$|(?:不要|别)忘记[^。！？；;.!?\n]{0,20}$", re.I,
+)
+_RECOLLECTION_RE = re.compile(
+    r"\b(?:i|we|you|they|he|she)\s+(?:(?:already|still|also|can|do|did)\s+){0,2}$"
+    r"|(?:我|我们|你|他|她)(?:还|已经|仍然)?$", re.I,
+)
+_DISCUSSION_RE = re.compile(
+    r"\b(?:what\s+does|what\s+is|define|explain|the\s+(?:word|phrase|term))\s*$"
+    r"|(?:解释|什么是|这个词叫)$", re.I,
+)
 
 
 @dataclass
@@ -141,7 +160,22 @@ def _shingles(tokens: list[str], n: int = SHINGLE) -> set[tuple[str, ...]]:
 
 
 def asked_to_remember(human: list[str]) -> bool:
-    return bool(human) and bool(_REMEMBER_RE.search(human[-1]))
+    if not human:
+        return False
+    prompt = normalize(human[-1])
+    quoted = [(m.start(), m.end()) for m in _QUOTED_RE.finditer(prompt)]
+    requested = False
+    for match in _REMEMBER_RE.finditer(prompt):
+        if any(start <= match.start() < end for start, end in quoted):
+            continue
+        before = prompt[max(0, match.start() - 120):match.start()].replace('’', "'")
+        if _RECOLLECTION_RE.search(before) or _DISCUSSION_RE.search(before):
+            continue
+        if _NEGATED_REQUEST_RE.search(before) and not _DONT_FORGET_RE.search(before):
+            requested = False
+            continue
+        requested = True
+    return requested
 
 
 def copied_from_untrusted(new_text: str, transcript: Transcript,
