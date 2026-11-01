@@ -708,7 +708,6 @@ def test_a_contradiction_is_attached_only_to_the_version_that_was_checked(env, m
     ("if cd .claude; then echo '{}' > settings.json; fi", "ask"),
     ("{ cd .claude; }; echo '{}' > settings.json", "ask"),
     ("export F=CLAUDE.md; echo note >> $F", "ask"),
-    ("cd /tmp && echo note > CLAUDE.md", "allow"),                      # writes /tmp/CLAUDE.md
 ])
 def test_more_shell_forms_that_write_context(env, command, expected):
     _, project, _ = env
@@ -742,3 +741,11 @@ def test_many_cds_in_one_command_stay_fast(env):
     started = time.monotonic()
     pre("claude-code", project, "Bash", {"command": command})
     assert time.monotonic() - started < 2
+
+
+def test_a_cd_elsewhere_moves_the_write_out_of_the_project(env):
+    _, project, _ = env
+    other = project.parent / "other"     # a sibling: its CLAUDE.md is not one the agent loads
+    other.mkdir()
+    command = f"cd {other.as_posix()} && echo note > CLAUDE.md"
+    assert decision(pre("claude-code", project, "Bash", {"command": command})) == "allow"
