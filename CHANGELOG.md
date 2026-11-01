@@ -7,6 +7,11 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ### Security
 
+- More shell writes are stopped before they run: commands inside `bash -c`, `sh -c` and `eval`;
+  behind `nice`, `timeout`, `xargs`, `env` or `sudo`; after a `cd` or with a variable set earlier
+  in the same command; `${HOME}` and globs; `git checkout -- <file>` and `git restore`; `curl -o`
+  and `wget -O`; `perl -i`; and inline `python -c`, `node -e` and similar code that writes a
+  file it names. The same applies to commands that change AgentDetox's own settings.
 - A Write or Edit whose text contained `*** Begin Patch` was parsed as a Codex patch, so a
   planted CLAUDE.md write could skip the content check by including that marker. Only a call
   that names no target file is treated as a patch.
