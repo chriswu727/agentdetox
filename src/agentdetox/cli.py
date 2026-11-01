@@ -25,7 +25,7 @@ from .install import (
     install_claude_code,
     uninstall_claude_code,
 )
-from .integrity import StoreError, gc, reset_baseline, restore, snapshot, store_dir, store_object, verify
+from .integrity import StoreError, gc, reset_baseline, snapshot, store_dir, verify
 
 
 def _utf8_output() -> None:
@@ -465,15 +465,14 @@ def _agent_command(args) -> int:
         return 0
     if args.agent_command == "restore":
         for path in args.paths:
-            path = path.expanduser().absolute()
-            current = path.read_bytes() if path.is_file() else None
             try:
-                moved = restore(path)
+                print(review.restore_trusted(path.expanduser().absolute()))
             except KeyError as e:
                 print(f"error: {e.args[0]}", file=sys.stderr)
                 return 2
-            ledger.record(path, "restored", store_object(current) if current is not None else None, path.read_bytes())
-            print(f"restored {path}" + (f" (previous version quarantined at {moved})" if moved else ""))
+            except (OSError, StoreError) as e:
+                print(f"error: {e}", file=sys.stderr)
+                return 1
         return 0
 
     project = None if args.user_only else args.project.expanduser().absolute()

@@ -558,3 +558,20 @@ def test_a_write_that_mentions_the_patch_format_is_still_an_ordinary_write(env):
     handle("claude-code", {"hook_event_name": "PostToolUse", "cwd": str(project), "tool_name": "Write",
                            "tool_input": {"file_path": str(project / "CLAUDE.md"), "content": benign}})
     assert ledger.entries(str(project / "CLAUDE.md"), limit=1)[0].origin != "external"
+
+
+def test_agent_restore_is_journalled_recorded_and_idempotent(env, capsys):
+    from agentdetox import ledger, storage
+    _, project, mem = env
+    session("claude-code", project)
+    path = mem / "MEMORY.md"
+    original = path.read_text(encoding="utf-8")
+    path.write_text(original + POISON + "\n", encoding="utf-8")
+    assert main(["agent", "restore", str(path)]) == 0
+    assert path.read_text(encoding="utf-8") == original and "quarantined at" in capsys.readouterr().out
+    with storage.connection() as db:
+        stages = [r[0] for r in db.execute("SELECT stage FROM operations WHERE path=?", (str(path),))]
+    assert stages == ["completed"]
+    assert ledger.entries(str(path), limit=1)[0].origin == "restored"
+    assert main(["agent", "restore", str(path)]) == 0
+    assert "already the last trusted version" in capsys.readouterr().out

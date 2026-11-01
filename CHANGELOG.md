@@ -42,6 +42,8 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ### Fixed
 
+- `agentdetox agent restore` uses the same recovery as `review`: it is journalled, refuses to
+  overwrite a file that changed while it ran, and records the result in one transaction.
 - Codex `apply_patch` writes are recorded after they are applied, instead of appearing as changes
   made outside the agent at the next session.
 - `python -m agentdetox.cli review` and the other review commands no longer fail with `NameError`.
