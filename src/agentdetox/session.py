@@ -93,7 +93,7 @@ def _check(project: Path, mode: str) -> str:
             if latest and latest[0].after == digests.get(conflict.new.source):
                 flag = contradiction_flag(conflict)
                 ledger.add_finding(latest[0].id, flag.id, 'medium', flag.what)
-        snapshot([cf for cf in trusted if unchanged(str(cf.path))], roots)
+        snapshot(trusted, roots, expected=digests)
     for cf, old in background:
         engine.record_in_background(cf, old, project)
     if not findings and not conflicts:

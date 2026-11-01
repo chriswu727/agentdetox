@@ -3,7 +3,7 @@
 Notable changes to AgentDetox. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 before 1.0, a minor version may change commands, settings or the snapshot store.
 
-## [Unreleased]
+## [0.4.0] - 2026-11-01
 
 ### Security
 
@@ -52,6 +52,16 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 - Interactive terminal review with file history, confirmation before acceptance/recovery, and stale-version checks.
 - Review JSON pages include totals for the entire selection, operation/state counts and pagination metadata.
 - Offline prevention, monitoring and recovery regression gallery with explicit known misses and a CI gate.
+
+### Changed
+
+- Session start no longer re-saves files whose trusted version is unchanged: with 1,000 watched
+  files it takes about 130 ms (p50), down from 177 ms in 0.3.0, while watching more files
+  (`bench/HOOK_LATENCY.md`).
+- The store upgrades itself to format 3 on first use. A one-time step corrects the newest known
+  version of files migrated from the 0.2 JSON store. 0.3.0 cannot open a format 3 store.
+- The accuracy gallery (`bench/ACCURACY.md`, run in CI) adds four attack families: shell commands,
+  settings changed outside the agent, writes under another name or place, and notice injection.
 
 ### Fixed
 

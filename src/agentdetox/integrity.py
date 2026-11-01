@@ -260,27 +260,42 @@ def reset_baseline() -> Path | None:
         return kept
 
 
-def snapshot(files: list[ContextFile], roots: list[Path]) -> int:
-    """Record recovery checkpoints without forgetting deleted files."""
+def snapshot(files: list[ContextFile], roots: list[Path], expected: dict[str, str | None] | None = None) -> int:
+    """Record recovery checkpoints without forgetting deleted files. With `expected`, a file
+    whose content is no longer the version that was checked is left out, not trusted unread."""
     with store_lock():
-        return _snapshot(files, roots)
+        return _snapshot(files, roots, expected)
 
 
-def _snapshot(files: list[ContextFile], roots: list[Path]) -> int:
+def _snapshot(files: list[ContextFile], roots: list[Path], expected: dict[str, str | None] | None = None) -> int:
     baseline = _load_baseline()
     private_dir(store_dir())
-    private_dir(store_dir() / "objects")
+    objects = private_dir(store_dir() / "objects")
     for cf in files:
-        data = cf.path.read_bytes()
+        try:
+            data = cf.path.read_bytes()
+            mode = stat.S_IMODE(cf.path.stat().st_mode)
+        except FileNotFoundError:
+            if expected is None:
+                raise
+            continue                        # deleted since it was checked; the next check sees it
         digest = _sha(data)
-        store_object(data)
+        if expected is not None and expected.get(str(cf.path)) != digest:
+            continue
         previous = baseline["files"].get(str(cf.path))
-        if previous and previous["sha256"] == digest and previous.get("mode") == stat.S_IMODE(cf.path.stat().st_mode):
+        # Most files are unchanged at every session: their copy is already stored. Its content
+        # is verified in full by the daily cleanup, not on every session.
+        obj = objects / digest
+        if (previous and previous["sha256"] == digest and previous.get("mode") == mode and obj.exists()
+                and obj.stat().st_size == len(data)):
+            continue
+        store_object(data)
+        if previous and previous["sha256"] == digest and previous.get("mode") == mode:
             continue
         text = data.decode("utf-8", errors="replace")
         baseline["files"][str(cf.path)] = {
             "sha256": digest,
-            "mode": stat.S_IMODE(cf.path.stat().st_mode),
+            "mode": mode,
             "agent": cf.agent,
             "kind": cf.kind,
             "scope": cf.scope,
@@ -492,12 +507,20 @@ def gc(force: bool = False) -> dict | None:
             return None
         referenced = {e["sha256"] for e in baseline["files"].values()} | _ledger_refs()
         removed = freed = 0
+        corrupt = []
         objects = store_dir() / "objects"
         for obj in objects.iterdir() if objects.is_dir() else []:
             if obj.name not in referenced:
                 freed += obj.stat().st_size
                 obj.unlink()
                 removed += 1
+            elif _sha(obj.read_bytes()) != obj.name:
+                corrupt.append(obj.name)
+        if corrupt:
+            from . import events
+            # Shown by doctor and status: a restore from these copies would fail.
+            events.record("hook_error", stage="store-integrity",
+                          error=f"{len(corrupt)} recovery copies are corrupt, e.g. {corrupt[0]}")
         pending = store_dir() / "pending"
         for job in pending.iterdir() if pending.is_dir() else []:
             if now - job.stat().st_mtime > GC_INTERVAL:

@@ -41,3 +41,21 @@ samples and one untimed warmup, with NLI disabled. Raw report:
 All seven measured P95 budgets passed. The two full-pair budgets are new and include two Python
 processes, durable start-state capture, scoped content reads and the end comparison. These are
 reference-machine measurements; the older five-case 0.3.0 report remains a separate baseline.
+
+## 0.4.0 release candidate, 2026-11-01
+
+100 samples per case, same machine and method, NLI off. Raw report:
+[results/hooks-2026-11-01.json](results/hooks-2026-11-01.json). Session start no longer re-stores
+files whose trusted version is unchanged (their stored copies are verified in full by the daily
+cleanup instead), so it is faster than in 0.3.0 despite watching more files and re-checking each
+version before trusting it. The shell check parses more forms at no measurable cost.
+
+| Case | P50 | P95 | Budget |
+|---|---:|---:|---:|
+| Bash pre-check | 58.5 ms | 61.9 ms | 100 ms |
+| Bash pre + post | 117.6 ms | 126.3 ms | 200 ms |
+| Protected Edit, 50k history entries | 58.5 ms | 60.0 ms | 120 ms |
+| Protected Write, 3,889,915-byte transcript | 141.2 ms | 145.5 ms | 200 ms |
+| Session start, 1,000 unchanged files | 133.9 ms | 139.2 ms | 250 ms |
+| Session start, 100 changed / 1,000 files, initially 10k entries | 187.7 ms | 215.1 ms | 1,000 ms |
+| Bash pre + post, 1,000 active memory files and 1,000 unrelated | 239.6 ms | 287.4 ms | 350 ms |
