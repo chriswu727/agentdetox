@@ -5,6 +5,7 @@ from __future__ import annotations
 import glob
 import os
 import re
+import sys
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -27,6 +28,11 @@ class AgentProfile:
     user: tuple[tuple[str, str], ...]
     project: tuple[tuple[str, str], ...]
     verified: bool = True
+    # File names the agent also loads from every folder above the project.
+    ancestors: tuple[tuple[str, str], ...] = ()
+    # Project globs checked when the agent writes, but too costly to walk at session start
+    # (the agent loads a CLAUDE.md in any subfolder it works in).
+    written: tuple[tuple[str, str], ...] = ()
 
 
 CLAUDE_CODE = AgentProfile(
@@ -38,8 +44,10 @@ CLAUDE_CODE = AgentProfile(
         ("skill", ".claude/skills/**/SKILL.md"),
         ("instructions", ".claude/agents/*.md"),
         ("instructions", ".claude/commands/**/*.md"),
+        ("instructions", ".claude/output-styles/*.md"),
         ("config", ".claude/settings.json"),
         ("config", ".claude.json"),
+        ("config", ".claude/hooks/**/*"),
     ),
     project=(
         ("instructions", "CLAUDE.md"),
@@ -50,10 +58,14 @@ CLAUDE_CODE = AgentProfile(
         ("skill", ".claude/skills/**/SKILL.md"),
         ("instructions", ".claude/agents/*.md"),
         ("instructions", ".claude/commands/**/*.md"),
+        ("instructions", ".claude/output-styles/*.md"),
         ("config", ".claude/settings.json"),
         ("config", ".claude/settings.local.json"),
         ("config", ".mcp.json"),
+        ("config", ".claude/hooks/**/*"),
     ),
+    ancestors=(("instructions", "CLAUDE.md"), ("instructions", "CLAUDE.local.md")),
+    written=(("instructions", "**/CLAUDE.md"), ("instructions", "**/CLAUDE.local.md")),
 )
 
 CODEX = AgentProfile(
@@ -76,6 +88,8 @@ CODEX = AgentProfile(
         ("config", ".codex/hooks.json"),
         ("config", ".codex/rules/*.rules"),
     ),
+    ancestors=(("instructions", "AGENTS.md"), ("instructions", "AGENTS.override.md")),
+    written=(("instructions", "**/AGENTS.md"), ("instructions", "**/AGENTS.override.md")),
 )
 
 CURSOR = AgentProfile(
@@ -154,15 +168,22 @@ def short_path(source: str) -> str:
     return "~" + source[len(home):] if source.startswith(home) else source
 
 
-def _globs(profile: AgentProfile, home: Path, project: Path | None):
+# macOS and Windows file systems ignore case by default: writing claude.md replaces CLAUDE.md.
+CASELESS = sys.platform in ("darwin", "win32")
+
+
+def _globs(profile: AgentProfile, home: Path, project: Path | None, writes: bool = False):
     for kind, pattern in profile.user:
         root = home
         if os.environ.get("CLAUDE_CONFIG_DIR") and (pattern.startswith(".claude/") or pattern == ".claude.json"):
             root, pattern = claude_dir(home), pattern.removeprefix(".claude/")
         yield "user", root, kind, pattern
     if project is not None:
-        for kind, pattern in profile.project:
+        for kind, pattern in profile.project + (profile.written if writes else ()):
             yield "project", project, kind, pattern
+        for parent in Path(os.path.abspath(project)).parents:
+            for kind, name in profile.ancestors:
+                yield "project", parent, kind, name
 
 
 def discover(agents: list[str] | None = None, project: Path | None = None, home: Path | None = None) -> list[ContextFile]:
@@ -193,19 +214,35 @@ def discover_session(project: Path, agent: str) -> list[ContextFile]:
 
 def classify(path: Path, agents: list[str] | None = None, project: Path | None = None,
              home: Path | None = None) -> ContextFile | None:
-    """Return the ContextFile `path` would be, whether or not it exists yet."""
+    """Return the ContextFile `path` would be, whether or not it exists yet. A path is
+    matched as written and, failing that, as its real location, so a write through a
+    symlink counts. The file is named under `root` as given, as `discover` names it, so
+    its snapshot and history stay under one name."""
     home = home or home_dir()
-    path = Path(os.path.abspath(path))
-    for name in agents or list(PROFILES):
-        profile = PROFILES[name]
-        for scope, root, kind, pattern in _globs(profile, home, project):
-            try:
-                rel = path.relative_to(Path(os.path.abspath(root))).as_posix()
-            except ValueError:
-                continue
-            if _glob_regex(pattern).fullmatch(rel):
-                return ContextFile(profile.name, kind, scope, path)
+    written = Path(os.path.abspath(path))
+    real = Path(os.path.realpath(path))
+    for candidate in dict.fromkeys((written, real)):
+        for name in agents or list(PROFILES):
+            profile = PROFILES[name]
+            for scope, root, kind, pattern in _globs(profile, home, project, writes=True):
+                given = Path(os.path.abspath(root))
+                for base in dict.fromkeys((given, Path(os.path.realpath(root)))):
+                    rel = _relative(candidate, base)
+                    if rel is not None and _glob_regex(pattern, CASELESS).fullmatch(rel):
+                        return ContextFile(profile.name, kind, scope, given / rel if rel else given)
     return None
+
+
+def _relative(path: Path, root: Path) -> str | None:
+    """`path` relative to `root`, in `path`'s own spelling; ignoring case where the file
+    system does."""
+    parts, base = path.parts, root.parts
+    if len(parts) < len(base):
+        return None
+    head = parts[:len(base)]
+    if (tuple(p.lower() for p in head) != tuple(p.lower() for p in base)) if CASELESS else head != base:
+        return None
+    return "/".join(parts[len(base):])
 
 
 _SLUG_MAX = 200
@@ -267,7 +304,7 @@ def _is_under(path: Path, root: Path) -> bool:
 
 
 @lru_cache(maxsize=None)
-def _glob_regex(pattern: str) -> re.Pattern:
+def _glob_regex(pattern: str, caseless: bool = False) -> re.Pattern:
     out, i = "", 0
     while i < len(pattern):
         if pattern.startswith("**/", i):
@@ -282,4 +319,4 @@ def _glob_regex(pattern: str) -> re.Pattern:
         else:
             out += re.escape(pattern[i])
             i += 1
-    return re.compile(out)
+    return re.compile(out, re.IGNORECASE if caseless else 0)

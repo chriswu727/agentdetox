@@ -74,3 +74,4 @@ def _isolated_store(tmp_path, monkeypatch):
     for key in ("SUSPICIOUS", "COPIED", "CONTRADICTION"):
         monkeypatch.delenv(f"AGENTDETOX_{key}", raising=False)
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
