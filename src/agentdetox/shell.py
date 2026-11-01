@@ -22,10 +22,10 @@ _COPY_COMMANDS = {"cp", "mv", "install", "ln", "rsync"}
 _DELETE_COMMANDS = {"rm", "rmdir", "unlink", "truncate", "shred"}
 _SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "fish"}
 # Programs that run the command after them: `nice tee CLAUDE.md` writes CLAUDE.md.
+# Shell keywords and braces run what follows in the current shell.
+_KEYWORDS = {"{", "}", "!", "if", "then", "else", "elif", "do", "while", "until"}
 _WRAPPERS = {"sudo", "doas", "env", "nice", "nohup", "exec", "command", "builtin", "time", "timeout", "stdbuf",
-             "xargs", "caffeinate", "unbuffer",
-             # Shell keywords and braces run what follows in the current shell.
-             "{", "}", "!", "if", "then", "else", "elif", "do", "while", "until"}
+             "xargs", "caffeinate", "unbuffer", *_KEYWORDS}
 _INTERPRETERS = {"python", "python2", "python3", "node", "nodejs", "perl", "ruby", "php", "deno", "bun"}
 _ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _VAR = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
@@ -179,7 +179,8 @@ def _commands(tokens: list[str]) -> list[tuple[list[str], list[str], str | None,
             continue
         if tok in SEGMENT_BREAKS:
             end(tok)
-            depth += {"(": 1, ")": -1}.get(tok, 0)
+            # Never below zero: a `case` pattern or a heredoc body can close more than it opens.
+            depth = max(0, depth + {"(": 1, ")": -1}.get(tok, 0))
         else:
             words.append(tok)
         i += 1
@@ -187,46 +188,169 @@ def _commands(tokens: list[str]) -> list[tuple[list[str], list[str], str | None,
     return out
 
 
+class _Scope:
+    """What one shell level may have seen: every folder entered and every value a variable
+    was given. These only grow: a `cd` may fail, a branch may be skipped and `popd` may go
+    back anywhere earlier, so following exactly which one took effect would risk missing a
+    write. Checking every possibility can only add a question."""
+
+    def __init__(self, cwds: list[str], env: dict[str, list[str]], lost: bool = False) -> None:
+        self.cwds = cwds
+        self.env = env
+        self.lost = lost            # a folder decided at run time, or too many to follow
+
+    def copy(self) -> _Scope:
+        return _Scope(list(self.cwds), {k: list(v) for k, v in self.env.items()}, self.lost)
+
+
+UNKNOWN = "?/"   # prefix of a target whose folder is unknown; only its name can be checked
+
+
 def write_targets(tokens: list[str], depth: int = 0) -> list[str]:
     """Paths a shell command writes to or deletes: redirect and tee targets, sed -i and
     perl -i files, the destination of cp/mv, rm arguments, git checkout/restore paths,
     curl/wget output files, files named by inline interpreter code that writes, and the
-    same inside `bash -c` and `eval`. A `cd` and variables set earlier in the same command
-    are followed where the shell would keep them; anything decided at run time is not."""
+    same inside `bash -c` and `eval`. Folders entered and variables set earlier in the same
+    command are followed. A target in a folder that cannot be known in advance is returned
+    as UNKNOWN plus the path, so the caller can still judge it by name."""
     targets: list[str] = []
-    # (folder relative paths are relative to, variables) for each subshell level; a cd
-    # inside `( … )` is gone after it.
-    scopes: list[tuple[str, dict[str, str]]] = [("", {"HOME": "~"})]
+    scopes = [_Scope([""], {"HOME": ["~"]})]        # one per `( … )` level
     for words, redirects, before, after, level in _commands(tokens):
         while len(scopes) - 1 < level:
-            scopes.append((scopes[-1][0], dict(scopes[-1][1])))
+            scopes.append(scopes[-1].copy())
         del scopes[level + 1:]
-        cwd, env = scopes[-1]
-        words = [_expand(w, env) for w in words]
-        body = _unwrap(words)
+        scope = scopes[-1]
         # A cd or assignment in a pipeline or in the background runs in a subshell of its own.
         lasting = before != "|" and after not in ("|", "&")
+        body = _unwrap(words)
         found: list[str] = []
-        if body and compat.program(body[0]) == "cd":
+        if body and compat.program(body[0]) in _CHANGE_DIR:
+            if lasting and compat.program(body[0]) != "popd":     # popd returns to a folder already seen
+                arg = body[1] if len(body) > 1 else "~"
+                values = [] if arg == "-" else _expand(arg, scope.env)
+                if not values or any(v.startswith(UNKNOWN) for v in values):
+                    scope.lost = True
+                entered = [_under(cwd, v) for cwd in scope.cwds for v in values if not v.startswith(UNKNOWN)]
+                scope.cwds, overflow = _bounded(scope.cwds + entered)
+                scope.lost |= overflow
+        elif _assignments(words):
             if lasting:
-                target = body[1] if len(body) > 1 else "~"
-                scopes[-1] = (_under(cwd, target) if "$" not in target and target != "-" else cwd, env)
-        elif words and all(_ASSIGN.match(w) for w in (words[1:] if words[0] == "export" else words)):
-            if lasting:
-                env.update((w.partition("=")[0], w.partition("=")[2]) for w in words if _ASSIGN.match(w))
+                for name, value in _assignments(words):
+                    scope.env[name], overflow = _bounded(scope.env.get(name, []) + _expand(value, scope.env),
+                                                         _MAX_VALUES)
+                    if overflow:
+                        scope.env[name] = [*scope.env[name][:_MAX_VALUES - 1], UNKNOWN]
         else:
-            inner = _inner(body) if body else None
-            if inner is not None:
-                found = write_targets(split(inner), depth + 1) if depth < _MAX_DEPTH else []
-            else:
-                found = _segment_targets(body)
+            # Words are taken as written: the text of a `bash -c` script or of inline code is
+            # parsed as it is, and targets are expanded below. Only a program named by a
+            # variable needs expanding to know what it is.
+            code = _code_positions(body)
+            dynamic = bool(body) and ("$" in body[0] or compat.program(body[0]) in _OPTION_WRITERS and any(
+                _may_be_option(w, scope.env) for i, w in enumerate(body) if i and i not in code))
+            variants = [words] + (_word_variants(words, scope.env) if dynamic else [])
+            if dynamic:
+                # A program or option from a variable (`$C`, `sed $O`) may turn on writing, so
+                # any of the command's arguments may be written.
+                found += [a for i, a in enumerate(body) if i and i not in code and not a.startswith("-")]
+            for variant in variants:
+                command = _unwrap(variant)
+                inner = _inner(command) if command else None
+                if inner is not None:
+                    found += write_targets(split(inner), depth + 1) if depth < _MAX_DEPTH else []
+                elif command and command[0].startswith(UNKNOWN):
+                    # A program named at run time could be anything that writes its arguments.
+                    found += [a for a in command[1:] if not a.startswith("-")]
+                else:
+                    found += _segment_targets(command)
         # A command's own redirections are opened before it runs, in the folder it starts in.
-        targets += [_under(cwd, t) for t in [_expand(r, env) for r in redirects] + found]
-    return list(dict.fromkeys(targets))
+        for raw in redirects + found:
+            for value in _expand(raw, scope.env):
+                if value.startswith(UNKNOWN) or _relative(value) and scope.lost:
+                    targets.append(UNKNOWN + value.removeprefix(UNKNOWN))
+                if not value.startswith(UNKNOWN):
+                    targets += [_under(cwd, value) for cwd in scope.cwds]
+    return list(dict.fromkeys(t for t in targets if t != UNKNOWN))
 
 
-def _expand(word: str, env: dict[str, str]) -> str:
-    return _VAR.sub(lambda m: env.get(m.group(1) or m.group(2), m.group(0)), word)
+_CHANGE_DIR = {"cd", "pushd", "popd"}
+_MAX_CWDS = 16
+_MAX_VALUES = 8
+
+
+def _relative(path: str) -> bool:
+    return not path.startswith(("/", "~")) and not re.match(r"^[A-Za-z]:[\\/]", path)
+
+
+def _bounded(values: list[str], limit: int = _MAX_CWDS) -> tuple[list[str], bool]:
+    """At most `limit` distinct possibilities, keeping the first (where the command
+    started), and whether any had to be dropped."""
+    values = list(dict.fromkeys(values))
+    if len(values) <= limit:
+        return values, False
+    return [values[0], *values[-(limit - 1):]], True
+
+
+def _assignments(words: list[str]) -> list[tuple[str, str]]:
+    """The variables a command made only of assignments (or `export` of them) sets."""
+    while words and words[0] in _KEYWORDS:
+        words = words[1:]
+    rest = words[1:] if words[:1] == ["export"] else words
+    if not rest or not all(_ASSIGN.match(w) for w in rest):
+        return []
+    return [(w.partition("=")[0], w.partition("=")[2]) for w in rest]
+
+
+def _expand(word: str, env: dict[str, list[str]]) -> list[str]:
+    """`word` with each variable replaced by each value it may have. A variable whose value is
+    not known here (set outside the command, or too many possibilities) makes the result
+    UNKNOWN plus whatever literal path follows it, which can still be judged by name."""
+    names = list(dict.fromkeys(m.group(1) or m.group(2) for m in _VAR.finditer(word)))
+    if not names:
+        return [word]
+    unknown = [UNKNOWN + _VAR.split(word)[-1].lstrip("/")]
+    if any(n not in env for n in names):
+        return unknown
+    combos: list[dict[str, str]] = [{}]
+    for name in names:
+        combos = [{**c, name: v} for c in combos for v in env[name] if v != UNKNOWN]
+        if len(combos) > _MAX_VALUES:
+            return unknown
+    # Known values stay alongside an unknown one: an earlier `F=$TMPDIR` must not hide `F=CLAUDE.md`.
+    partly_unknown = any(UNKNOWN in env[n] for n in names)
+    return [_fill(word, c) for c in combos] + (unknown if partly_unknown else [])
+
+
+# Programs where an option alone decides whether named files are written (`sed -i`, `sort -o`).
+_OPTION_WRITERS = {"sed", "perl", "ruby", "awk", "gawk", "git", "curl", "wget", "tar", "unzip", "patch", "rsync",
+                   "cp", "mv", "ln", "install", "dd", "sort", "tee"}
+
+
+def _may_be_option(word: str, env: dict[str, list[str]]) -> bool:
+    """Whether a word with a variable in it may turn out to be an option."""
+    return "$" in word and any(v.startswith(("-", UNKNOWN)) for v in _expand(word, env))
+
+
+def _code_positions(words: list[str]) -> set[int]:
+    """Positions of inline code (`bash -c`, `python -c`, `perl -e`, `sed -e`), whose `$` is the
+    code's own, not this shell's."""
+    return {i + 1 for i, w in enumerate(words[:-1])
+            if w in ("-c", "-e", "-E", "--eval", "-r") or re.fullmatch(r"-[a-zA-Z]*e", w)}
+
+
+def _fill(word: str, values: dict[str, str]) -> str:
+    return _VAR.sub(lambda m: values[m.group(1) or m.group(2)], word)
+
+
+def _word_variants(words: list[str], env: dict[str, list[str]]) -> list[list[str]]:
+    """The command's words under each combination of variable values; past the limit, a word
+    with several possible values is treated as unknown."""
+    options = [_expand(w, env) for w in words]
+    combos: list[list[str]] = [[]]
+    for choices in options:
+        combos = [c + [o] for c in combos for o in choices]
+        if len(combos) > _MAX_VALUES:
+            return [[o[0] if len(o) == 1 else UNKNOWN + _VAR.split(w)[-1].lstrip("/") for w, o in zip(words, options)]]
+    return combos
 
 
 def _under(cwd: str, target: str) -> str:
@@ -293,6 +417,49 @@ def _interpreter_targets(name: str, args: list[str]) -> list[str]:
         skip = {i + 1 for i, a in enumerate(args) if re.fullmatch(r"-[a-zA-Z]*e", a)}
         out += [a for i, a in enumerate(args) if not a.startswith("-") and i not in skip]
     return out
+
+
+_HEREDOC = re.compile(r"(?<!<)<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+
+
+def heredocs(command: str) -> tuple[str, list[tuple[str, str]]]:
+    """The command without its heredoc bodies, and each body with the line that feeds it.
+    A body is data unless the command reading it is a shell or an interpreter."""
+    lines = command.split("\n")
+    kept: list[str] = []
+    bodies: list[tuple[str, str]] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        kept.append(line)
+        i += 1
+        for m in _HEREDOC.finditer(line):
+            body: list[str] = []
+            while i < len(lines) and lines[i].strip() != m.group(2):
+                body.append(lines[i])
+                i += 1
+            i += 1
+            bodies.append((line, "\n".join(body)))
+    return "\n".join(kept), bodies
+
+
+def heredoc_targets(bodies: list[tuple[str, str]]) -> tuple[list[str], bool]:
+    """Write targets in heredoc bodies fed to a shell, and whether such a body changes
+    AgentDetox."""
+    targets: list[str] = []
+    changes = False
+    for line, body in bodies:
+        for words, _, _, _, _ in _commands(split(line)):
+            if "<<" not in words and "<<-" not in words:
+                continue
+            command = _unwrap(words)
+            name = compat.program(command[0]) if command else ""
+            # A script fed to an interpreter is too varied to judge from its text (it may only
+            # mention CLAUDE.md); the check after the command sees what it wrote.
+            if name in _SHELLS:
+                targets += write_targets(split(body), 1)
+                changes |= changes_agentdetox(split(body), 1)
+    return targets, changes
 
 
 def resolve(target: str, project: Path) -> Path:

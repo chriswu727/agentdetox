@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import glob
 import os
 import re
@@ -239,6 +240,33 @@ def classify(path: Path, agents: list[str] | None = None, project: Path | None =
                     if rel is not None and _glob_regex(pattern, CASELESS).fullmatch(rel):
                         return ContextFile(profile.name, kind, scope, given / rel if rel else given)
     return None
+
+
+def named_like_context(rel: str) -> bool:
+    """Whether `rel`, a path relative to a folder that cannot be known in advance, could be
+    a file the agent loads: its name, and any folders given, match the end of a watched
+    pattern with a fixed file name (CLAUDE.md, settings.json, .mcp.json, …)."""
+    parts = [p for p in rel.replace("\\", "/").split("/") if p not in ("", ".")]
+    if not parts:
+        return False
+    for profile in PROFILES.values():
+        for _, pattern in profile.user + profile.project + profile.written + profile.ancestors:
+            pieces = pattern.split("/")
+            if not any(c in pieces[-1] for c in "*?[") and _ends_with(pieces, parts):
+                return True
+    return False
+
+
+def _ends_with(pattern: list[str], parts: list[str]) -> bool:
+    i, j = len(pattern) - 1, len(parts) - 1
+    while i >= 0 and j >= 0:
+        if pattern[i] == "**":
+            return True
+        name, glob_ = (parts[j].lower(), pattern[i].lower()) if CASELESS else (parts[j], pattern[i])
+        if parts[j] != ".." and not fnmatch.fnmatchcase(name, glob_):
+            return False
+        i, j = i - 1, j - 1
+    return True
 
 
 def _relative(path: Path, root: Path) -> str | None:

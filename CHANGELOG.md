@@ -7,6 +7,10 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ### Security
 
+- The shell check no longer assumes a `cd` succeeded or an assignment ran: every folder entered and
+  every value given earlier in the command is checked, and a write into a folder known only at run
+  time is judged by its file name. A heredoc or `case` with unbalanced parentheses no longer makes
+  the check fail (and so let the command through).
 - More shell writes are stopped before they run: commands inside `bash -c`, `sh -c` and `eval`;
   behind `nice`, `timeout`, `xargs`, `env` or `sudo`; after a `cd` or with a variable set earlier
   in the same command; `${HOME}` and globs; `git checkout -- <file>` and `git restore`; `curl -o`

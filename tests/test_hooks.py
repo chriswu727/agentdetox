@@ -708,6 +708,38 @@ def test_a_contradiction_is_attached_only_to_the_version_that_was_checked(env, m
     ("if cd .claude; then echo '{}' > settings.json; fi", "ask"),
     ("{ cd .claude; }; echo '{}' > settings.json", "ask"),
     ("export F=CLAUDE.md; echo note >> $F", "ask"),
+    ("true || cd /tmp; echo '{}' > .claude/settings.json", "ask"),     # a skipped cd moves nothing
+    ("cd /nonexistent; echo '{}' > .claude/settings.json", "ask"),     # nor a failed one
+    ("false && HOME=/tmp; echo '{}' > $HOME/.claude/settings.json", "ask"),
+    ("cd .claude || echo '{}' > settings.json", "ask"),                # every folder entered counts
+    ("cd .claude || true && echo x > settings.json", "ask"),
+    ("cd .claude && pushd /tmp && popd && echo x > settings.json", "ask"),
+    ("A=ordinary; true && A=.claude; B=1; false && B=2; false && B=3; false && B=4; false && B=5; "
+     "false && B=6; false && B=7; false && B=8; false && B=9; echo \"$B\" > $A/settings.json", "ask"),
+    ('cd "$(git rev-parse --show-toplevel)" && echo x > CLAUDE.md', "ask"),   # folder unknown: judged by name
+    ('cd "$(git rev-parse --show-toplevel)" && echo x > notes.md', "allow"),
+    ("echo x > $TMPDIR/out.txt", "allow"),
+    ("cp notes.md $DEST/CLAUDE.md", "ask"),
+    ("C=tee; echo x | $C CLAUDE.md", "ask"),
+    ("bash -c 'echo x > CLAUDE.md; echo $USER'", "ask"),
+    ("perl -i -pe 's/$x/y/' CLAUDE.md", "ask"),
+    ("sudo $TOOL CLAUDE.md", "ask"),
+    ("F=$TMPDIR; F=CLAUDE.md; echo x > $F", "ask"),
+    ("O=-i; sed $O 's/x/y/' CLAUDE.md", "ask"),
+    ("sed -e 's/$x/y/' CLAUDE.md", "allow"),          # $x belongs to sed's script; no -i, no write
+    ("grep -n \"$PATTERN\" src/app.py", "allow"),
+    ("F=.claude/settings.json; ls -la \"$F\"", "allow"),
+    ("cat >> notes.txt <<'EOF'\nsettings.json $F CLAUDE.md\nEOF", "allow"),          # a heredoc body is data
+    ("bash <<'EOF'\necho x > CLAUDE.md\nEOF", "ask"),                                # unless a shell reads it
+    ("python3 - <<'EOF'\nPath('notes.txt').write_text('see CLAUDE.md')\nEOF", "allow"),  # scripts: checked after
+    ("sh <<'EOF'\nagentdetox allow 0123456789\nEOF", "ask"),
+    ("echo x | $EDITOR_TOOL CLAUDE.md", "ask"),
+    ("A=.claude; AB=settings.json; echo x > $A/$AB", "ask"),
+    ("$BUILD_TOOL --out dist", "allow"),
+    ('F=.claude; cd "$F" && echo x > settings.json', "ask"),
+    ("F=.claude/settings.json; G=$F; echo x > $G", "ask"),
+    ("pushd .claude && echo x > settings.json", "ask"),
+    ("pushd /tmp && popd && echo '{}' > .claude/settings.json", "ask"),
 ])
 def test_more_shell_forms_that_write_context(env, command, expected):
     _, project, _ = env
@@ -743,12 +775,38 @@ def test_many_cds_in_one_command_stay_fast(env):
     assert time.monotonic() - started < 2
 
 
-def test_a_cd_elsewhere_moves_the_write_out_of_the_project(env):
+def test_a_write_after_a_cd_elsewhere_is_checked_in_both_folders(env):
+    # The cd may fail, so the starting folder's CLAUDE.md counts too: an extra question at
+    # worst. A write that names only the other folder's files passes.
     _, project, _ = env
-    other = project.parent / "other"     # a sibling: its CLAUDE.md is not one the agent loads
+    other = project.parent / "other"
     other.mkdir()
     command = f"cd {other.as_posix()} && echo note > CLAUDE.md"
+    assert decision(pre("claude-code", project, "Bash", {"command": command})) == "ask"
+    command = f"cd {other.as_posix()} && echo note > notes.txt"
     assert decision(pre("claude-code", project, "Bash", {"command": command})) == "allow"
+
+
+def test_the_last_cd_of_a_chain_is_kept_after_it(env):
+    _, project, _ = env
+    (project / ".claude").mkdir(exist_ok=True)
+    command = f"cd /tmp && cd {(project / '.claude').as_posix()}; echo x > settings.json"
+    assert decision(pre("claude-code", project, "Bash", {"command": command})) == "ask"
+
+
+def test_an_assignment_inside_an_if_counts(env):
+    _, project, _ = env
+    command = "A=notes; if true; then A=.claude; fi; echo '{}' > $A/settings.json"
+    assert decision(pre("claude-code", project, "Bash", {"command": command})) == "ask"
+
+
+@pytest.mark.parametrize("command", [
+    "case $1 in start) echo x > .claude/settings.json;; esac",
+    "python3 - <<'EOF'\nprint(f(x))) )\nEOF\necho '{}' > .claude/settings.json",
+])
+def test_unbalanced_parentheses_do_not_break_the_check(env, command):
+    _, project, _ = env
+    assert decision(pre("claude-code", project, "Bash", {"command": command})) == "ask"
 
 
 def test_the_review_list_says_who_changed_what_and_the_worst_finding(env):
