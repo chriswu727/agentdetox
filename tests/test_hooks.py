@@ -711,7 +711,15 @@ def test_a_contradiction_is_attached_only_to_the_version_that_was_checked(env, m
     ("true || cd /tmp; echo '{}' > .claude/settings.json", "ask"),     # a skipped cd moves nothing
     ("cd /nonexistent; echo '{}' > .claude/settings.json", "ask"),     # nor a failed one
     ("false && HOME=/tmp; echo '{}' > $HOME/.claude/settings.json", "ask"),
-    ("cd .claude || echo '{}' > settings.json", "allow"),              # runs only if the cd failed
+    ("cd .claude || echo '{}' > settings.json", "ask"),                # every folder entered counts
+    ("cd .claude || true && echo x > settings.json", "ask"),
+    ("cd .claude && pushd /tmp && popd && echo x > settings.json", "ask"),
+    ("A=ordinary; true && A=.claude; B=1; false && B=2; false && B=3; false && B=4; false && B=5; "
+     "false && B=6; false && B=7; false && B=8; false && B=9; echo \"$B\" > $A/settings.json", "ask"),
+    ('cd "$(git rev-parse --show-toplevel)" && echo x > CLAUDE.md', "ask"),   # folder unknown: judged by name
+    ('cd "$(git rev-parse --show-toplevel)" && echo x > notes.md', "allow"),
+    ("echo x > $TMPDIR/out.txt", "allow"),
+    ("cp notes.md $DEST/CLAUDE.md", "ask"),
     ('F=.claude; cd "$F" && echo x > settings.json', "ask"),
     ("F=.claude/settings.json; G=$F; echo x > $G", "ask"),
     ("pushd .claude && echo x > settings.json", "ask"),
@@ -751,11 +759,15 @@ def test_many_cds_in_one_command_stay_fast(env):
     assert time.monotonic() - started < 2
 
 
-def test_a_cd_elsewhere_moves_the_write_out_of_the_project(env):
+def test_a_write_after_a_cd_elsewhere_is_checked_in_both_folders(env):
+    # The cd may fail, so the starting folder's CLAUDE.md counts too: an extra question at
+    # worst. A write that names only the other folder's files passes.
     _, project, _ = env
-    other = project.parent / "other"     # a sibling: its CLAUDE.md is not one the agent loads
+    other = project.parent / "other"
     other.mkdir()
     command = f"cd {other.as_posix()} && echo note > CLAUDE.md"
+    assert decision(pre("claude-code", project, "Bash", {"command": command})) == "ask"
+    command = f"cd {other.as_posix()} && echo note > notes.txt"
     assert decision(pre("claude-code", project, "Bash", {"command": command})) == "allow"
 
 
@@ -763,4 +775,19 @@ def test_the_last_cd_of_a_chain_is_kept_after_it(env):
     _, project, _ = env
     (project / ".claude").mkdir(exist_ok=True)
     command = f"cd /tmp && cd {(project / '.claude').as_posix()}; echo x > settings.json"
+    assert decision(pre("claude-code", project, "Bash", {"command": command})) == "ask"
+
+
+def test_an_assignment_inside_an_if_counts(env):
+    _, project, _ = env
+    command = "A=notes; if true; then A=.claude; fi; echo '{}' > $A/settings.json"
+    assert decision(pre("claude-code", project, "Bash", {"command": command})) == "ask"
+
+
+@pytest.mark.parametrize("command", [
+    "case $1 in start) echo x > .claude/settings.json;; esac",
+    "python3 - <<'EOF'\nprint(f(x))) )\nEOF\necho '{}' > .claude/settings.json",
+])
+def test_unbalanced_parentheses_do_not_break_the_check(env, command):
+    _, project, _ = env
     assert decision(pre("claude-code", project, "Bash", {"command": command})) == "ask"
