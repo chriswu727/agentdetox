@@ -22,7 +22,7 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 from . import storage
-from .integrity import StoreError, object_text, store_dir, store_object
+from .integrity import object_text, store_dir, store_object
 
 # Blame labels for lines no recorded change explains.
 EARLIER = "earlier"          # there before the first recorded change
@@ -75,25 +75,19 @@ def ledger_path() -> Path:
 
 def record(path: Path | str, origin: str, before: str | None, after: bytes | None, findings=None, **fields) -> Entry | None:
     """Append a change atomically; failures propagate to the fail-open hook boundary."""
-    try:
-        with storage.connection(write=True) as db:
-            entry = Entry(time.strftime("%Y-%m-%dT%H:%M:%S"), str(path), origin, before,
-                          store_object(after) if after is not None else None, **fields)
-            entry.actor = entry.actor or {"you": "agent", "copied": "agent"}.get(origin, origin)
-            entry.id = storage.append_change(db, asdict(entry))
-            if findings:
-                from .findings import finding_id
-                for finding in findings:
-                    db.execute(_FINDING_UPSERT,
-                               (entry.id, finding_id(finding), finding.severity, finding.message, 'pending'))
-                if any(f.severity in ('high', 'medium') for f in findings):
-                    db.execute("UPDATE changes SET review_state='pending' WHERE id=?", (entry.id,))
-            return entry
-    except (OSError, StoreError):
-        from . import events
-
-        events.record("hook_error", stage="ledger", error="recording failed")
-        raise
+    with storage.connection(write=True) as db:
+        entry = Entry(time.strftime("%Y-%m-%dT%H:%M:%S"), str(path), origin, before,
+                      store_object(after) if after is not None else None, **fields)
+        entry.actor = entry.actor or {"you": "agent", "copied": "agent"}.get(origin, origin)
+        entry.id = storage.append_change(db, asdict(entry))
+        if findings:
+            from .findings import finding_id
+            for finding in findings:
+                db.execute(_FINDING_UPSERT,
+                           (entry.id, finding_id(finding), finding.severity, finding.message, 'pending'))
+            if any(f.severity in ('high', 'medium') for f in findings):
+                db.execute("UPDATE changes SET review_state='pending' WHERE id=?", (entry.id,))
+        return entry
 
 
 def entries(path: str | None = None, limit: int | None = None) -> list[Entry]:

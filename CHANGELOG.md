@@ -39,6 +39,11 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ### Fixed
 
+- Codex `apply_patch` writes are recorded after they are applied, instead of appearing as changes
+  made outside the agent at the next session.
+- `python -m agentdetox.cli review` and the other review commands no longer fail with `NameError`.
+- A store write requested inside a read-only connection fails at once with a clear error, and an
+  event logged there is kept instead of lost.
 - Diff-like `++` content no longer escapes write and observation checks.
 - A quoted attack example no longer hides a later active instruction matched by the same rule.
 - Negated, quoted and recollected remember phrases no longer automatically exempt copied writes;

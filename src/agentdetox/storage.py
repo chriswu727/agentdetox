@@ -11,7 +11,8 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
-_ACTIVE: ContextVar[tuple[Path, sqlite3.Connection] | None] = ContextVar('agentdetox_database', default=None)
+# (database, connection, writable) of the connection open in this context, reused by nested calls.
+_ACTIVE: ContextVar[tuple[Path, sqlite3.Connection, bool] | None] = ContextVar('agentdetox_database', default=None)
 VERSION = 2
 _SCHEMA = (
     'CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
@@ -55,6 +56,10 @@ def connection(*, write: bool = False, seed: dict | None = None):
 
     active = _ACTIVE.get()
     if active and active[0] == path():
+        if write and not active[2]:
+            # Reusing the read-only connection would fail at the first write, after the caller
+            # has done its work; say so at once instead.
+            raise StoreError('a store write was requested inside a read-only connection')
         yield active[1]
         return
     with store_lock() if write else contextlib.nullcontext():
@@ -91,7 +96,7 @@ def connection(*, write: bool = False, seed: dict | None = None):
                     db.commit()
             if write:
                 db.execute('BEGIN IMMEDIATE')
-            token = _ACTIVE.set((path(), db))
+            token = _ACTIVE.set((path(), db, write))
             yield db
             if write:
                 db.commit()

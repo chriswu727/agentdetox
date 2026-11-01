@@ -74,6 +74,9 @@ class Adapter:
     def written(self, payload: dict, project: Path) -> list[Path]:
         """Files a finished tool call wrote."""
         tool_input = payload.get("tool_input") or {}
+        patch = next((v for v in tool_input.values() if isinstance(v, str) and "*** Begin Patch" in v), None)
+        if patch is not None:
+            return [w.path for w in _patch_writes(patch, project)]
         paths = [Path(p) for p in (tool_input.get("file_path"), tool_input.get("path"), payload.get("file_path")) if p]
         return [p if p.is_absolute() else project / p for p in paths]
 
