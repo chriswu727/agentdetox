@@ -575,3 +575,27 @@ def test_agent_restore_is_journalled_recorded_and_idempotent(env, capsys):
     assert ledger.entries(str(path), limit=1)[0].origin == "restored"
     assert main(["agent", "restore", str(path)]) == 0
     assert "already the last trusted version" in capsys.readouterr().out
+
+
+def test_an_agent_restore_of_an_unseen_change_can_itself_be_reviewed_and_undone(env, capsys):
+    from agentdetox import ledger, review
+    _, project, mem = env
+    session("claude-code", project)
+    path = mem / "MEMORY.md"
+    tampered = path.read_text(encoding="utf-8") + POISON + "\n"
+    path.write_text(tampered, encoding="utf-8")       # no hook or session has seen this yet
+    assert main(["agent", "restore", str(path)]) == 0
+    change = f"C{ledger.entries(str(path), limit=1)[0].id}"
+    assert "Missing" not in review.detail(change)
+    review.restore(change, apply=True)
+    assert path.read_text(encoding="utf-8") == tampered
+
+
+@posix_only
+def test_agent_restore_puts_back_changed_permissions(env, capsys):
+    home, project, _ = env
+    session("claude-code", project)
+    settings = home / ".claude/settings.json"
+    os.chmod(settings, 0o666)
+    assert main(["agent", "restore", str(settings)]) == 0
+    assert stat.S_IMODE(settings.stat().st_mode) != 0o666

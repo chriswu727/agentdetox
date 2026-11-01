@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import time
 import uuid
 from collections import Counter
@@ -254,10 +255,14 @@ def restore_trusted(path: Path) -> str:
         if path.is_symlink():
             raise StoreError(f'Cannot restore a symbolic link: {path}')
         current = _digest(path) if path.exists() else None
+        mode = entry.get('mode', 0o600)
         if current == entry['sha256']:
+            if os.name != 'nt' and stat.S_IMODE(path.stat().st_mode) != mode & 0o777:
+                os.chmod(path, mode & 0o777)
+                return f'Put back the permissions of {short_path(str(path))}; its content is the last trusted version.'
             return f'{short_path(str(path))} is already the last trusted version.'
         residual, warning = _residual(path, entry['sha256'])
-        backup = _recover(path, entry['sha256'], current, entry.get('mode', 0o600), residual, None)
+        backup = _recover(path, entry['sha256'], current, mode, residual, None)
         return (f'Restored {short_path(str(path))}'
                 + (f' (previous version quarantined at {backup})' if backup else '') + '.' + warning)
 
@@ -287,8 +292,11 @@ def _recover(path: Path, target_hash: str | None, current_hash: str | None, mode
     backup = None
     data: bytes | None = None
     try:
-        if (_digest(path) if path.exists() else None) != current_hash:
+        original = path.read_bytes() if path.exists() else None
+        if (hashlib.sha256(original).hexdigest() if original is not None else None) != current_hash:
             raise StoreError('The file changed since it was checked; review it again')
+        if original is not None:
+            store_object(original)  # the recovery's own record must be reviewable and undoable
         if target_hash is not None:
             backup = restore_object(path, target_hash, mode, current_hash, backup_path.parent)
         elif path.exists():
