@@ -42,6 +42,9 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ### Fixed
 
+- The newest known version of a file is taken from the order changes were recorded, not by
+  comparing local timestamps, so a clock change (daylight saving, travel) cannot make AgentDetox
+  credit the agent with a change made outside it, or the reverse.
 - Codex `apply_patch` writes are recorded after they are applied, instead of appearing as changes
   made outside the agent at the next session.
 - `python -m agentdetox.cli review` and the other review commands no longer fail with `NameError`.
