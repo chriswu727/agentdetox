@@ -141,12 +141,17 @@ class StoreError(RuntimeError):
     whatever is on disk now, tampered files included, so this is reported instead."""
 
 
+class StoreLocked(StoreError, TimeoutError):
+    """Another process held the store lock too long. Holding it on purpose is a way to blind
+    AgentDetox, so this is reported like a damaged store, not passed over."""
+
+
 _LOCK = threading.RLock()
 _lock_depth = 0
 
 
 @contextlib.contextmanager
-def store_lock(timeout: float = LOCK_TIMEOUT):
+def store_lock(timeout: float | None = None):
     """Serialise read-modify-write of the store across hooks, the model server and the
     CLI; parallel tool calls otherwise lose each other's snapshot entries. Re-entrant
     within a process (flock on a second descriptor would wait for ourselves)."""
@@ -161,10 +166,10 @@ def store_lock(timeout: float = LOCK_TIMEOUT):
             return
         fd = os.open(private_dir(store_dir()) / "store.lock", os.O_RDWR | os.O_CREAT, 0o600)
         try:
-            deadline = time.monotonic() + timeout
+            deadline = time.monotonic() + (LOCK_TIMEOUT if timeout is None else timeout)
             while not try_lock(fd):
                 if time.monotonic() > deadline:
-                    raise TimeoutError(f"{store_dir()} is locked by another process")
+                    raise StoreLocked(f"{store_dir()} is locked by another process")
                 time.sleep(0.01)
             _lock_depth = 1
             try:

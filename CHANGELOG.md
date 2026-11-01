@@ -24,6 +24,9 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
   name cannot add a fake line to AgentDetox's notice or hide text from a reviewer.
 - When a shell tool writes content that a rule flags, the immediate notice says so and tells the
   agent not to follow it, instead of the neutral "writing process unknown" message.
+- A process holding AgentDetox's store lock no longer lets writes through unchecked: the content
+  check still runs when the bookkeeping before a write times out, and session start reports that
+  the store is locked instead of saying nothing.
 
 ### Added
 
