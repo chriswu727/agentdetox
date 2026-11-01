@@ -712,6 +712,10 @@ def test_a_contradiction_is_attached_only_to_the_version_that_was_checked(env, m
     ("cd /nonexistent; echo '{}' > .claude/settings.json", "ask"),     # nor a failed one
     ("false && HOME=/tmp; echo '{}' > $HOME/.claude/settings.json", "ask"),
     ("cd .claude || echo '{}' > settings.json", "allow"),              # runs only if the cd failed
+    ('F=.claude; cd "$F" && echo x > settings.json', "ask"),
+    ("F=.claude/settings.json; G=$F; echo x > $G", "ask"),
+    ("pushd .claude && echo x > settings.json", "ask"),
+    ("pushd /tmp && popd && echo '{}' > .claude/settings.json", "ask"),
 ])
 def test_more_shell_forms_that_write_context(env, command, expected):
     _, project, _ = env
@@ -753,3 +757,10 @@ def test_a_cd_elsewhere_moves_the_write_out_of_the_project(env):
     other.mkdir()
     command = f"cd {other.as_posix()} && echo note > CLAUDE.md"
     assert decision(pre("claude-code", project, "Bash", {"command": command})) == "allow"
+
+
+def test_the_last_cd_of_a_chain_is_kept_after_it(env):
+    _, project, _ = env
+    (project / ".claude").mkdir(exist_ok=True)
+    command = f"cd /tmp && cd {(project / '.claude').as_posix()}; echo x > settings.json"
+    assert decision(pre("claude-code", project, "Bash", {"command": command})) == "ask"

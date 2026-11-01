@@ -216,14 +216,22 @@ def write_targets(tokens: list[str], depth: int = 0) -> list[str]:
         del scopes[level + 1:]
         scope = scopes[-1]
         if before in (None, ";", "\n", "&", "(", ")") and scope.after_chain is not None:
-            scope.cwds, scope.after_chain = scope.after_chain, None
+            # The chain is over: it may have stopped early or run to the end.
+            scope.cwds, scope.after_chain = _bounded(scope.after_chain + scope.cwds), None
         # A cd or assignment in a pipeline or in the background runs in a subshell of its own.
         lasting = before != "|" and after not in ("|", "&")
+        cd_targets: list[str] = []
+        assigned: dict[str, list[str]] = {}
         for variant in _variants(words + redirects, scope.env):
             words_now, redirects_now = variant[:len(words)], variant[len(words):]
             body = _unwrap(words_now)
             found: list[str] = []
-            if not (body and compat.program(body[0]) == "cd") and not _assignments(words_now):
+            if body and compat.program(body[0]) in _CHANGE_DIR:
+                # popd goes back somewhere earlier in the command: the starting folder covers it.
+                cd_targets.append("" if compat.program(body[0]) == "popd" else body[1] if len(body) > 1 else "~")
+            for name, value in _assignments(words_now):      # values as expanded now, not at use
+                assigned.setdefault(name, []).append(value)
+            if not (body and compat.program(body[0]) in _CHANGE_DIR) and not _assignments(words_now):
                 inner = _inner(body) if body else None
                 if inner is not None:
                     found = write_targets(split(inner), depth + 1) if depth < _MAX_DEPTH else []
@@ -231,23 +239,24 @@ def write_targets(tokens: list[str], depth: int = 0) -> list[str]:
                     found = _segment_targets(body)
             # A command's own redirections are opened before it runs, in the folder it starts in.
             targets += [_under(cwd, t) for cwd in scope.cwds for t in redirects_now + found]
-        body = _unwrap(words)
-        if lasting and body and compat.program(body[0]) == "cd":
-            target = body[1] if len(body) > 1 else "~"
-            new = [_under(cwd, target) for cwd in scope.cwds] if "$" not in target and target != "-" else []
+        if lasting and cd_targets:
+            new = [(_under(cwd, target) if target else "") for cwd in scope.cwds for target in dict.fromkeys(cd_targets)
+                   if "$" not in target and target != "-"]
             if after in ("&&", "||"):
                 scope.after_chain = _bounded((scope.after_chain or scope.cwds) + new)
                 if after == "&&":
                     scope.cwds = new or scope.cwds
             else:
                 scope.cwds = _bounded(scope.cwds + new)
-        elif lasting and _assignments(words):
-            for name, value in _assignments(words):
+        elif lasting and assigned:
+            for name, values in assigned.items():
                 certain = before not in ("&&", "||")
-                scope.env[name] = [value] if certain else _bounded(scope.env.get(name, ["$" + name]) + [value], 8)
+                scope.env[name] = (_bounded(values, _MAX_VARIANTS) if certain
+                                   else _bounded(scope.env.get(name, ["$" + name]) + values, _MAX_VARIANTS))
     return list(dict.fromkeys(targets))
 
 
+_CHANGE_DIR = {"cd", "pushd", "popd"}
 _MAX_CWDS = 16
 _MAX_VARIANTS = 8
 
