@@ -42,6 +42,10 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ### Added
 
+- The review list shows, for each file, who made its latest change (the agent, copied from a named
+  source, outside the agent, or during a shell command), how many lines it added and removed, and
+  its most serious open finding. Long memory-folder paths are shortened as in `agent log`. The
+  same fields are in `--format json`.
 - Immediate review of scoped context changes across successful or failed shell tools, with terminal notices,
   transactional start-state capture, parallel-call isolation and unknown-process attribution.
 - Project-scoped review with file grouping, literal path/finding search and pagination beyond 200 changes.

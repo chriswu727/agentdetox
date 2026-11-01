@@ -171,6 +171,12 @@ def short_path(source: str) -> str:
     return printable("~" + source[len(home):] if source.startswith(home) else source)
 
 
+def display_path(path: str) -> str:
+    """short_path for lists. Claude Code names memory folders after the whole project path;
+    their ends, where the project's own name is, are kept."""
+    return os.sep.join(p if len(p) <= 40 else "…" + p[-28:] for p in short_path(path).split(os.sep))
+
+
 # macOS and Windows file systems ignore case by default: writing claude.md replaces CLAUDE.md.
 CASELESS = sys.platform in ("darwin", "win32")
 
