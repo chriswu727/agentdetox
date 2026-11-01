@@ -724,6 +724,15 @@ def test_a_contradiction_is_attached_only_to_the_version_that_was_checked(env, m
     ("bash -c 'echo x > CLAUDE.md; echo $USER'", "ask"),
     ("perl -i -pe 's/$x/y/' CLAUDE.md", "ask"),
     ("sudo $TOOL CLAUDE.md", "ask"),
+    ("F=$TMPDIR; F=CLAUDE.md; echo x > $F", "ask"),
+    ("O=-i; sed $O 's/x/y/' CLAUDE.md", "ask"),
+    ("sed -e 's/$x/y/' CLAUDE.md", "allow"),          # $x belongs to sed's script; no -i, no write
+    ("grep -n \"$PATTERN\" src/app.py", "allow"),
+    ("F=.claude/settings.json; ls -la \"$F\"", "allow"),
+    ("cat >> notes.txt <<'EOF'\nsettings.json $F CLAUDE.md\nEOF", "allow"),          # a heredoc body is data
+    ("bash <<'EOF'\necho x > CLAUDE.md\nEOF", "ask"),                                # unless a shell reads it
+    ("python3 - <<'EOF'\nPath('notes.txt').write_text('see CLAUDE.md')\nEOF", "allow"),  # scripts: checked after
+    ("sh <<'EOF'\nagentdetox allow 0123456789\nEOF", "ask"),
     ("echo x | $EDITOR_TOOL CLAUDE.md", "ask"),
     ("A=.claude; AB=settings.json; echo x > $A/$AB", "ask"),
     ("$BUILD_TOOL --out dist", "allow"),

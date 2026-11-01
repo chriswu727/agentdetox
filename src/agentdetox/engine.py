@@ -117,8 +117,10 @@ def check_command(command: str, project: Path, cwd: Path | None = None) -> list[
     """What is wrong with a shell command the agent is about to run in `cwd` (by default
     the project root)."""
     cwd = cwd or project
-    tokens = shell.split(command)
-    targets = shell.write_targets(tokens)
+    command_only, bodies = shell.heredocs(command)
+    tokens = shell.split(command_only)
+    fed, fed_changes = shell.heredoc_targets(bodies)
+    targets = shell.write_targets(tokens) + fed
     # A target in a folder only known at run time is judged by its name alone.
     context = [t for t in targets if named_like_context(t[len(shell.UNKNOWN):]) if t.startswith(shell.UNKNOWN)]
     targets = [t for t in targets if not t.startswith(shell.UNKNOWN)]
@@ -129,7 +131,8 @@ def check_command(command: str, project: Path, cwd: Path | None = None) -> list[
             return [Signal(PLANTED, "AgentDetox: shell command writes to agent context and "
                                     + printable("; ".join(sorted({f.message for f in findings}))) + ".",
                            [finding_flag(f) for f in findings if f.severity == "high"])]
-    if any(is_own_state(p) for t in targets for p in shell.resolve_all(t, cwd)) or shell.changes_agentdetox(tokens):
+    if (any(is_own_state(p) for t in targets if not t.startswith(shell.UNKNOWN) for p in shell.resolve_all(t, cwd))
+            or shell.changes_agentdetox(tokens) or fed_changes):
         return [Signal(OWN_STATE, "AgentDetox: this command changes AgentDetox's own settings, allowlist or snapshots.")]
     if context:
         return [Signal(SHELL_WRITE, "AgentDetox: this shell command writes to or deletes the agent's memory, rules or "

@@ -244,7 +244,14 @@ def write_targets(tokens: list[str], depth: int = 0) -> list[str]:
             # Words are taken as written: the text of a `bash -c` script or of inline code is
             # parsed as it is, and targets are expanded below. Only a program named by a
             # variable needs expanding to know what it is.
-            variants = _word_variants(words, scope.env) if body and "$" in body[0] else [words]
+            code = _code_positions(body)
+            dynamic = bool(body) and ("$" in body[0] or compat.program(body[0]) in _OPTION_WRITERS and any(
+                _may_be_option(w, scope.env) for i, w in enumerate(body) if i and i not in code))
+            variants = [words] + (_word_variants(words, scope.env) if dynamic else [])
+            if dynamic:
+                # A program or option from a variable (`$C`, `sed $O`) may turn on writing, so
+                # any of the command's arguments may be written.
+                found += [a for i, a in enumerate(body) if i and i not in code and not a.startswith("-")]
             for variant in variants:
                 command = _unwrap(variant)
                 inner = _inner(command) if command else None
@@ -301,14 +308,33 @@ def _expand(word: str, env: dict[str, list[str]]) -> list[str]:
     if not names:
         return [word]
     unknown = [UNKNOWN + _VAR.split(word)[-1].lstrip("/")]
-    if any(n not in env or UNKNOWN in env[n] for n in names):
+    if any(n not in env for n in names):
         return unknown
     combos: list[dict[str, str]] = [{}]
     for name in names:
-        combos = [{**c, name: v} for c in combos for v in env[name]]
+        combos = [{**c, name: v} for c in combos for v in env[name] if v != UNKNOWN]
         if len(combos) > _MAX_VALUES:
             return unknown
-    return [_fill(word, c) for c in combos]
+    # Known values stay alongside an unknown one: an earlier `F=$TMPDIR` must not hide `F=CLAUDE.md`.
+    partly_unknown = any(UNKNOWN in env[n] for n in names)
+    return [_fill(word, c) for c in combos] + (unknown if partly_unknown else [])
+
+
+# Programs where an option alone decides whether named files are written (`sed -i`, `sort -o`).
+_OPTION_WRITERS = {"sed", "perl", "ruby", "awk", "gawk", "git", "curl", "wget", "tar", "unzip", "patch", "rsync",
+                   "cp", "mv", "ln", "install", "dd", "sort", "tee"}
+
+
+def _may_be_option(word: str, env: dict[str, list[str]]) -> bool:
+    """Whether a word with a variable in it may turn out to be an option."""
+    return "$" in word and any(v.startswith(("-", UNKNOWN)) for v in _expand(word, env))
+
+
+def _code_positions(words: list[str]) -> set[int]:
+    """Positions of inline code (`bash -c`, `python -c`, `perl -e`, `sed -e`), whose `$` is the
+    code's own, not this shell's."""
+    return {i + 1 for i, w in enumerate(words[:-1])
+            if w in ("-c", "-e", "-E", "--eval", "-r") or re.fullmatch(r"-[a-zA-Z]*e", w)}
 
 
 def _fill(word: str, values: dict[str, str]) -> str:
@@ -391,6 +417,49 @@ def _interpreter_targets(name: str, args: list[str]) -> list[str]:
         skip = {i + 1 for i, a in enumerate(args) if re.fullmatch(r"-[a-zA-Z]*e", a)}
         out += [a for i, a in enumerate(args) if not a.startswith("-") and i not in skip]
     return out
+
+
+_HEREDOC = re.compile(r"(?<!<)<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+
+
+def heredocs(command: str) -> tuple[str, list[tuple[str, str]]]:
+    """The command without its heredoc bodies, and each body with the line that feeds it.
+    A body is data unless the command reading it is a shell or an interpreter."""
+    lines = command.split("\n")
+    kept: list[str] = []
+    bodies: list[tuple[str, str]] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        kept.append(line)
+        i += 1
+        for m in _HEREDOC.finditer(line):
+            body: list[str] = []
+            while i < len(lines) and lines[i].strip() != m.group(2):
+                body.append(lines[i])
+                i += 1
+            i += 1
+            bodies.append((line, "\n".join(body)))
+    return "\n".join(kept), bodies
+
+
+def heredoc_targets(bodies: list[tuple[str, str]]) -> tuple[list[str], bool]:
+    """Write targets in heredoc bodies fed to a shell, and whether such a body changes
+    AgentDetox."""
+    targets: list[str] = []
+    changes = False
+    for line, body in bodies:
+        for words, _, _, _, _ in _commands(split(line)):
+            if "<<" not in words and "<<-" not in words:
+                continue
+            command = _unwrap(words)
+            name = compat.program(command[0]) if command else ""
+            # A script fed to an interpreter is too varied to judge from its text (it may only
+            # mention CLAUDE.md); the check after the command sees what it wrote.
+            if name in _SHELLS:
+                targets += write_targets(split(body), 1)
+                changes |= changes_agentdetox(split(body), 1)
+    return targets, changes
 
 
 def resolve(target: str, project: Path) -> Path:
