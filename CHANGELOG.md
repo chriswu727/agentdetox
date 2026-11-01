@@ -21,6 +21,7 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 - Negated, quoted and recollected remember phrases no longer automatically exempt copied writes;
   later explicit revocation overrides an earlier save request.
 - Findings sharing an anchor retain the highest observed severity.
+- `doctor` run from the home folder no longer reports the same settings file twice.
 - Review-based recovery warns about residual rule findings, retains them for review and does not
   advance the safe checkpoint to a version with unsuppressed high findings.
 

@@ -55,10 +55,13 @@ def run(project: Path) -> list[Check]:
 def _claude_code_hooks(project: Path) -> list[Check]:
     found = []
     in_settings = False
+    seen = set()
     for scope in ("user", "project"):
         path = default_settings_path("claude-code", scope, project)
-        if not path.exists():
+        # In the home folder the project's settings are the user's settings.
+        if not path.exists() or path.resolve() in seen:
             continue
+        seen.add(path.resolve())
         try:
             settings = json.loads(path.read_text(encoding="utf-8"))
         except ValueError:

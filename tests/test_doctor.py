@@ -37,6 +37,15 @@ def test_installed_and_current(env, capsys, monkeypatch):
     assert "hooks installed and current" in out and "file(s) tracked" in out
 
 
+def test_run_from_the_home_folder_reports_the_settings_once(env, capsys):
+    home, project = env
+    main(["install", "claude-code", "--project", str(project), "--apply"])
+    capsys.readouterr()
+    code, out = doctor(capsys, home)
+    assert code == 0, out
+    assert out.count("hooks installed and current") == 1
+
+
 def test_user_hooks_around_ours_do_not_look_outdated(env, capsys):
     home, project = env
     main(["install", "claude-code", "--project", str(project), "--apply"])
