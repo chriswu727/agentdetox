@@ -46,16 +46,16 @@ reference-machine measurements; the older five-case 0.3.0 report remains a separ
 
 100 samples per case, same machine and method, NLI off. Raw report:
 [results/hooks-2026-11-01.json](results/hooks-2026-11-01.json). Session start no longer re-stores
-files whose trusted version is unchanged, so it is faster than in 0.3.0 despite watching more files
-and re-checking each version before trusting it. The shell check parses more forms at no measurable
-cost.
+files whose trusted version is unchanged (their stored copies are verified in full by the daily
+cleanup instead), so it is faster than in 0.3.0 despite watching more files and re-checking each
+version before trusting it. The shell check parses more forms at no measurable cost.
 
 | Case | P50 | P95 | Budget |
 |---|---:|---:|---:|
-| Bash pre-check | 58.2 ms | 59.9 ms | 100 ms |
-| Bash pre + post | 121.2 ms | 135.0 ms | 200 ms |
-| Protected Edit, 50k history entries | 60.3 ms | 61.9 ms | 120 ms |
-| Protected Write, 3,889,915-byte transcript | 144.4 ms | 150.9 ms | 200 ms |
-| Session start, 1,000 unchanged files | 130.3 ms | 138.2 ms | 250 ms |
-| Session start, 100 changed / 1,000 files, initially 10k entries | 180.8 ms | 188.8 ms | 1,000 ms |
-| Bash pre + post, 1,000 active memory files and 1,000 unrelated | 222.4 ms | 231.2 ms | 350 ms |
+| Bash pre-check | 58.5 ms | 61.9 ms | 100 ms |
+| Bash pre + post | 117.6 ms | 126.3 ms | 200 ms |
+| Protected Edit, 50k history entries | 58.5 ms | 60.0 ms | 120 ms |
+| Protected Write, 3,889,915-byte transcript | 141.2 ms | 145.5 ms | 200 ms |
+| Session start, 1,000 unchanged files | 133.9 ms | 139.2 ms | 250 ms |
+| Session start, 100 changed / 1,000 files, initially 10k entries | 187.7 ms | 215.1 ms | 1,000 ms |
+| Bash pre + post, 1,000 active memory files and 1,000 unrelated | 239.6 ms | 287.4 ms | 350 ms |

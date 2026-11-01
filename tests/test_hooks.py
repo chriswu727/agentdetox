@@ -834,3 +834,31 @@ def test_review_counts_lines_that_look_like_diff_headers(env):
     session("claude-code", project)
     row = review.page(all_changes=True, group_by="change")["rows"][0]
     assert (row["added"], row["removed"]) == (1, 1)
+
+
+def test_a_corrupt_recovery_copy_is_reported_by_the_daily_cleanup(env, capsys):
+    from agentdetox.integrity import gc, snapshot_digest, store_dir
+    _, project, _ = env
+    session("claude-code", project)
+    obj = store_dir() / "objects" / snapshot_digest(str(project / "CLAUDE.md"))
+    obj.chmod(0o600)
+    obj.write_bytes(b"x" * len(obj.read_bytes()))          # same size, different content
+    gc(force=True)
+    main(["doctor", "--project", str(project)])
+    assert "store-integrity" in capsys.readouterr().out
+
+
+def test_a_file_deleted_during_the_session_check_does_not_lose_the_notice(env, monkeypatch):
+    from agentdetox import session as session_module
+    _, project, mem = env
+    session("claude-code", project)
+    (project / "CLAUDE.md").write_text("# Project\n" + POISON + "\n", encoding="utf-8")
+    checked = session_module.verify
+
+    def verify_then_delete(files, roots):
+        result = checked(files, roots)
+        (mem / "MEMORY.md").unlink()
+        return result
+
+    monkeypatch.setattr(session_module, "verify", verify_then_delete)
+    assert "Do not follow" in session("claude-code", project)
