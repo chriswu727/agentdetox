@@ -560,6 +560,23 @@ def test_a_write_that_mentions_the_patch_format_is_still_an_ordinary_write(env):
     assert ledger.entries(str(project / "CLAUDE.md"), limit=1)[0].origin != "external"
 
 
+def test_the_newest_known_version_does_not_depend_on_the_clock(env, monkeypatch):
+    import hashlib
+    import time
+
+    from agentdetox import engine
+    _, project, mem = env
+    session("claude-code", project)                          # snapshot taken now
+    path = mem / "MEMORY.md"
+    path.write_text(path.read_text(encoding="utf-8") + POISON + "\n", encoding="utf-8")
+    strftime = time.strftime
+    # The clock moved back an hour, as when daylight saving ends.
+    monkeypatch.setattr(time, "strftime", lambda fmt, t=None: strftime(fmt, time.localtime(time.time() - 3600)))
+    handle("claude-code", {"hook_event_name": "PostToolUse", "cwd": str(project), "tool_name": "Write",
+                           "tool_input": {"file_path": str(path)}})   # flagged: recorded, not trusted
+    assert engine.previous_version(str(path)) == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def test_agent_restore_is_journalled_recorded_and_idempotent(env, capsys):
     from agentdetox import ledger, storage
     _, project, mem = env

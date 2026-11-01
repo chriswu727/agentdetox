@@ -13,7 +13,7 @@ from typing import Any
 
 # (database, connection, writable) of the connection open in this context, reused by nested calls.
 _ACTIVE: ContextVar[tuple[Path, sqlite3.Connection, bool] | None] = ContextVar('agentdetox_database', default=None)
-VERSION = 2
+VERSION = 3
 _SCHEMA = (
     'CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
     '''CREATE TABLE files (path TEXT PRIMARY KEY, checkpoint TEXT, observed_hash TEXT,
@@ -91,7 +91,9 @@ def connection(*, write: bool = False, seed: dict | None = None):
                     db.execute('BEGIN IMMEDIATE')
                     if version == 0:
                         _migrate(db, seed)
-                    _upgrade_observation(db)
+                    if version < 2:
+                        _upgrade_observation(db)
+                    _reconcile_migrated(db)
                     db.execute(f'PRAGMA user_version={VERSION}')
                     db.commit()
             if write:
@@ -127,6 +129,19 @@ def _json_lines(file: Path) -> list[dict]:
         except ValueError as e:
             raise StoreError(f'Cannot migrate {file.name}, line {n}: {e}; original files were kept') from e
     return out
+
+
+def _reconcile_migrated(db) -> None:
+    """Migration replays the old ledger after the old baseline, so a file whose snapshot was
+    newer than its last old-format entry was left with that entry's version as the newest one
+    seen. For those files only, decide as the old format did, by timestamp."""
+    rows = db.execute('''SELECT f.path, f.checkpoint, c.ts, c.data FROM files f
+        JOIN changes c ON c.id = (SELECT max(id) FROM changes WHERE path = f.path)
+        WHERE f.checkpoint IS NOT NULL''').fetchall()
+    for path, checkpoint, ts, data in rows:
+        snapshot = json.loads(checkpoint)
+        if json.loads(data).get('method') == 'legacy' and snapshot.get('taken', '') > ts:
+            db.execute('UPDATE files SET observed_hash=? WHERE path=?', (snapshot['sha256'], path))
 
 
 def _upgrade_observation(db) -> None:

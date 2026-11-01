@@ -10,7 +10,6 @@ from __future__ import annotations
 import difflib
 import functools
 import hashlib
-import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -200,10 +199,11 @@ def previous_version(path: str) -> str | None:
     change the ledger recorded without trusting it."""
     with storage.connection() as db:
         if db is not None:
-            row = db.execute('SELECT checkpoint FROM files WHERE path=?', (path,)).fetchone()
-            snap = json.loads(row[0]) if row and row[0] else None
-        else:
-            snap = baseline_entries().get(path)
+            # Updated in write order by every recorded change and snapshot, so no clock
+            # comparison is needed (local timestamps go backwards with the clock).
+            row = db.execute('SELECT observed_hash FROM files WHERE path=?', (path,)).fetchone()
+            return row[0] if row else None
+        snap = baseline_entries().get(path)
     history = ledger.entries(path, limit=1)
     if history and (snap is None or history[-1].ts >= snap.get("taken", "")):
         return history[-1].after
