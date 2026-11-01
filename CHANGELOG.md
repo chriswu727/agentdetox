@@ -19,6 +19,11 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
   script changed outside the agent is reported at the next session.
 - Claude Code hooks take the project root from `CLAUDE_PROJECT_DIR`, so a session working in a
   subfolder still guards the project's CLAUDE.md and `.claude/` settings.
+- File names, flagged lines and config values shown to the agent or in the terminal have line
+  breaks, terminal escapes and other invisible characters shown as `\uXXXX`, so a planted file
+  name cannot add a fake line to AgentDetox's notice or hide text from a reviewer.
+- When a shell tool writes content that a rule flags, the immediate notice says so and tells the
+  agent not to follow it, instead of the neutral "writing process unknown" message.
 
 ### Added
 

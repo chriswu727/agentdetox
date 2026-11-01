@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from .findings import printable
+
 KINDS = ("memory", "instructions", "skill", "config")
 
 
@@ -165,7 +167,7 @@ def claude_dir(home: Path | None = None) -> Path:
 
 def short_path(source: str) -> str:
     home = str(home_dir())
-    return "~" + source[len(home):] if source.startswith(home) else source
+    return printable("~" + source[len(home):] if source.startswith(home) else source)
 
 
 # macOS and Windows file systems ignore case by default: writing claude.md replaces CLAUDE.md.

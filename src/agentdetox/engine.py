@@ -28,7 +28,7 @@ from .consistency import (
     store_statements,
 )
 from .context import ContextFile, classify, related_files, short_path
-from .findings import Finding
+from .findings import Finding, printable
 from .integrity import baseline_entries, object_text, snapshot, store_dir, store_lock
 from .persistence import guard_changes, guarded_sections
 from .provenance import (
@@ -85,7 +85,7 @@ def check_write(write: Write, project: Path, run: set[str], transcript: str | No
         if _worst(findings) == "high":
             return [_planted(cf, findings, recent())]
         if guarded_sections(path, old) != guarded_sections(path, new):
-            changes = "; ".join(guard_changes(path, old, new)) or "changes the hooks, MCP servers or permissions"
+            changes = printable("; ".join(guard_changes(path, old, new))) or "changes the hooks, MCP servers or permissions"
             return [Signal(GUARDRAILS, f"AgentDetox: this write to {short_path(str(path))} {changes}. An agent "
                                        "changing its own hooks, MCP servers or permissions is how an injected "
                                        "instruction makes itself permanent.")]
@@ -125,7 +125,7 @@ def check_command(command: str, project: Path, cwd: Path | None = None) -> list[
         findings = allowlist.unsuppressed(scan_text("shell", "shell", command, "memory"))
         if _worst(findings) == "high":
             return [Signal(PLANTED, "AgentDetox: shell command writes to agent context and "
-                                    + "; ".join(sorted({f.message for f in findings})) + ".",
+                                    + printable("; ".join(sorted({f.message for f in findings}))) + ".",
                            [finding_flag(f) for f in findings if f.severity == "high"])]
     if any(is_own_state(shell.resolve(t, cwd)) for t in targets) or shell.changes_agentdetox(tokens):
         return [Signal(OWN_STATE, "AgentDetox: this command changes AgentDetox's own settings, allowlist or snapshots.")]
@@ -247,7 +247,7 @@ def _worst(findings: list[Finding]) -> str | None:
 
 
 def _reason(cf: ContextFile, findings: list[Finding], verb: str = "blocked") -> str:
-    labels = "; ".join(sorted({f.message for f in findings if f.severity in ("medium", "high")}))
+    labels = printable("; ".join(sorted({f.message for f in findings if f.severity in ("medium", "high")})))
     return (f"AgentDetox {verb} a write to the agent's {cf.kind} file {short_path(str(cf.path))}: {labels}. "
             "Content like this, once saved, is obeyed in every later session.")
 
@@ -318,7 +318,8 @@ def record_contradictions(path: Path, project: Path, old: str, nli=None) -> int:
 
 
 def _conflict_reason(cf: ContextFile, conflicts: list[Contradiction]) -> str:
-    lines = "; ".join(f'"{c.new.text[:100]}" contradicts "{c.existing.text[:100]}" ({short_path(c.existing.source)})'
+    lines = "; ".join(f'"{printable(c.new.text[:100])}" contradicts "{printable(c.existing.text[:100])}" '
+                      f'({short_path(c.existing.source)})'
                       for c in conflicts[:3])
     return (f"AgentDetox: this {cf.kind} write conflicts with what the agent already knows: {lines}. "
             "A fabricated fact often looks like this. If it is a real update, edit the old entry instead.")
