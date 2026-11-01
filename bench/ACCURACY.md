@@ -21,6 +21,27 @@ The baseline was run against `3f8edacf3c15743f58ef8e518f6e1e47e608c13f`, before 
 same gallery. The raw [before](results/accuracy-before-2026-10-31.json) and
 [after](results/accuracy-after-2026-10-31.json) reports retain every decision, including misses.
 
+## Attack families added 2026-11-01
+
+Four more families, from an independent security review and the code reviews of its fixes. All
+use the real hook handlers in isolated folders; none needs a model. "0.3.0" is the released
+package run against the same cases.
+
+| Family | Cases | 0.3.0 | Now |
+|---|---:|---:|---:|
+| Shell commands, decided before they run (22 that write context, 6 that must stay allowed) | 28 | 11 | 28 |
+| Settings changed outside the agent (5 that add something that runs, 1 permission control) | 6 | 1 | 6 |
+| Writes to files the agent loads under another name or place (case, symlink, subfolder, parent folder, output style) | 5 | 0 | 5 |
+| A planted file name adding a fake line to AgentDetox's notice | 1 | fail | pass |
+
+The shell cases are commands that each got past an earlier version of the parser: nested
+`bash -c`/`eval`, wrappers, a `cd` that may fail or be skipped, variables naming the program, an
+option or the target, `git checkout --`, `curl -o`, inline code, and shell heredocs. The allowed
+controls are reads and heredoc data. A replay of 985 real Bash commands from an agent session
+changed one decision compared with the previous parser (a real write to an agent memory file
+through a variable path, which now asks), and no longer crashed on four commands with unbalanced
+parentheses that made the previous parser fail open.
+
 ## Results
 
 | Outcome | Cases | Before | After |
