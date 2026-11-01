@@ -114,3 +114,28 @@ def test_a_write_inside_a_read_only_connection_fails_at_once_and_events_still_la
                 pass
         events.record('inside a read')
     assert [e['event'] for e in events.read(None)][-1] == 'inside a read'
+
+
+@pytest.mark.parametrize('already_migrated', [False, True])
+def test_a_snapshot_newer_than_the_old_ledger_stays_the_newest_version(already_migrated):
+    from agentdetox import engine
+    root = private_dir(store_dir())
+    objects = private_dir(root / 'objects')
+    old, new = b'Use npm.\n', b'Use pnpm.\n'
+    for data in (old, new):
+        write_private(objects / hashlib.sha256(data).hexdigest(), data)
+    taken = {'sha256': hashlib.sha256(new).hexdigest(), 'kind': 'instructions', 'agent': 'claude-code',
+             'scope': 'project', 'sections': {}, 'taken': '2020-01-02T00:00:00'}
+    write_private(root / 'baseline.json', json.dumps({'version': 1, 'files': {'/project/CLAUDE.md': taken}}).encode())
+    entry = {'ts': '2020-01-01T00:00:00', 'path': '/project/CLAUDE.md', 'origin': 'agent', 'before': None,
+             'after': hashlib.sha256(old).hexdigest()}
+    write_private(root / 'ledger.jsonl', (json.dumps(entry) + '\n').encode())
+    with storage.connection(write=True):
+        pass
+    if already_migrated:  # a store migrated by the previous version, before the correction existed
+        with storage.connection(write=True) as db:
+            db.execute('UPDATE files SET observed_hash=?', (hashlib.sha256(old).hexdigest(),))
+            db.execute('PRAGMA user_version=2')
+        with storage.connection(write=True):
+            pass
+    assert engine.previous_version('/project/CLAUDE.md') == hashlib.sha256(new).hexdigest()
