@@ -23,7 +23,9 @@ _DELETE_COMMANDS = {"rm", "rmdir", "unlink", "truncate", "shred"}
 _SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "fish"}
 # Programs that run the command after them: `nice tee CLAUDE.md` writes CLAUDE.md.
 _WRAPPERS = {"sudo", "doas", "env", "nice", "nohup", "exec", "command", "builtin", "time", "timeout", "stdbuf",
-             "xargs", "caffeinate", "unbuffer"}
+             "xargs", "caffeinate", "unbuffer",
+             # Shell keywords and braces run what follows in the current shell.
+             "{", "}", "!", "if", "then", "else", "elif", "do", "while", "until"}
 _INTERPRETERS = {"python", "python2", "python3", "node", "nodejs", "perl", "ruby", "php", "deno", "bun"}
 _ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _VAR = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
@@ -151,38 +153,75 @@ def _changes_trust(args: list[str]) -> bool:
                 or (sub == "agent" and words[1:2] in (["snapshot"], ["restore"])))
 
 
+def _commands(tokens: list[str]) -> list[tuple[list[str], list[str], str | None, str | None, int]]:
+    """Each simple command with its output redirections, the separators before and after it,
+    and how many subshells `( … )` deep it runs."""
+    out: list[tuple[list[str], list[str], str | None, str | None, int]] = []
+    words: list[str] = []
+    redirects: list[str] = []
+    before: str | None = None
+    depth = 0
+
+    def end(after: str | None) -> None:
+        nonlocal words, redirects, before
+        if words or redirects:
+            out.append((words, redirects, before, after, depth))
+        words, redirects, before = [], [], after
+
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in _REDIRECTS and i + 1 < len(tokens):
+            nxt = tokens[i + 1]
+            if not nxt.startswith("/dev/") and nxt not in SEGMENT_BREAKS:
+                redirects.append(nxt)
+            i += 2
+            continue
+        if tok in SEGMENT_BREAKS:
+            end(tok)
+            depth += {"(": 1, ")": -1}.get(tok, 0)
+        else:
+            words.append(tok)
+        i += 1
+    end(None)
+    return out
+
+
 def write_targets(tokens: list[str], depth: int = 0) -> list[str]:
     """Paths a shell command writes to or deletes: redirect and tee targets, sed -i and
     perl -i files, the destination of cp/mv, rm arguments, git checkout/restore paths,
     curl/wget output files, files named by inline interpreter code that writes, and the
     same inside `bash -c` and `eval`. A `cd` and variables set earlier in the same command
-    are followed; anything decided at run time is not."""
+    are followed where the shell would keep them; anything decided at run time is not."""
     targets: list[str] = []
-    env = {"HOME": "~"}
-    # Folders relative paths may be relative to. A `cd` in a pipeline or subshell does not
-    # move the commands after it, so after a `cd` both the old and the new folder count:
-    # an extra question at worst, never a missed write.
-    cwds = [""]
-    for words, redirects in _segments(tokens):
+    # (folder relative paths are relative to, variables) for each subshell level; a cd
+    # inside `( … )` is gone after it.
+    scopes: list[tuple[str, dict[str, str]]] = [("", {"HOME": "~"})]
+    for words, redirects, before, after, level in _commands(tokens):
+        while len(scopes) - 1 < level:
+            scopes.append((scopes[-1][0], dict(scopes[-1][1])))
+        del scopes[level + 1:]
+        cwd, env = scopes[-1]
         words = [_expand(w, env) for w in words]
-        if words and all(_ASSIGN.match(w) for w in words):
-            env.update((w.partition("=")[0], w.partition("=")[2]) for w in words)
-            body: list[str] = []
-            found: list[str] = []
-        else:
-            body = _unwrap(words)
-            if body and compat.program(body[0]) == "cd":
-                found = []
-            else:
-                inner = _inner(body) if body else None
-                if inner is not None:
-                    found = write_targets(split(inner), depth + 1) if depth < _MAX_DEPTH else []
-                else:
-                    found = _segment_targets(body)
-        # A command's own redirections are opened before it runs, so a `cd` moves only later ones.
-        targets += [_under(cwd, t) for cwd in cwds for t in [_expand(r, env) for r in redirects] + found]
+        body = _unwrap(words)
+        # A cd or assignment in a pipeline or in the background runs in a subshell of its own.
+        lasting = before != "|" and after not in ("|", "&")
+        found: list[str] = []
         if body and compat.program(body[0]) == "cd":
-            cwds = list(dict.fromkeys(cwds + [_under(cwd, body[1] if len(body) > 1 else "~") for cwd in cwds]))
+            if lasting:
+                target = body[1] if len(body) > 1 else "~"
+                scopes[-1] = (_under(cwd, target) if "$" not in target and target != "-" else cwd, env)
+        elif words and all(_ASSIGN.match(w) for w in (words[1:] if words[0] == "export" else words)):
+            if lasting:
+                env.update((w.partition("=")[0], w.partition("=")[2]) for w in words if _ASSIGN.match(w))
+        else:
+            inner = _inner(body) if body else None
+            if inner is not None:
+                found = write_targets(split(inner), depth + 1) if depth < _MAX_DEPTH else []
+            else:
+                found = _segment_targets(body)
+        # A command's own redirections are opened before it runs, in the folder it starts in.
+        targets += [_under(cwd, t) for t in [_expand(r, env) for r in redirects] + found]
     return list(dict.fromkeys(targets))
 
 

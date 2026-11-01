@@ -702,6 +702,13 @@ def test_a_contradiction_is_attached_only_to_the_version_that_was_checked(env, m
     ("cd /tmp > .claude/settings.json", "ask"),                         # redirections open before the cd
     ("python3 -c \"print(open('AGENTS.md').read())\"", "allow"),
     ("python3 -c \"open('AGENTS.md', mode='w').write('x')\"", "ask"),
+    ("HOME=/tmp | cat; echo '{}' > $HOME/.claude/settings.json", "ask"),  # nor an assignment in a pipeline
+    ("cd /tmp & echo '{}' > .claude/settings.json", "ask"),             # nor a cd in the background
+    ("cd .claude && echo '{}' > settings.json", "ask"),
+    ("if cd .claude; then echo '{}' > settings.json; fi", "ask"),
+    ("{ cd .claude; }; echo '{}' > settings.json", "ask"),
+    ("export F=CLAUDE.md; echo note >> $F", "ask"),
+    ("cd /tmp && echo note > CLAUDE.md", "allow"),                      # writes /tmp/CLAUDE.md
 ])
 def test_more_shell_forms_that_write_context(env, command, expected):
     _, project, _ = env
@@ -726,3 +733,12 @@ def test_removing_the_store_after_a_cd_needs_approval(env):
     store = store_dir()
     command = f"cd {store.parent.as_posix()} && rm -rf {store.name}"
     assert decision(pre("claude-code", project, "Bash", {"command": command})) == "ask"
+
+
+def test_many_cds_in_one_command_stay_fast(env):
+    import time
+    _, project, _ = env
+    command = "; ".join(f"cd d{i}" for i in range(40)) + "; echo note > CLAUDE.md"
+    started = time.monotonic()
+    pre("claude-code", project, "Bash", {"command": command})
+    assert time.monotonic() - started < 2
