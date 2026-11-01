@@ -241,7 +241,11 @@ def write_targets(tokens: list[str], depth: int = 0) -> list[str]:
                     if overflow:
                         scope.env[name] = [*scope.env[name][:_MAX_VALUES - 1], UNKNOWN]
         else:
-            for variant in _word_variants(words, scope.env):
+            # Words are taken as written: the text of a `bash -c` script or of inline code is
+            # parsed as it is, and targets are expanded below. Only a program named by a
+            # variable needs expanding to know what it is.
+            variants = _word_variants(words, scope.env) if body and "$" in body[0] else [words]
+            for variant in variants:
                 command = _unwrap(variant)
                 inner = _inner(command) if command else None
                 if inner is not None:
