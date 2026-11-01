@@ -89,7 +89,8 @@ def _check(project: Path, mode: str) -> str:
         _record_external([c for c in changes if unchanged(c.path)], flagged, all_findings)
         for conflict in conflicts:
             latest = ledger.entries(conflict.new.source, limit=1)
-            if latest:
+            # Only on the record of the version that was checked; a newer or older one never had it.
+            if latest and latest[0].after == digests.get(conflict.new.source):
                 flag = contradiction_flag(conflict)
                 ledger.add_finding(latest[0].id, flag.id, 'medium', flag.what)
         snapshot([cf for cf in trusted if unchanged(str(cf.path))], roots)

@@ -647,3 +647,26 @@ def test_a_file_changed_during_the_session_check_is_not_trusted_unread(env, monk
     session("claude-code", project)
     monkeypatch.setattr(session_module, "verify", checked)
     assert "Do not follow" in session("claude-code", project)
+
+
+def test_a_contradiction_is_attached_only_to_the_version_that_was_checked(env, monkeypatch):
+    from agentdetox import engine, ledger, storage
+    from agentdetox import session as session_module
+    from agentdetox.consistency import Contradiction, Statement
+    _, project, mem = env
+    session("claude-code", project)
+    path = mem / "MEMORY.md"
+    path.write_text("- Use pnpm.\n", encoding="utf-8")
+    session("claude-code", project)                     # records a benign outside change
+    earlier = ledger.entries(str(path), limit=1)[0].id
+    path.write_text("- Use pnpm.\n- Deploys run on Fridays.\n", encoding="utf-8")
+
+    def contradicts_then_changes(cf, old, text, project):
+        path.write_text("- Use pnpm.\n- Deploys run on Mondays.\n", encoding="utf-8")   # written while checking
+        new = Statement("Deploys run on Fridays.", str(path), 2)
+        return [Contradiction(new, Statement("Deploys never run on Fridays.", str(mem / "x.md"), 1), 0.99)]
+
+    monkeypatch.setattr(engine, "contradictions", contradicts_then_changes)
+    session_module.notice(project, "ask")
+    with storage.connection() as db:
+        assert db.execute("SELECT count(*) FROM findings WHERE change_id=?", (earlier,)).fetchone()[0] == 0
