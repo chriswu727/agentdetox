@@ -2,6 +2,7 @@ import json
 import os
 import re
 import stat
+from pathlib import Path
 
 import pytest
 
@@ -441,7 +442,7 @@ def test_relative_paths_are_resolved_where_the_tool_runs(env, monkeypatch):
     home, project, _ = env
     (project / "src").mkdir()
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
-    rel = os.path.relpath(home / ".claude/settings.json", project / "src")
+    rel = Path(os.path.relpath(home / ".claude/settings.json", project / "src")).as_posix()
     out = pre("claude-code", project / "src", "Bash", {"command": f"printf '{{}}' > {rel}"})
     assert decision(out) == "ask"
     out = pre("claude-code", project / "src", "Write", {"file_path": "../CLAUDE.md", "content": POISON})
