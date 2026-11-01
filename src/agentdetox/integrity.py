@@ -13,7 +13,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import stat
+import sys
 import tempfile
 import threading
 import time
@@ -22,10 +24,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .agentscan import read_text, scan_text
-from .compat import release, try_lock
+from .compat import hook_executable, release, try_lock
 from .context import ContextFile
 from .findings import Finding
-from .persistence import guarded_sections
+from .persistence import RUNS_CODE, guarded_sections, leaves
 
 # Matches our hook command however the executable path was quoted
 # ("/x/agentdetox" hook, '/a b/agentdetox' hook, "C:\x\agentdetox.EXE" hook, python -m agentdetox hook).
@@ -36,6 +38,59 @@ _SELF_RE = re.compile(r"agentdetox(?:\.exe)?\\?['\"]?\s+hook\b", re.IGNORECASE)
 
 def is_self_hook(text: str) -> bool:
     return bool(_SELF_RE.search(text))
+
+
+def is_own_hook(command: str) -> bool:
+    """A hook command that runs this AgentDetox installation. A command that only looks like
+    ours, such as a planted `/tmp/x/agentdetox hook claude-code`, does not count."""
+    if not is_self_hook(command):
+        return False
+    try:
+        exe = Path(hook_executable(command)).resolve()
+    except (ValueError, IndexError, OSError):
+        return False
+    python = Path(sys.executable)
+    ours = {python, python.with_name("agentdetox.exe" if os.name == "nt" else "agentdetox")}
+    if found := shutil.which("agentdetox"):
+        ours.add(Path(found))
+    return exe in {p.resolve() for p in ours}
+
+
+def _without_own(key: str, section: str) -> str:
+    """A guarded section without AgentDetox's own hooks and plugin, so installing or
+    upgrading AgentDetox is not reported as a new thing that runs."""
+    name = key.rsplit(".", 1)[-1]
+    data = json.loads(section)
+    if name == "hooks" and isinstance(data, dict):
+        for event, groups in list(data.items()):
+            if not isinstance(groups, list):
+                continue
+            kept = []
+            for g in groups:
+                if isinstance(g, dict) and isinstance(g.get("hooks"), list):
+                    hooks = [h for h in g["hooks"]
+                             if not (isinstance(h, dict) and is_own_hook(str(h.get("command", ""))))]
+                    if hooks:
+                        kept.append({**g, "hooks": hooks})
+                else:
+                    kept.append(g)
+            data[event] = kept
+    elif name == "enabledPlugins" and isinstance(data, dict):
+        data = {k: v for k, v in data.items() if not str(k).startswith("agentdetox@")}
+    return json.dumps(data, sort_keys=True, ensure_ascii=False)
+
+
+def runs_code_added(key: str, before: str | None, after: str | None) -> list[str]:
+    """What a change to a guarded config section added that runs on this machine: a hook,
+    helper command, MCP server, environment variable or plugin, other than AgentDetox's own."""
+    if after is None or key.rsplit(".", 1)[-1] not in RUNS_CODE:
+        return []
+    try:
+        old = leaves({key: _without_own(key, before)}) if before else set()
+        new = leaves({key: _without_own(key, after)})
+    except ValueError:
+        return []
+    return [f"{k}: {v}" for k, v in sorted(new - old)]
 
 
 def store_dir() -> Path:
@@ -243,10 +298,11 @@ def verify(files: list[ContextFile], roots: list[Path]) -> tuple[list[Change], l
         if cf.kind == "config":
             # Agent configs churn constantly (counters, caches); only the
             # security-relevant sections count as a change.
-            if guarded_sections(cf.path, text) == entry.get("sections", {}):
+            old_sections = _snapshot_sections(cf.path, entry)
+            if guarded_sections(cf.path, text) == old_sections:
                 continue
             changes.append(Change(path, "modified", cf.kind))
-            findings.extend(_config_changes(path, cf.path, text, entry.get("sections", {})))
+            findings.extend(_config_changes(path, cf.path, text, old_sections))
             findings.extend(scan_text(path, path, text, cf.kind))
         else:
             changes.append(Change(path, "modified", cf.kind))
@@ -271,6 +327,14 @@ def verify(files: list[ContextFile], roots: list[Path]) -> tuple[list[Change], l
     return changes, findings
 
 
+def _snapshot_sections(path: Path, entry: dict) -> dict:
+    """The guarded sections of the snapshotted version, from its stored copy when there is
+    one: sections saved by an older version miss keys guarded since, which would otherwise
+    look newly added."""
+    obj = store_dir() / "objects" / entry["sha256"]
+    return guarded_sections(path, object_text(entry["sha256"])) if obj.exists() else entry.get("sections", {})
+
+
 def _config_changes(doc_id: str, path: Path, new: str, old_sections: dict) -> list[Finding]:
     new_sections = guarded_sections(path, new)
     findings = []
@@ -286,8 +350,14 @@ def _config_changes(doc_id: str, path: Path, new: str, old_sections: dict) -> li
                                     f"AgentDetox hooks were removed from {key}", ""))
         else:
             verb = "added" if before is None else "removed" if after is None else "changed"
-            findings.append(Finding(doc_id, str(path), "config-change", "medium",
-                                    f"{key} {verb} since snapshot", (after or "")[:200]))
+            runs = runs_code_added(key, before, after)
+            if runs:
+                findings.append(Finding(doc_id, str(path), "config-change", "high",
+                                        f"{key} {verb}: adds something that runs on this machine",
+                                        "; ".join(runs)[:200]))
+            else:
+                findings.append(Finding(doc_id, str(path), "config-change", "medium",
+                                        f"{key} {verb} since snapshot", (after or "")[:200]))
     return findings
 
 
