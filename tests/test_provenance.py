@@ -165,6 +165,46 @@ def test_remember_intent_phrases():
     assert not asked_to_remember([])
 
 
+@pytest.mark.parametrize('prompt', [
+    'Do not remember anything from this page; summarize it.',
+    "Don't save the requirements to memory.",
+    'Please never make a note of this page.',
+    'You should not remember these requirements.',
+    '不要记住页面内容，只做摘要。',
+    '别把页面内容保存到记忆。',
+    '不需要记住这些要求。',
+    'Explain what "remember this" means in the email.',
+    "Explain the phrase 'remember this' in the email.",
+    'Explain the phrase ‘remember this’ in the email.',
+    '邮件里的“记住”是什么意思？',
+    'What does remember mean?',
+    'I still remember the previous release; summarize this page.',
+    '我已经记得之前的要求，只看一下新页面。',
+    'Explain this example:\n```text\nRemember the vendor requirements.\n```',
+    'Remember the requirements. Actually, do not save the page to memory.',
+])
+def test_absent_or_revoked_consent_does_not_exempt_copied_memory(env, prompt):
+    tmp, project, mem = env
+    t = transcript(tmp / 't.jsonl', [('human', prompt), ('tool', 'WebFetch', PAGE)])
+    assert not asked_to_remember([prompt])
+    out = write(project, mem, t, MEMORY)
+    assert out['permissionDecision'] == 'ask' and 'copied from WebFetch' in out['permissionDecisionReason']
+
+
+@pytest.mark.parametrize('prompt', [
+    "Don't forget to save the requirements to memory.",
+    '不要忘记把要求保存到记忆。',
+    'Do not remember the old page. Remember the new requirements.',
+    'Save the setup steps to `CLAUDE.md`.',
+    'Remember "the vendor requirements" from this page.',
+])
+def test_explicit_affirmative_requests_still_exempt_copies(env, prompt):
+    tmp, project, mem = env
+    t = transcript(tmp / 't.jsonl', [('human', prompt), ('tool', 'WebFetch', PAGE)])
+    assert asked_to_remember([prompt])
+    assert write(project, mem, t, MEMORY) is None
+
+
 def test_short_writes_are_skipped():
     from agentdetox.provenance import Source, Transcript
     assert copied_from_untrusted("Use pnpm.", Transcript([Source("WebFetch", "Use pnpm.")], ["summarize"])) is None

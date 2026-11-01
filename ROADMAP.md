@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated 2026-10-30. The [changelog](CHANGELOG.md) records releases; this document separates
+Last updated 2026-10-31. The [changelog](CHANGELOG.md) records releases; this document separates
 implemented capabilities from product hypotheses and future work.
 
 ## Direction
@@ -13,6 +13,24 @@ Attribution is evidence, not proof of authorship. Hooks can observe a tool writi
 match added text to a user message or tool result. They cannot reliably identify paraphrases,
 prove who authored copied text, or attribute a shell script's writes to its exact process.
 External changes are worth reviewing but are not automatically malicious.
+
+Current priority is accuracy of prevention, monitoring and cleanup. Hook latency remains a budget,
+while progress is judged by attack-family misses, benign interruptions, retained evidence and
+residual findings after recovery. Development uses reproducible offline cases and maintainer
+self-use; no external user recruitment is planned.
+
+## Accuracy work
+
+- Implemented on main: [offline regression gallery](bench/ACCURACY.md), diff-prefix and quoted-decoy
+  fixes, stricter remember-intent handling, highest-severity retention and recovery target rescans.
+- Extend benign controls and realistic memory-specific attacks before tuning semantic detection.
+  Keep the tuning set separate from future held-out tests; retain known misses in every report.
+- Evaluate paraphrased, delayed and mixed-source writes. Source similarity is evidence for review,
+  not proof that content is malicious or that a specific person authored it.
+- Evaluate removal of contaminated spans while preserving benign edits. Current recovery restores
+  a whole recorded version; checking its rules does not establish factual correctness.
+- A plausible false fact needs trusted evidence to verify it. Do not promote uncertainty into an
+  automatic block or describe the current local NLI model as a reliable factual judge.
 
 ## 0.3: Review and recovery
 

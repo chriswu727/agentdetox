@@ -12,6 +12,17 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 - Project-scoped review with file grouping, literal path/finding search and pagination beyond 200 changes.
 - Interactive terminal review with file history, confirmation before acceptance/recovery, and stale-version checks.
 - Review JSON pages include totals for the entire selection, operation/state counts and pagination metadata.
+- Offline prevention, monitoring and recovery regression gallery with explicit known misses and a CI gate.
+
+### Fixed
+
+- Diff-like `++` content no longer escapes write and observation checks.
+- A quoted attack example no longer hides a later active instruction matched by the same rule.
+- Negated, quoted and recollected remember phrases no longer automatically exempt copied writes;
+  later explicit revocation overrides an earlier save request.
+- Findings sharing an anchor retain the highest observed severity.
+- Review-based recovery warns about residual rule findings, retains them for review and does not
+  advance the safe checkpoint to a version with unsuppressed high findings.
 
 ## [0.3.0] - 2026-10-30
 

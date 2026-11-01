@@ -28,6 +28,11 @@ from .integrity import StoreError, object_text, store_dir, store_object
 EARLIER = "earlier"          # there before the first recorded change
 UNRECORDED = "unrecorded"    # changed since the last recorded change
 
+_FINDING_UPSERT = '''INSERT INTO findings(change_id, flag_id, severity, reason, status) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(change_id, flag_id) DO UPDATE SET severity=excluded.severity, reason=excluded.reason, status=excluded.status
+    WHERE CASE excluded.severity WHEN 'high' THEN 2 WHEN 'medium' THEN 1 ELSE 0 END >
+          CASE findings.severity WHEN 'high' THEN 2 WHEN 'medium' THEN 1 ELSE 0 END'''
+
 
 @dataclass
 class Entry:
@@ -79,8 +84,8 @@ def record(path: Path | str, origin: str, before: str | None, after: bytes | Non
             if findings:
                 from .findings import finding_id
                 for finding in findings:
-                    db.execute('INSERT OR IGNORE INTO findings(change_id, flag_id, severity, reason) VALUES (?, ?, ?, ?)',
-                               (entry.id, finding_id(finding), finding.severity, finding.message))
+                    db.execute(_FINDING_UPSERT,
+                               (entry.id, finding_id(finding), finding.severity, finding.message, 'pending'))
                 if any(f.severity in ('high', 'medium') for f in findings):
                     db.execute("UPDATE changes SET review_state='pending' WHERE id=?", (entry.id,))
             return entry
@@ -176,7 +181,6 @@ def add_finding(change_id: int, flag_id: str, severity: str, reason: str) -> Non
         if row is None:
             raise ValueError(f'Unknown change C{change_id}')
         state = 'accepted' if row[0] == 'accepted' else 'pending'
-        db.execute('INSERT OR IGNORE INTO findings(change_id, flag_id, severity, reason, status) VALUES (?, ?, ?, ?, ?)',
-                   (change_id, flag_id, severity, reason, state))
+        db.execute(_FINDING_UPSERT, (change_id, flag_id, severity, reason, state))
         if state == 'pending' and db.execute("SELECT 1 FROM findings WHERE change_id=? AND status='pending'", (change_id,)).fetchone():
             db.execute("UPDATE changes SET review_state='pending' WHERE id=?", (change_id,))

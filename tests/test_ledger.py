@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from agentdetox import hooks, ledger
+from agentdetox import hooks, ledger, storage
 from agentdetox.cli import main
 from agentdetox.context import claude_memory_dir
 from agentdetox.integrity import gc, store_dir
@@ -94,6 +94,55 @@ def test_restores_are_recorded(env, capsys):
     assert main(["agent", "restore", str(mem / "MEMORY.md")]) == 0
     [entry] = ledger.entries()
     assert entry.origin == "restored" and entry.before and entry.after
+
+
+@pytest.mark.parametrize('severities', [('medium', 'high'), ('high', 'medium')])
+def test_same_line_findings_keep_the_highest_severity(env, severities):
+    from agentdetox.findings import Finding, finding_id
+    _, _, mem = env
+    path = mem / 'notes.md'
+    findings = [Finding(str(path), str(path), 'injection-phrase', level, level, anchor='same line')
+                for level in severities]
+    entry = ledger.record(path, 'agent', None, b'same line', findings=findings)
+    with storage.connection() as db:
+        rows = db.execute('SELECT severity, reason FROM findings WHERE change_id=?', (entry.id,)).fetchall()
+        assert [(row['severity'], row['reason']) for row in rows] == [('high', 'high')]
+    flag = finding_id(findings[0])
+    ledger.add_finding(entry.id, flag, 'low', 'later low')
+    with storage.connection() as db:
+        assert db.execute('SELECT severity FROM findings WHERE change_id=?', (entry.id,)).fetchone()[0] == 'high'
+
+
+def test_a_later_finding_can_escalate_a_recorded_anchor(env):
+    _, _, mem = env
+    entry = ledger.record(mem / 'notes.md', 'agent', None, b'note')
+    ledger.add_finding(entry.id, 'same-id', 'medium', 'quoted example')
+    ledger.add_finding(entry.id, 'same-id', 'high', 'active instruction')
+    with storage.connection() as db:
+        row = db.execute('SELECT severity, reason FROM findings WHERE change_id=?', (entry.id,)).fetchone()
+        assert (row['severity'], row['reason']) == ('high', 'active instruction')
+
+
+@pytest.mark.parametrize('previous_state', ['dismissed', 'accepted'])
+def test_escalation_reopens_dismissal_but_respects_exact_version_acceptance(env, previous_state):
+    from agentdetox import review
+    _, _, mem = env
+    path = mem / 'notes.md'
+    path.write_text('note')
+    entry = ledger.record(path, 'agent', None, b'note')
+    ledger.add_finding(entry.id, 'same-id', 'medium', 'quoted example')
+    if previous_state == 'accepted':
+        review.accept(f'C{entry.id}')
+    else:
+        with storage.connection() as db:
+            finding = db.execute('SELECT id FROM findings WHERE change_id=?', (entry.id,)).fetchone()[0]
+        review.dismiss(f'F{finding}')
+    ledger.add_finding(entry.id, 'same-id', 'high', 'active instruction')
+    expected = 'accepted' if previous_state == 'accepted' else 'pending'
+    with storage.connection() as db:
+        row = db.execute('SELECT severity, status FROM findings WHERE change_id=?', (entry.id,)).fetchone()
+        assert (row['severity'], row['status']) == ('high', expected)
+    assert review.get(f'C{entry.id}')['review_state'] == expected
 
 
 def test_blame_tells_each_line_where_it_came_from(env, capsys):

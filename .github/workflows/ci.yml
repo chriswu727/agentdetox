@@ -46,6 +46,8 @@ jobs:
           mypy
       - name: Run tests
         run: python -m pytest -q
+      - name: Check offline detection and recovery regressions
+        run: python bench/accuracy_eval.py
       - name: Check distributions
         run: |
           python -m pip install build twine

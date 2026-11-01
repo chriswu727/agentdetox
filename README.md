@@ -100,6 +100,9 @@ change. `agentdetox review C42` shows the diff, observed writer, attribution evi
 before that change. The current file is backed up in `~/.agentdetox/quarantine` before replacement.
 Accept and restore refuse if the file has changed since that record. The legacy
 `agentdetox agent restore <file>` still restores the recovery checkpoint directly.
+On main, review-based recovery rescans the target version, warns about residual rule findings and
+keeps them pending. Recovery restores a whole version; it does not certify that the file is safe
+or preserve benign additions made within the change being undone.
 
 A missing or damaged metadata store is reported instead of silently rebuilt. Keep a backup of the
 whole store, including `objects/`. The unreleased shell observer upgrades SQLite metadata to schema 2;
@@ -283,6 +286,9 @@ AgentDetox ([lab/README.md](https://github.com/chriswu727/agentdetox/blob/main/l
 its latest results are in `lab/results/latest.md`. The local hook performance suite is
 `python -m bench.hook_latency --samples 100`; recorded budgets and results are in
 [bench/HOOK_LATENCY.md](bench/HOOK_LATENCY.md).
+`python bench/accuracy_eval.py` checks offline prevention, post-write evidence and recovery
+regressions without model calls. Its [results and known misses](bench/ACCURACY.md) are separate
+from the real-agent lab and are not a real-world accuracy estimate.
 
 How a hook call flows: `adapters.py` turns an agent's event into a planned write or a shell
 command, `engine.py` runs the checks and reports signals, `policy.py` decides from your settings
