@@ -19,8 +19,7 @@ from .integrity import Change, StoreError, baseline_paths, gc, snapshot, snapsho
 def notice(project: Path, contradiction_mode: str) -> str:
     """Text for the agent to show the user, or "" when there is nothing to report."""
     try:
-        with storage.connection(write=True):
-            text = _check(project, contradiction_mode)
+        text = _check(project, contradiction_mode)
     except StoreError as e:
         events.record("hook_error", stage="session-store", error=str(e)[:300])
         # Deleting or corrupting the snapshot list is itself a way to launder tampering.
@@ -35,23 +34,26 @@ def _check(project: Path, mode: str) -> str:
     # Only high findings interrupt a session. Medium ones (a user's own "commit without
     # asking" preference, a quoted attack example) stay visible in `agentdetox agent scan`
     # but would otherwise nag at every start and get the tool uninstalled.
+    # Comparing, scanning and the optional model run without the store lock; only the
+    # recording below takes it, so parallel hooks are not left waiting.
     files = discover(project=project)
     roots = [home_dir(), project]
     known = baseline_paths()
     first_run = not known and not ledger.entries(limit=1)
+    digests = {str(cf.path): _digest(cf.path) for cf in files}
     conflicts: list[Contradiction] = []
+    background: list[tuple] = []
     changed = []
     if first_run:
         findings = [f for f in allowlist.unsuppressed(scan_context(files)) if f.severity == "high"]
-        snapshot([cf for cf in files if not any(f.doc_id == str(cf.path) for f in findings)], roots)
+        all_findings = findings
         flagged = {f.doc_id for f in findings}
-        _record_external([Change(str(cf.path), "added", cf.kind) for cf in files if str(cf.path) in flagged],
-                         flagged, findings)
+        changes = [Change(str(cf.path), "added", cf.kind) for cf in files if str(cf.path) in flagged]
+        trusted = [cf for cf in files if str(cf.path) not in flagged]
     else:
         changes, all_findings = verify(files, roots)
         accepted = review.accepted_versions()
         handled = review.handled_findings()
-        digests = {str(cf.path): hashlib.sha256(cf.path.read_bytes()).hexdigest() for cf in files}
         findings = [f for f in allowlist.unsuppressed(all_findings) if f.severity == "high"
                     and not (f.doc_id in accepted and accepted[f.doc_id] == digests.get(f.doc_id))
                     and (f.doc_id, digests.get(f.doc_id), finding_id(f)) not in handled]
@@ -65,7 +67,7 @@ def _check(project: Path, mode: str) -> str:
                 continue
             text = read_text(cf.path)
             if mode == "record":
-                engine.record_in_background(cf, snapshot_text(c.path) or "", project)
+                background.append((cf, snapshot_text(c.path) or ""))
             found = engine.contradictions(cf, snapshot_text(c.path) or "", text, project) if mode == "ask" else []
             found = [conflict for conflict in found
                      if not (c.path in accepted and accepted[c.path] == digests.get(c.path))
@@ -73,16 +75,27 @@ def _check(project: Path, mode: str) -> str:
             if found:
                 conflicts += found
                 flagged.add(c.path)
-        _record_external(changes, flagged, all_findings)
-        for conflict in conflicts:
-            latest = ledger.entries(conflict.new.source, limit=1)
-            if latest:
-                flag = contradiction_flag(conflict)
-                ledger.add_finding(latest[0].id, flag.id, 'medium', flag.what)
         # Flagged files keep their old snapshot entry, so `restore` can still bring back
         # the pre-tampering version; benign out-of-band edits are accepted.
-        snapshot([cf for cf in files if str(cf.path) not in protected | flagged], roots)
+        trusted = [cf for cf in files if str(cf.path) not in protected | flagged]
         changed = [c for c in changes if c.path in flagged]
+
+    def unchanged(path: str) -> bool:
+        """Still the version checked above: a file written meanwhile (by the agent, whose
+        hooks record it, or by anything else) is left for the next check, not trusted unread."""
+        return _digest(Path(path)) == digests.get(path)
+
+    with storage.connection(write=True):
+        _record_external([c for c in changes if unchanged(c.path)], flagged, all_findings)
+        for conflict in conflicts:
+            latest = ledger.entries(conflict.new.source, limit=1)
+            # Only on the record of the version that was checked; a newer or older one never had it.
+            if latest and latest[0].after == digests.get(conflict.new.source):
+                flag = contradiction_flag(conflict)
+                ledger.add_finding(latest[0].id, flag.id, 'medium', flag.what)
+        snapshot([cf for cf in trusted if unchanged(str(cf.path))], roots)
+    for cf, old in background:
+        engine.record_in_background(cf, old, project)
     if not findings and not conflicts:
         return ""
     lines = ["AgentDetox security notice."]
@@ -113,6 +126,13 @@ def _check(project: Path, mode: str) -> str:
     lines.append("Use review accept C<ID> for this exact version, or review dismiss F<ID> for one finding. "
                  "Neither grants a permanent source exception.")
     return "\n".join(lines)
+
+
+def _digest(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except FileNotFoundError:
+        return None
 
 
 def _record_external(changes: list[Change], flagged: set[str], findings=None) -> None:
