@@ -14,7 +14,7 @@ from . import __version__, allowlist, compat, daemon, events, settings, storage
 from .consistency import NLI, NLI_MODEL
 from .context import home_dir
 from .install import claude_code_plugin, claude_code_settings, default_settings_path, plugin_command
-from .integrity import SCHEMA_VERSION, StoreError, is_self_hook, store_dir, usage
+from .integrity import StoreError, is_self_hook, store_dir, usage
 
 
 @dataclass
@@ -188,7 +188,7 @@ def _store() -> list[Check]:
         tracked = usage()["tracked"]
     except StoreError as e:
         return [Check("fail", str(e))]
-    checks = [Check("ok", f"snapshot store {store}: {tracked} file(s) tracked (store version {SCHEMA_VERSION})")]
+    checks = [Check("ok", f"snapshot store {store}: {tracked} file(s) tracked (store format {storage.VERSION})")]
     # Windows reports 0o777 for every directory; access there comes from the profile's ACLs.
     for p in (store, store / "objects") if not compat.WINDOWS else ():
         if p.exists() and stat.S_IMODE(p.stat().st_mode) & 0o077:
