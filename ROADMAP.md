@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated 2026-10-31. The [changelog](CHANGELOG.md) records releases; this document separates
+Last updated 2026-11-01. The [changelog](CHANGELOG.md) records releases; this document separates
 implemented capabilities from product hypotheses and future work.
 
 ## Direction
@@ -21,8 +21,10 @@ self-use; no external user recruitment is planned.
 
 ## Accuracy work
 
-- Implemented on main: [offline regression gallery](bench/ACCURACY.md), diff-prefix and quoted-decoy
-  fixes, stricter remember-intent handling, highest-severity retention and recovery target rescans.
+- Shipped in 0.4.0: [offline regression gallery](bench/ACCURACY.md), diff-prefix and quoted-decoy
+  fixes, stricter remember-intent handling, highest-severity retention and recovery target rescans,
+  and gallery families for shell commands, settings changed outside the agent, writes under another
+  name or place, and notice injection, from an independent security review.
 - Extend benign controls and realistic memory-specific attacks before tuning semantic detection.
   Keep the tuning set separate from future held-out tests; retain known misses in every report.
 - Evaluate paraphrased, delayed and mixed-source writes. Source similarity is evidence for review,
@@ -49,15 +51,25 @@ Still to validate through sustained use: whether weekly review remains useful af
 false alarms per user per week, and installation and recovery usability for new users. Automated
 scenarios cannot establish those outcomes.
 
-## Next: Better observation
+## 0.4: Observation and hardening
 
-- Implemented on main: project-scoped shell-interval observation after successful or failed tools.
+Shipped in 0.4.0 (see the changelog for the full list):
+
+- Project-scoped shell-interval observation after successful or failed tools.
   Detached background writes and changes outside these intervals still need later reconciliation.
+- Project/file filtering, file grouping, search, pagination, terminal review, and a list that says
+  who made each change and its worst finding.
+- The fixes from an independent security and architecture review: settings that run code, watched
+  paths, the shell pre-check, notice injection, a held store lock, one recovery path, and history
+  that does not depend on the clock.
+
+## Next
+
 - Associate changed context with later sessions that loaded it. Do not claim downstream impact
   until the available transcript evidence supports it.
 - Explore paraphrase attribution with explicit uncertainty and benign-project controls.
-- Implemented on main: project/file filtering, file grouping, search, pagination and terminal review.
-  Continue improving these against the maintainer's own work and reproducible local scenarios.
+- Restructure the engine (checks apart from recording) and the store modules, as the architecture
+  review recommends; deferred past 0.4.0 to avoid regressions before the release.
 
 ## Teams and CI
 

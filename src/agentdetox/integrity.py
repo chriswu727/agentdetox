@@ -260,27 +260,34 @@ def reset_baseline() -> Path | None:
         return kept
 
 
-def snapshot(files: list[ContextFile], roots: list[Path]) -> int:
-    """Record recovery checkpoints without forgetting deleted files."""
+def snapshot(files: list[ContextFile], roots: list[Path], expected: dict[str, str | None] | None = None) -> int:
+    """Record recovery checkpoints without forgetting deleted files. With `expected`, a file
+    whose content is no longer the version that was checked is left out, not trusted unread."""
     with store_lock():
-        return _snapshot(files, roots)
+        return _snapshot(files, roots, expected)
 
 
-def _snapshot(files: list[ContextFile], roots: list[Path]) -> int:
+def _snapshot(files: list[ContextFile], roots: list[Path], expected: dict[str, str | None] | None = None) -> int:
     baseline = _load_baseline()
     private_dir(store_dir())
-    private_dir(store_dir() / "objects")
+    objects = private_dir(store_dir() / "objects")
     for cf in files:
         data = cf.path.read_bytes()
         digest = _sha(data)
-        store_object(data)
+        if expected is not None and expected.get(str(cf.path)) != digest:
+            continue
+        mode = stat.S_IMODE(cf.path.stat().st_mode)
         previous = baseline["files"].get(str(cf.path))
-        if previous and previous["sha256"] == digest and previous.get("mode") == stat.S_IMODE(cf.path.stat().st_mode):
+        # Most files are unchanged at every session: their copy is already stored.
+        if previous and previous["sha256"] == digest and previous.get("mode") == mode and (objects / digest).exists():
+            continue
+        store_object(data)
+        if previous and previous["sha256"] == digest and previous.get("mode") == mode:
             continue
         text = data.decode("utf-8", errors="replace")
         baseline["files"][str(cf.path)] = {
             "sha256": digest,
-            "mode": stat.S_IMODE(cf.path.stat().st_mode),
+            "mode": mode,
             "agent": cf.agent,
             "kind": cf.kind,
             "scope": cf.scope,
