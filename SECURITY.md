@@ -55,4 +55,12 @@ Out of scope, and stated in the README:
 - **The store is private.** `~/.agentdetox` is created 0700 and its files 0600.
 - **No imports from the project.** Background processes and the `python -m` hook fallback start
   Python with `-I`, so a repository cannot plant an `agentdetox` package for the hook to import.
-- **No network.** Hooks and checks make no network calls; see [PRIVACY.md](PRIVACY.md).
+- **No network.** Hooks and checks make no network calls. The one download is the Claude Code
+  plugin's fallback when no `agentdetox` is installed: `uvx` fetches the pinned release from PyPI,
+  pinned by version, not by hash. See [PRIVACY.md](PRIVACY.md).
+- **The shell check reads, it does not run.** A command is checked before it runs by parsing it;
+  where the parse is uncertain (a `cd` that may fail, a variable set elsewhere) it assumes the
+  worse case or judges the target by its file name. A script file or a path built at run time
+  is checked right after the command instead.
+- **A blocked store is reported.** If another process holds AgentDetox's store lock, content
+  checks still run and session start says the store is locked.
