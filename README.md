@@ -195,6 +195,14 @@ reports the removal.
   observed edit. Background writes after a shell tool returns are outside that interval.
 - The ledger knows what the hooks saw. A change the agent makes with a shell command is recorded as
   made outside the agent, and text it copied in its own words as the agent's.
+- The check before a shell command understands redirects, `tee`, `sed -i`, `cp`, `mv` and `rm`.
+  Writes through an interpreter (`python -c`, `bash -c`, `node -e`), `git checkout -- <file>`,
+  `curl -o` or a shell variable are not stopped beforehand; the check right after the command
+  finds them and, if the new content is flagged, tells the agent not to follow it.
+- Writes made by MCP tools or notebook edits are not checked when they happen; the next session's
+  comparison finds them.
+- CLAUDE.md files in subfolders are checked when the agent writes them, but changes made to them
+  outside the agent are not looked for.
 - The guard on AgentDetox's own settings recognises plain commands and file writes. An agent that
   can run arbitrary code can still change them (a script that edits `~/.agentdetox` is not
   inspected), and nothing stops a person or process outside the agent.
