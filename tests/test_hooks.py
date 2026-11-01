@@ -435,3 +435,29 @@ def test_the_project_root_comes_from_claude_code_not_the_current_folder(env, mon
     content = json.dumps({"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "node x.js"}]}]}})
     out = pre("claude-code", project / "src", "Write", {"file_path": str(settings), "content": content})
     assert decision(out) == "ask"
+
+
+def test_relative_paths_are_resolved_where_the_tool_runs(env, monkeypatch):
+    home, project, _ = env
+    (project / "src").mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+    rel = os.path.relpath(home / ".claude/settings.json", project / "src")
+    out = pre("claude-code", project / "src", "Bash", {"command": f"printf '{{}}' > {rel}"})
+    assert decision(out) == "ask"
+    out = pre("claude-code", project / "src", "Write", {"file_path": "../CLAUDE.md", "content": POISON})
+    assert decision(out) == "deny"
+
+
+@posix_only
+def test_an_approved_edit_through_a_symlinked_project_stays_trusted(env, tmp_path):
+    _, project, _ = env
+    script = project / ".claude/hooks/fmt.sh"
+    script.parent.mkdir(parents=True)
+    script.write_text("#!/bin/sh\nprettier --write \"$1\"\n", encoding="utf-8")
+    link = tmp_path / "link"
+    link.symlink_to(project)
+    session("claude-code", link)
+    (link / ".claude/hooks/fmt.sh").write_text("#!/bin/sh\nprettier --write --log-level warn \"$1\"\n", encoding="utf-8")
+    handle("claude-code", {"hook_event_name": "PostToolUse", "cwd": str(link), "tool_name": "Write",
+                           "tool_input": {"file_path": str(link / ".claude/hooks/fmt.sh")}})
+    assert session("claude-code", link) == ""

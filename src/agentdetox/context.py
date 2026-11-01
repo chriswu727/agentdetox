@@ -215,28 +215,34 @@ def discover_session(project: Path, agent: str) -> list[ContextFile]:
 def classify(path: Path, agents: list[str] | None = None, project: Path | None = None,
              home: Path | None = None) -> ContextFile | None:
     """Return the ContextFile `path` would be, whether or not it exists yet. A path is
-    matched as written and as its real location, so a write through a symlink counts."""
+    matched as written and, failing that, as its real location, so a write through a
+    symlink counts. The file is named under `root` as given, as `discover` names it, so
+    its snapshot and history stay under one name."""
     home = home or home_dir()
     written = Path(os.path.abspath(path))
     real = Path(os.path.realpath(path))
-    for name in agents or list(PROFILES):
-        profile = PROFILES[name]
-        for scope, root, kind, pattern in _globs(profile, home, project, writes=True):
-            for candidate in dict.fromkeys((real, written)):
-                for base in dict.fromkeys((Path(os.path.realpath(root)), Path(os.path.abspath(root)))):
+    for candidate in dict.fromkeys((written, real)):
+        for name in agents or list(PROFILES):
+            profile = PROFILES[name]
+            for scope, root, kind, pattern in _globs(profile, home, project, writes=True):
+                given = Path(os.path.abspath(root))
+                for base in dict.fromkeys((given, Path(os.path.realpath(root)))):
                     rel = _relative(candidate, base)
                     if rel is not None and _glob_regex(pattern, CASELESS).fullmatch(rel):
-                        return ContextFile(profile.name, kind, scope, candidate)
+                        return ContextFile(profile.name, kind, scope, given / rel if rel else given)
     return None
 
 
 def _relative(path: Path, root: Path) -> str | None:
-    if CASELESS:
-        path, root = Path(str(path).lower()), Path(str(root).lower())
-    try:
-        return path.relative_to(root).as_posix()
-    except ValueError:
+    """`path` relative to `root`, in `path`'s own spelling; ignoring case where the file
+    system does."""
+    parts, base = path.parts, root.parts
+    if len(parts) < len(base):
         return None
+    head = parts[:len(base)]
+    if (tuple(p.lower() for p in head) != tuple(p.lower() for p in base)) if CASELESS else head != base:
+        return None
+    return "/".join(parts[len(base):])
 
 
 _SLUG_MAX = 200

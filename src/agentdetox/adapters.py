@@ -32,9 +32,14 @@ class Adapter:
         """pre (a tool call about to run), post (a file was written), session, or empty."""
         return _EVENTS.get(str(payload.get("hook_event_name", "")).lower(), "")
 
-    def project(self, payload: dict) -> Path:
+    def cwd(self, payload: dict) -> Path:
+        """The folder the tool runs in, which relative paths in its input are relative to."""
         roots = payload.get("workspace_roots") or []
         return Path(payload.get("cwd") or (roots[0] if roots else None) or os.getcwd())
+
+    def project(self, payload: dict) -> Path:
+        """The project whose files the agent loads."""
+        return self.cwd(payload)
 
     def command(self, payload: dict) -> str | None:
         """The command line, if the tool call is a shell command."""
@@ -109,7 +114,7 @@ class ClaudeCode(Adapter):
         # The event's cwd follows the session into subfolders; Claude Code gives hooks the
         # project root, whose CLAUDE.md and .claude/ still apply there.
         root = os.environ.get("CLAUDE_PROJECT_DIR")
-        return Path(root) if root else super().project(payload)
+        return Path(root) if root else self.cwd(payload)
 
     def transcript(self, payload: dict) -> str | None:
         return payload.get("transcript_path")

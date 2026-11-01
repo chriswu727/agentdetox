@@ -114,18 +114,20 @@ def check_write(write: Write, project: Path, run: set[str], transcript: str | No
     return signals
 
 
-def check_command(command: str, project: Path) -> list[Signal]:
-    """What is wrong with a shell command the agent is about to run."""
+def check_command(command: str, project: Path, cwd: Path | None = None) -> list[Signal]:
+    """What is wrong with a shell command the agent is about to run in `cwd` (by default
+    the project root)."""
+    cwd = cwd or project
     tokens = shell.split(command)
     targets = shell.write_targets(tokens)
-    context = [t for t in targets if classify(shell.resolve(t, project), project=project)]
+    context = [t for t in targets if classify(shell.resolve(t, cwd), project=project)]
     if context:
         findings = allowlist.unsuppressed(scan_text("shell", "shell", command, "memory"))
         if _worst(findings) == "high":
             return [Signal(PLANTED, "AgentDetox: shell command writes to agent context and "
                                     + "; ".join(sorted({f.message for f in findings})) + ".",
                            [finding_flag(f) for f in findings if f.severity == "high"])]
-    if any(is_own_state(shell.resolve(t, project)) for t in targets) or shell.changes_agentdetox(tokens):
+    if any(is_own_state(shell.resolve(t, cwd)) for t in targets) or shell.changes_agentdetox(tokens):
         return [Signal(OWN_STATE, "AgentDetox: this command changes AgentDetox's own settings, allowlist or snapshots.")]
     if context:
         return [Signal(SHELL_WRITE, "AgentDetox: this shell command writes to or deletes the agent's memory, rules or "

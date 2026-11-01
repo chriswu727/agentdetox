@@ -24,13 +24,13 @@ from .context import short_path
 def handle(agent: str, payload: dict) -> tuple[int, str]:
     adapter = adapters.get(agent)
     try:
-        event, project = adapter.event(payload), adapter.project(payload)
+        event, project, cwd = adapter.event(payload), adapter.project(payload), adapter.cwd(payload)
         if event == "pre":
-            decision = _pre_tool_use(adapter, payload, project)
+            decision = _pre_tool_use(adapter, payload, project, cwd)
             if decision.action != "allow" or decision.flags:
                 events.record("write_checked", agent=agent,
                               decision=decision.action if decision.action != "allow" else "record",
-                              tool=payload.get("tool_name"), target=_target(adapter, payload, project),
+                              tool=payload.get("tool_name"), target=_target(adapter, payload, cwd),
                               reason=decision.reason[:500], flags=[asdict(f) for f in decision.flags])
             if (adapter.observes_shell and adapter.command(payload) is not None
                     and payload.get('tool_use_id') and decision.action != 'deny'):
@@ -46,7 +46,7 @@ def handle(agent: str, payload: dict) -> tuple[int, str]:
                                           project, failed=event == 'post-failed')
             return 0, adapter.render_observation(text, str(payload.get('hook_event_name')))
         if event == "post":
-            engine.after_write(adapter.written(payload, project), project,
+            engine.after_write(adapter.written(payload, cwd), project,
                                record_contradictions=settings.mode("contradiction") == "record",
                                transcript=adapter.transcript(payload), agent=adapter.name,
                                session=adapter.session(payload), tool=str(payload.get("tool_name") or ""))
@@ -67,22 +67,24 @@ def _report_error(agent: str, stage: str, error: Exception) -> None:
     print(f'agentdetox: hook error ignored (failing open): {type(error).__name__}: {error}', file=sys.stderr)
 
 
-def _target(adapter: adapters.Adapter, payload: dict, project: Path) -> str:
+def _target(adapter: adapters.Adapter, payload: dict, cwd: Path) -> str:
     """The command, or the files, a logged tool call was about."""
     command = adapter.command(payload)
     if command is not None:
         return command[:300]
-    paths = adapter.written(payload, project) or [w.path for w in adapter.writes(payload, project)]
+    paths = adapter.written(payload, cwd) or [w.path for w in adapter.writes(payload, cwd)]
     return ", ".join(short_path(str(p)) for p in paths)[:300]
 
 
-def _pre_tool_use(adapter: adapters.Adapter, payload: dict, project: Path) -> policy.Decision:
+def _pre_tool_use(adapter: adapters.Adapter, payload: dict, project: Path, cwd: Path) -> policy.Decision:
+    # Relative paths in the tool input are relative to cwd; which files count as the
+    # project's context depends on the project root.
     modes = {s.key: s.value for s in settings.load()[0]}
     command = adapter.command(payload)
     if command is not None:
-        return policy.decide(engine.check_command(command, project), adapter.can_ask, modes)
+        return policy.decide(engine.check_command(command, project, cwd), adapter.can_ask, modes)
     run, transcript = policy.checks_to_run(modes), adapter.transcript(payload)
-    writes = adapter.writes(payload, project)
+    writes = adapter.writes(payload, cwd)
     engine.before_write([w.path for w in writes], project)
     return policy.combine([policy.decide(engine.check_write(w, project, run, transcript), adapter.can_ask, modes)
                            for w in writes])
