@@ -168,9 +168,10 @@ def _summary(db, change_id: int) -> dict:
     removed: int | None
     try:
         before, after = _object_text(change['before_hash']), _object_text(change['after_hash'])
-        diff = list(difflib.unified_diff(before.splitlines(), after.splitlines(), lineterm='', n=0))
-        added = sum(1 for d in diff if d.startswith('+') and not d.startswith('+++'))
-        removed = sum(1 for d in diff if d.startswith('-') and not d.startswith('---'))
+        old_lines, new_lines = before.splitlines(), after.splitlines()
+        opcodes = difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False).get_opcodes()
+        added = sum(j2 - j1 for op, _, _, j1, j2 in opcodes if op in ('insert', 'replace'))
+        removed = sum(i2 - i1 for op, i1, i2, _, _ in opcodes if op in ('delete', 'replace'))
     except StoreError:
         added = removed = None
     top = db.execute(f"SELECT severity, reason FROM findings WHERE change_id=? AND status='pending' "

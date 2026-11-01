@@ -763,3 +763,16 @@ def test_the_review_list_says_who_changed_what_and_the_worst_finding(env):
     assert (row["added"], row["removed"]) == (1, 0) and row["finding"]["severity"] == "high"
     shown = review.render_page(data)
     assert "outside the agent · changed +1 −0 lines" in shown and "HIGH: " in shown
+
+
+def test_review_counts_lines_that_look_like_diff_headers(env):
+    from agentdetox import review
+    _, project, mem = env
+    session("claude-code", project)
+    path = mem / "MEMORY.md"
+    path.write_text(path.read_text(encoding="utf-8") + "-- old rule\n", encoding="utf-8")
+    session("claude-code", project)
+    path.write_text(path.read_text(encoding="utf-8").replace("-- old rule", "++ new rule"), encoding="utf-8")
+    session("claude-code", project)
+    row = review.page(all_changes=True, group_by="change")["rows"][0]
+    assert (row["added"], row["removed"]) == (1, 1)
