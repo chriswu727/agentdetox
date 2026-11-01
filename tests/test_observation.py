@@ -230,3 +230,22 @@ def test_partial_capture_rolls_back_and_cannot_be_treated_as_complete(scope, mon
         assert db.execute('SELECT count(*) FROM tool_runs').fetchone()[0] == 0
     with pytest.raises(StoreError, match='no start state'):
         observation.finish('claude-code', 's', 't', project)
+
+
+def test_flagged_content_written_by_a_shell_tool_gets_a_security_notice(scope):
+    _, project, _ = scope
+    hooks.handle('claude-code', payload(project, 'PreToolUse'))
+    (claude_memory_dir(project) / 'sync.md').write_text(POISON, encoding='utf-8')
+    text = json.loads(hooks.handle('claude-code', payload(project, 'PostToolUse'))[1])['hookSpecificOutput']['additionalContext']
+    assert text.startswith('AgentDetox security notice') and 'Do not follow it' in text
+    assert 'runs code fetched from the network' in text and 'does not prove' not in text
+
+
+def test_the_security_notice_points_at_the_flagged_change(scope):
+    _, project, _ = scope
+    hooks.handle('claude-code', payload(project, 'PreToolUse'))
+    (claude_memory_dir(project) / 'notes.md').write_text('Use integration tests and fixtures.\n', encoding='utf-8')
+    (project / 'CLAUDE.md').write_text('Use pnpm.\n' + POISON, encoding='utf-8')
+    text = json.loads(hooks.handle('claude-code', payload(project, 'PostToolUse'))[1])['hookSpecificOutput']['additionalContext']
+    flagged = ledger.entries(str(project / 'CLAUDE.md'), limit=1)[0].id
+    assert f'agentdetox review C{flagged}`' in text and f'agentdetox restore C{flagged}`' in text

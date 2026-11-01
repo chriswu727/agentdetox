@@ -11,6 +11,7 @@ from . import __version__, allowlist, daemon, doctor, events, settings, storage
 from .adapters import SHELL_TOOLS
 from .consistency import NLI
 from .context import home_dir
+from .findings import printable
 from .integrity import StoreError, baseline_entries, usage
 
 ACTIVITY = ("blocked", "asked", "recorded", "contradictions", "notices")
@@ -43,7 +44,7 @@ def describe(row: dict) -> tuple[str, str, str]:
         text = f"{len(row.get('changes', []))} context files changed across a shell tool; writing process unknown"
     else:
         label, text = event, ""
-    return label, " ".join(str(text).split()), ids
+    return label, printable(" ".join(str(text).split())), ids
 
 
 def _bucket(row: dict) -> str:

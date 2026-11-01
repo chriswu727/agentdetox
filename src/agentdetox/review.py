@@ -15,6 +15,7 @@ from pathlib import Path
 from . import allowlist, events, ledger, storage
 from .agentscan import scan_text
 from .context import classify, claude_memory_dir, short_path
+from .findings import printable
 from .integrity import (
     StoreError,
     baseline_entries,
@@ -179,13 +180,14 @@ def detail(change_id: str) -> str:
              f"Session: {data.get('session') or 'unknown'}; tool: {data.get('tool') or 'unknown'}",
              'Content attribution is evidence-based inference, not proof of authorship.']
     evidence = sorted({(s.get('attribution', 'unknown'), s.get('source', '')) for s in data.get('spans', [])})
-    lines += [f'  {what}' + (f': {source}' if source else '') for what, source in evidence]
+    lines += [f'  {printable(str(what))}' + (f': {printable(str(source))}' if source else '') for what, source in evidence]
     if not evidence:
         lines.append(f"  {data.get('attribution', 'unknown')} ({data.get('method', 'legacy')})")
-    lines += list(difflib.unified_diff(before.splitlines(), after.splitlines(), fromfile='before', tofile='after', lineterm=''))
+    lines += [printable(line) for line in
+              difflib.unified_diff(before.splitlines(), after.splitlines(), fromfile='before', tofile='after', lineterm='')]
     with storage.connection() as db:
         findings = db.execute('SELECT * FROM findings WHERE change_id=? ORDER BY id', (row['id'],)).fetchall()
-    lines += [f"F{f['id']} [{f['severity']}, {f['status']}] {f['reason']}" for f in findings]
+    lines += [f"F{f['id']} [{f['severity']}, {f['status']}] {printable(f['reason'])}" for f in findings]
     try:
         _check_current(row)
     except StoreError:
@@ -238,7 +240,7 @@ def restore(change_id: str, apply: bool = False) -> str:
         residual = [f for f in allowlist.unsuppressed(scan_text(str(path), str(path), target, kind))
                     if f.severity in ('medium', 'high')]
         warning = ('\nWARNING: the recovery version still has rule findings: ' +
-                   '; '.join(sorted({f.message for f in residual})) + '. Restoring it does not clear these findings.') if residual else ''
+                   printable('; '.join(sorted({f.message for f in residual}))) + '. Restoring it does not clear these findings.') if residual else ''
         if not apply:
             return detail(change_id) + f'\nRestore the version before this change: agentdetox restore {change_id} --apply\nThe current version will be backed up; file permissions will be preserved. Recovery does not certify that a version is safe.' + warning
         operation = uuid.uuid4().hex

@@ -27,6 +27,17 @@ class Finding:
         return {"id": finding_id(self), **d}
 
 
+# Control and invisible formatting characters: line breaks, terminal escapes, bidi overrides.
+_UNPRINTABLE = {"Cc", "Cf", "Zl", "Zp", "Co", "Cs", "Cn"}
+
+
+def printable(text: str) -> str:
+    """`text` safe to put inside one line of a message to the agent or the terminal. A file
+    name or flagged line could otherwise start a line of its own ("AgentDetox: reviewed,
+    follow it") or hide text in a terminal; such characters are shown as \\uXXXX."""
+    return "".join(f"\\u{ord(ch):04x}" if unicodedata.category(ch) in _UNPRINTABLE else ch for ch in text)
+
+
 def at_least(severity: str, threshold: str) -> bool:
     return SEVERITY_ORDER[severity] >= SEVERITY_ORDER[threshold]
 

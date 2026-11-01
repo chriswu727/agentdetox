@@ -14,7 +14,7 @@ from .allowlist import finding_flag
 from .consistency import NLI, NLI_MODEL
 from .context import KINDS, PROFILES, discover, home_dir, short_path
 from .corpus import load_corpus
-from .findings import ID_LENGTH, SEVERITY_ORDER, at_least, finding_id
+from .findings import ID_LENGTH, SEVERITY_ORDER, at_least, finding_id, printable
 from .hooks import main_hook
 from .install import (
     claude_code_plugin,
@@ -533,9 +533,9 @@ def _print_findings(findings, header: str, fmt: str, allowed: int, extra: dict) 
     print(header + "\n")
     for f in findings:
         print(f"{f.severity.upper():<6} {f.detector:<17} {f.source}  [{finding_id(f)}]")
-        print(f"       {f.message}")
+        print(f"       {printable(f.message)}")
         if f.evidence:
-            print(f"       > {' '.join(f.evidence.split())[:160]}")
+            print(f"       > {printable(' '.join(f.evidence.split())[:160])}")
     counts = Counter(f.severity for f in findings)
     print(f"\n{counts['high']} high, {counts['medium']} medium, {counts['low']} low"
           + (f"; {allowed} allowed and not shown (`agentdetox allow --list`)" if allowed else ""))
@@ -572,9 +572,9 @@ def _print_scan(result, fmt: str) -> None:
     for f in findings:
         tag = f" [cluster {f.cluster}]" if f.cluster else ""
         print(f"{f.severity.upper():<6} {f.detector:<17} {f.source}{tag}")
-        print(f"       {f.message}")
+        print(f"       {printable(f.message)}")
         if f.evidence:
-            print(f"       > {' '.join(f.evidence.split())[:160]}")
+            print(f"       > {printable(' '.join(f.evidence.split())[:160])}")
     counts = Counter(f.severity for f in findings)
     docs_hit = len({f.doc_id for f in findings})
     print(f"\n{counts['high']} high, {counts['medium']} medium, {counts['low']} low across {docs_hit} passage(s)")

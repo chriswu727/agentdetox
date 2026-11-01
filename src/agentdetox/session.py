@@ -12,7 +12,7 @@ from .agentscan import read_text, scan_context
 from .allowlist import contradiction_flag
 from .consistency import Contradiction
 from .context import discover, home_dir, short_path
-from .findings import finding_id
+from .findings import finding_id, printable
 from .integrity import Change, StoreError, baseline_paths, gc, snapshot, snapshot_text, verify
 
 
@@ -93,12 +93,13 @@ def _check(project: Path, mode: str) -> str:
                      "and contain suspicious content:")
         lines += [f"- {c.status}: {short_path(c.path)}" for c in changed]
     for f in sorted(findings, key=lambda f: f.severity != "high"):
-        lines.append(f"- {f.severity.upper()} {short_path(f.source)}: {f.message}"
-                     + (f" | {f.evidence[:120]}" if f.evidence else "") + f" [id {finding_id(f)}]")
+        lines.append(f"- {f.severity.upper()} {short_path(f.source)}: {printable(f.message)}"
+                     + (f" | {printable(f.evidence[:120])}" if f.evidence else "") + f" [id {finding_id(f)}]")
     if conflicts:
         lines.append("New memory written outside the agent contradicts existing memory (a common sign of a "
                      "fabricated fact):")
-        lines += [f'- "{c.new.text[:120]}" ({short_path(c.new.source)}) contradicts "{c.existing.text[:120]}" '
+        lines += [f'- "{printable(c.new.text[:120])}" ({short_path(c.new.source)}) contradicts '
+                  f'"{printable(c.existing.text[:120])}" '
                   f"({short_path(c.existing.source)}) [id {contradiction_flag(c).id}]" for c in conflicts[:5]]
         lines.append("Before relying on either statement, ask the user which one is correct.")
     if findings:
