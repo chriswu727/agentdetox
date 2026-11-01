@@ -35,6 +35,8 @@ def test_installed_and_current(env, capsys, monkeypatch):
     code, out = doctor(capsys, project)
     assert code == 0, out
     assert "hooks installed and current" in out and "file(s) tracked" in out
+    from agentdetox import storage
+    assert f"store format {storage.VERSION}" in out
 
 
 def test_run_from_the_home_folder_reports_the_settings_once(env, capsys):
