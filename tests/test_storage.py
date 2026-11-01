@@ -98,3 +98,19 @@ def test_path_lookup_uses_index():
         plan = db.execute('EXPLAIN QUERY PLAN SELECT data FROM changes WHERE path=? ORDER BY id DESC LIMIT 1',
                           ('/project/CLAUDE.md',)).fetchall()
         assert 'changes_path' in str([tuple(r) for r in plan])
+
+
+def test_a_write_inside_a_read_only_connection_fails_at_once_and_events_still_land(tmp_path, monkeypatch):
+    import pytest
+
+    from agentdetox import events, storage
+    from agentdetox.integrity import StoreError
+    monkeypatch.setenv('AGENTDETOX_HOME', str(tmp_path / 'store'))
+    events.record('first')                       # creates the database
+    with storage.connection() as db:
+        assert db is not None
+        with pytest.raises(StoreError):
+            with storage.connection(write=True):
+                pass
+        events.record('inside a read')
+    assert [e['event'] for e in events.read(None)][-1] == 'inside a read'

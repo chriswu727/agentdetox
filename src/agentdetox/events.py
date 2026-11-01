@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import time
 from pathlib import Path
 
@@ -25,7 +26,7 @@ def record(event: str, **fields) -> None:
         with storage.connection(write=True) as db:
             storage.append_event(db, row)
         return
-    except (OSError, StoreError):
+    except (OSError, StoreError, sqlite3.Error):
         pass
     try:
         private_dir(store_dir())

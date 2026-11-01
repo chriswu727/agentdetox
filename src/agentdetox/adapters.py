@@ -51,7 +51,7 @@ class Adapter:
     def writes(self, payload: dict, project: Path) -> list[Write]:
         """The file changes a tool call would make, from the edit tools' various inputs."""
         tool_input = payload.get("tool_input") or {}
-        patch = next((v for v in tool_input.values() if isinstance(v, str) and "*** Begin Patch" in v), None)
+        patch = _patch(tool_input)
         if patch is not None:
             return _patch_writes(patch, project)
         path_value = next((tool_input[k] for k in ("file_path", "path", "target_file") if k in tool_input), None)
@@ -74,6 +74,9 @@ class Adapter:
     def written(self, payload: dict, project: Path) -> list[Path]:
         """Files a finished tool call wrote."""
         tool_input = payload.get("tool_input") or {}
+        patch = _patch(tool_input)
+        if patch is not None:
+            return [w.path for w in _patch_writes(patch, project)]
         paths = [Path(p) for p in (tool_input.get("file_path"), tool_input.get("path"), payload.get("file_path")) if p]
         return [p if p.is_absolute() else project / p for p in paths]
 
@@ -161,6 +164,17 @@ def _apply_edit(text: str, edit: dict) -> str:
     if not old:
         return text + new
     return text.replace(old, new) if edit.get("replace_all") else text.replace(old, new, 1)
+
+
+_PATH_KEYS = ("file_path", "path", "target_file", "notebook_path")
+
+
+def _patch(tool_input: dict) -> str | None:
+    """A Codex apply_patch body. A call that names its target file is an ordinary write,
+    even when the text it writes mentions the patch format."""
+    if any(tool_input.get(k) for k in _PATH_KEYS):
+        return None
+    return next((v for v in tool_input.values() if isinstance(v, str) and v.lstrip().startswith("*** Begin Patch")), None)
 
 
 def _patch_writes(patch: str, project: Path) -> list[Write]:

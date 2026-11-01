@@ -607,9 +607,6 @@ def _print_trace(rows, fmt: str) -> None:
     print(f"\n{n} passage(s) marked => as likely responsible")
 
 
-if __name__ == "__main__":
-    sys.exit(main())
-
 
 def _review_command(args) -> int:
     if args.command == 'review' and args.interactive:
@@ -672,3 +669,7 @@ def _review_command(args) -> int:
                            search=args.search, page_number=args.page, page_size=args.page_size, group_by=args.group_by)
         print(json.dumps(data, indent=2, ensure_ascii=False) if args.format == "json" else review.render_page(data))
     return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

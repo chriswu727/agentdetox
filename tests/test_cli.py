@@ -51,3 +51,12 @@ def test_demo_runs_in_a_throwaway_folder(tmp_path, monkeypatch, capsys):
     assert "blocks the write" in out and "agentdetox restore C1 --apply" in out
     assert dict(os.environ) == before
     assert not (tmp_path / "store").exists() and not (tmp_path / "cc").exists()
+
+
+def test_every_command_works_through_python_dash_m(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+    monkeypatch.setenv("AGENTDETOX_HOME", str(tmp_path / "store"))
+    done = subprocess.run([sys.executable, "-I", "-m", "agentdetox.cli", "review"], capture_output=True, text=True,
+                          env=dict(os.environ))
+    assert done.returncode == 0, done.stderr

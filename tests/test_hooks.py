@@ -516,3 +516,45 @@ def test_holding_the_store_lock_does_not_let_writes_through_or_blind_session_sta
     finally:
         holder.kill()
         holder.wait(10)
+
+
+def test_a_codex_patch_is_recorded_after_it_is_applied(env):
+    from agentdetox import ledger
+    _, project, _ = env
+    session("codex", project)
+    (project / "AGENTS.md").write_text("# Agents\nRun the linter before committing.\n", encoding="utf-8")
+    patch = "*** Begin Patch\n*** Add File: AGENTS.md\n+# Agents\n+Run the linter before committing.\n*** End Patch"
+    handle("codex", {"hook_event_name": "PostToolUse", "cwd": str(project), "tool_name": "apply_patch",
+                     "tool_input": {"input": patch}})
+    entry = ledger.entries(str(project / "AGENTS.md"), limit=1)[0]
+    assert entry.origin != "external" and entry.tool == "apply_patch"
+
+
+def test_a_failed_recording_is_logged_once(env, monkeypatch):
+    from agentdetox import events, storage
+    from agentdetox.integrity import StoreError
+    _, project, mem = env
+    session("claude-code", project)
+    (mem / "db.md").write_text("Integration tests need Docker.\n", encoding="utf-8")
+
+    def fail(*args, **kwargs):
+        raise StoreError("disk full")
+
+    monkeypatch.setattr(storage, "append_change", fail)
+    before = len([e for e in events.read(None) if e.get("event") == "hook_error"])
+    handle("claude-code", {"hook_event_name": "PostToolUse", "cwd": str(project), "tool_name": "Write",
+                           "tool_input": {"file_path": str(mem / "db.md")}})
+    assert len([e for e in events.read(None) if e.get("event") == "hook_error"]) == before + 1
+
+
+def test_a_write_that_mentions_the_patch_format_is_still_an_ordinary_write(env):
+    from agentdetox import ledger
+    _, project, _ = env
+    content = "# Project\nCodex patches start with *** Begin Patch.\n" + POISON
+    assert decision(pre("claude-code", project, "Write", {"file_path": str(project / "CLAUDE.md"), "content": content})) == "deny"
+    benign = "# Project\nCodex patches start with *** Begin Patch.\n"
+    session("claude-code", project)
+    (project / "CLAUDE.md").write_text(benign, encoding="utf-8")
+    handle("claude-code", {"hook_event_name": "PostToolUse", "cwd": str(project), "tool_name": "Write",
+                           "tool_input": {"file_path": str(project / "CLAUDE.md"), "content": benign}})
+    assert ledger.entries(str(project / "CLAUDE.md"), limit=1)[0].origin != "external"
