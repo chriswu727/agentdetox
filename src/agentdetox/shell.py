@@ -241,11 +241,16 @@ def write_targets(tokens: list[str], depth: int = 0) -> list[str]:
                     if overflow:
                         scope.env[name] = [*scope.env[name][:_MAX_VALUES - 1], UNKNOWN]
         else:
-            inner = _inner(body) if body else None
-            if inner is not None:
-                found = write_targets(split(inner), depth + 1) if depth < _MAX_DEPTH else []
-            else:
-                found = _segment_targets(body)
+            for variant in _word_variants(words, scope.env):
+                command = _unwrap(variant)
+                inner = _inner(command) if command else None
+                if inner is not None:
+                    found += write_targets(split(inner), depth + 1) if depth < _MAX_DEPTH else []
+                elif command and command[0].startswith(UNKNOWN):
+                    # A program named at run time could be anything that writes its arguments.
+                    found += [a for a in command[1:] if not a.startswith("-")]
+                else:
+                    found += _segment_targets(command)
         # A command's own redirections are opened before it runs, in the folder it starts in.
         for raw in redirects + found:
             for value in _expand(raw, scope.env):
@@ -288,18 +293,34 @@ def _expand(word: str, env: dict[str, list[str]]) -> list[str]:
     """`word` with each variable replaced by each value it may have. A variable whose value is
     not known here (set outside the command, or too many possibilities) makes the result
     UNKNOWN plus whatever literal path follows it, which can still be judged by name."""
-    names = [m.group(1) or m.group(2) for m in _VAR.finditer(word)]
+    names = list(dict.fromkeys(m.group(1) or m.group(2) for m in _VAR.finditer(word)))
     if not names:
         return [word]
+    unknown = [UNKNOWN + _VAR.split(word)[-1].lstrip("/")]
     if any(n not in env or UNKNOWN in env[n] for n in names):
-        tail = _VAR.split(word)[-1].lstrip("/")
-        return [UNKNOWN + tail]
-    out = [word]
-    for name in dict.fromkeys(names):
-        out = [w.replace("${" + name + "}", v).replace("$" + name, v) for w in out for v in env[name]]
-        if len(out) > _MAX_VALUES:
-            return [UNKNOWN + _VAR.split(word)[-1].lstrip("/")]
-    return out
+        return unknown
+    combos: list[dict[str, str]] = [{}]
+    for name in names:
+        combos = [{**c, name: v} for c in combos for v in env[name]]
+        if len(combos) > _MAX_VALUES:
+            return unknown
+    return [_fill(word, c) for c in combos]
+
+
+def _fill(word: str, values: dict[str, str]) -> str:
+    return _VAR.sub(lambda m: values[m.group(1) or m.group(2)], word)
+
+
+def _word_variants(words: list[str], env: dict[str, list[str]]) -> list[list[str]]:
+    """The command's words under each combination of variable values; past the limit, a word
+    with several possible values is treated as unknown."""
+    options = [_expand(w, env) for w in words]
+    combos: list[list[str]] = [[]]
+    for choices in options:
+        combos = [c + [o] for c in combos for o in choices]
+        if len(combos) > _MAX_VALUES:
+            return [[o[0] if len(o) == 1 else UNKNOWN + _VAR.split(w)[-1].lstrip("/") for w, o in zip(words, options)]]
+    return combos
 
 
 def _under(cwd: str, target: str) -> str:
