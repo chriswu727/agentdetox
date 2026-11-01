@@ -105,6 +105,12 @@ class ClaudeCode(Adapter):
     observes_shell = True
     session_chars = 9000
 
+    def project(self, payload: dict) -> Path:
+        # The event's cwd follows the session into subfolders; Claude Code gives hooks the
+        # project root, whose CLAUDE.md and .claude/ still apply there.
+        root = os.environ.get("CLAUDE_PROJECT_DIR")
+        return Path(root) if root else super().project(payload)
+
     def transcript(self, payload: dict) -> str | None:
         return payload.get("transcript_path")
 

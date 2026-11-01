@@ -12,6 +12,13 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
   silently. AgentDetox's own hooks count only when they run this installation.
 - Agent writes that change `env`, helper commands or MCP auto-enable settings need approval, and
   setting an `AGENTDETOX_*` variable through them is denied.
+- Watched files are matched by their real location and, on macOS and Windows, regardless of case,
+  so writing `claude.md` or through a symlink is checked like writing `CLAUDE.md`.
+- CLAUDE.md, CLAUDE.local.md and AGENTS.md in parent folders, output styles and `.claude/hooks`
+  scripts are watched; a CLAUDE.md or AGENTS.md in any subfolder is checked when written. A hook
+  script changed outside the agent is reported at the next session.
+- Claude Code hooks take the project root from `CLAUDE_PROJECT_DIR`, so a session working in a
+  subfolder still guards the project's CLAUDE.md and `.claude/` settings.
 
 ### Added
 

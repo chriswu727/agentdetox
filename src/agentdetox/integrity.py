@@ -27,7 +27,7 @@ from .agentscan import read_text, scan_text
 from .compat import hook_executable, quote_executable, release, try_lock
 from .context import ContextFile
 from .findings import Finding
-from .persistence import RUNS_CODE, guarded_sections, leaves
+from .persistence import RUNS_CODE, WHOLE_FILE, guarded_sections, leaves
 
 # Matches our hook command however the executable path was quoted
 # ("/x/agentdetox" hook, '/a b/agentdetox' hook, "C:\x\agentdetox.EXE" hook, python -m agentdetox hook).
@@ -364,6 +364,8 @@ def _config_changes(doc_id: str, path: Path, new: str, old_sections: dict) -> li
         else:
             verb = "added" if before is None else "removed" if after is None else "changed"
             runs = runs_code_added(key, before, after)
+            if key == WHOLE_FILE and after is not None and "/.claude/hooks/" in path.as_posix():
+                runs = [f"hook script {path.name}"]
             if runs:
                 findings.append(Finding(doc_id, str(path), "config-change", "high",
                                         f"{key} {verb}: adds something that runs on this machine",

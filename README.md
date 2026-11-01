@@ -205,7 +205,7 @@ reports the removal.
 
 | Agent | Files watched | Write checks | Tamper detection |
 |---|---|---|---|
-| Claude Code | CLAUDE.md, CLAUDE.local.md, `.claude/rules`, AGENTS.md, auto memory, skills, subagents, commands, settings, `.mcp.json`, `~/.claude.json` | yes | yes |
+| Claude Code | CLAUDE.md and CLAUDE.local.md (also in parent folders, and in subfolders when written), `.claude/rules`, AGENTS.md, auto memory, skills, subagents, commands, output styles, settings, `.claude/hooks` scripts, `.mcp.json`, `~/.claude.json` | yes | yes |
 | Codex | AGENTS(.override).md, `~/.codex/memories`, `.agents/skills`, `config.toml`, `hooks.json`, `rules/*.rules` | experimental (`install codex` prints the hook) | yes |
 | Cursor | `.cursor/rules`, `.cursorrules`, AGENTS.md, `.cursor/skills`, `mcp.json`, `hooks.json` | experimental; Tab edits cannot be checked | yes |
 | OpenClaw | AGENTS, SOUL, USER, IDENTITY, BOOT, MEMORY, daily memory, skills, `openclaw.json`, extensions | not yet (needs a plugin) | yes |
