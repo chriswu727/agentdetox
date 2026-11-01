@@ -545,3 +545,16 @@ def test_a_failed_recording_is_logged_once(env, monkeypatch):
     handle("claude-code", {"hook_event_name": "PostToolUse", "cwd": str(project), "tool_name": "Write",
                            "tool_input": {"file_path": str(mem / "db.md")}})
     assert len([e for e in events.read(None) if e.get("event") == "hook_error"]) == before + 1
+
+
+def test_a_write_that_mentions_the_patch_format_is_still_an_ordinary_write(env):
+    from agentdetox import ledger
+    _, project, _ = env
+    content = "# Project\nCodex patches start with *** Begin Patch.\n" + POISON
+    assert decision(pre("claude-code", project, "Write", {"file_path": str(project / "CLAUDE.md"), "content": content})) == "deny"
+    benign = "# Project\nCodex patches start with *** Begin Patch.\n"
+    session("claude-code", project)
+    (project / "CLAUDE.md").write_text(benign, encoding="utf-8")
+    handle("claude-code", {"hook_event_name": "PostToolUse", "cwd": str(project), "tool_name": "Write",
+                           "tool_input": {"file_path": str(project / "CLAUDE.md"), "content": benign}})
+    assert ledger.entries(str(project / "CLAUDE.md"), limit=1)[0].origin != "external"

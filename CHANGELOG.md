@@ -7,6 +7,9 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ### Security
 
+- A Write or Edit whose text contained `*** Begin Patch` was parsed as a Codex patch, so a
+  planted CLAUDE.md write could skip the content check by including that marker. Only a call
+  that names no target file is treated as a patch.
 - A hook, helper command (`apiKeyHelper` and the like), MCP server, environment variable or plugin
   added outside the agent is reported at the next session start instead of being accepted
   silently. AgentDetox's own hooks count only when they run this installation.
