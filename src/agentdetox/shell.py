@@ -31,7 +31,8 @@ _VAR = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))"
 _CONTEXT_NAME = re.compile(
     r"[\w~$./\\-]*(?:CLAUDE(?:\.local)?\.md|AGENTS(?:\.override)?\.md|SKILL\.md|MEMORY\.md|\.mcp\.json|\.claude\.json"
     r"|settings(?:\.local)?\.json|\.claude/[\w./-]+|memory/[\w.-]+\.md|\.codex/[\w./-]+|\.cursor/[\w./-]+)", re.I)
-_WRITES = re.compile(r"write|append|open\([^)]*['\"][wax]|unlink|os\.remove|rmtree|rename|os\.replace|truncate"
+_WRITES = re.compile(r"write|append|open\([^,)]*,\s*(?:mode\s*=\s*)?['\"][rb+]*[wax]|unlink|os\.remove|rmtree|rename"
+                     r"|os\.replace|truncate"
                      r"|shutil|copyfile|\bmove\b|fs\.|>", re.I)
 _MAX_DEPTH = 3
 
@@ -158,16 +159,19 @@ def write_targets(tokens: list[str], depth: int = 0) -> list[str]:
     are followed; anything decided at run time is not."""
     targets: list[str] = []
     env = {"HOME": "~"}
-    cwd = ""
+    # Folders relative paths may be relative to. A `cd` in a pipeline or subshell does not
+    # move the commands after it, so after a `cd` both the old and the new folder count:
+    # an extra question at worst, never a missed write.
+    cwds = [""]
     for words, redirects in _segments(tokens):
         words = [_expand(w, env) for w in words]
         if words and all(_ASSIGN.match(w) for w in words):
             env.update((w.partition("=")[0], w.partition("=")[2]) for w in words)
+            body: list[str] = []
             found: list[str] = []
         else:
             body = _unwrap(words)
             if body and compat.program(body[0]) == "cd":
-                cwd = _under(cwd, body[1] if len(body) > 1 else "~")
                 found = []
             else:
                 inner = _inner(body) if body else None
@@ -175,8 +179,11 @@ def write_targets(tokens: list[str], depth: int = 0) -> list[str]:
                     found = write_targets(split(inner), depth + 1) if depth < _MAX_DEPTH else []
                 else:
                     found = _segment_targets(body)
-        targets += [_under(cwd, t) for t in [_expand(r, env) for r in redirects] + found]
-    return targets
+        # A command's own redirections are opened before it runs, so a `cd` moves only later ones.
+        targets += [_under(cwd, t) for cwd in cwds for t in [_expand(r, env) for r in redirects] + found]
+        if body and compat.program(body[0]) == "cd":
+            cwds = list(dict.fromkeys(cwds + [_under(cwd, body[1] if len(body) > 1 else "~") for cwd in cwds]))
+    return list(dict.fromkeys(targets))
 
 
 def _expand(word: str, env: dict[str, str]) -> str:

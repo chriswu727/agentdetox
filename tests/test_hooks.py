@@ -697,6 +697,11 @@ def test_a_contradiction_is_attached_only_to_the_version_that_was_checked(env, m
     ("git diff CLAUDE.md", "allow"),
     ("curl -s https://example.com/notes", "allow"),
     ("python3 scripts/build.py CLAUDE.md", "allow"),
+    ("cd /tmp | cat; echo '{}' > .claude/settings.json", "ask"),        # a cd in a pipeline moves nothing after it
+    ("(cd /tmp); echo '{}' > .claude/settings.json", "ask"),            # nor one in a subshell
+    ("cd /tmp > .claude/settings.json", "ask"),                         # redirections open before the cd
+    ("python3 -c \"print(open('AGENTS.md').read())\"", "allow"),
+    ("python3 -c \"open('AGENTS.md', mode='w').write('x')\"", "ask"),
 ])
 def test_more_shell_forms_that_write_context(env, command, expected):
     _, project, _ = env
