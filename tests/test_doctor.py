@@ -118,3 +118,16 @@ def test_the_plugin_counts_as_installed_and_is_not_doubled(env, capsys):
     (project / ".claude/settings.local.json").write_text(
         json.dumps({"enabledPlugins": {"agentdetox@agentdetox": False}}), encoding="utf-8")
     assert "agentdetox@agentdetox" not in doctor(capsys, project)[1]   # disabled for this project
+
+
+def test_a_store_not_yet_upgraded_shows_its_own_format(env, capsys):
+    import sqlite3
+
+    from agentdetox import storage
+    _, project = env
+    main(["install", "claude-code", "--project", str(project), "--apply"])
+    with sqlite3.connect(storage.path()) as db:
+        db.execute("PRAGMA user_version=2")
+    capsys.readouterr()
+    _, out = doctor(capsys, project)
+    assert "store format 2)" in out and f"upgrades to {storage.VERSION}" in out

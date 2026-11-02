@@ -25,7 +25,7 @@ from pathlib import Path
 
 from .agentscan import read_text, scan_text
 from .compat import hook_executable, quote_executable, release, try_lock
-from .context import ContextFile
+from .context import ContextFile, is_hook_script
 from .findings import Finding
 from .persistence import RUNS_CODE, WHOLE_FILE, guarded_sections, leaves
 
@@ -96,14 +96,19 @@ def _without_own(key: str, section: str) -> str:
 def runs_code_added(key: str, before: str | None, after: str | None) -> list[str]:
     """What a change to a guarded config section added that runs on this machine: a hook,
     helper command, MCP server, environment variable or plugin, other than AgentDetox's own."""
-    if after is None or key.rsplit(".", 1)[-1] not in RUNS_CODE:
+    name = key.rsplit(".", 1)[-1]
+    if after is None or name not in RUNS_CODE:
         return []
     try:
+        if name == "enableAllProjectMcpServers" and json.loads(after) is not True:
+            return []
         old = leaves({key: _without_own(key, before)}, ordered=True) if before else set()
         new = leaves({key: _without_own(key, after)}, ordered=True)
     except ValueError:
         return []
-    return [f"{k}: {v}" for k, v in sorted(new - old)]
+    # Of a status line, only its command runs; padding and the like do not.
+    return [f"{k}: {v}" for k, v in sorted(new - old)
+            if name != "statusLine" or k.split("[")[0].endswith(".command") or k == key]
 
 
 def store_dir() -> Path:
@@ -318,6 +323,8 @@ def verify(files: list[ContextFile], roots: list[Path]) -> tuple[list[Change], l
     changes: list[Change] = []
     findings: list[Finding] = []
     current = {str(cf.path): cf for cf in files}
+    root_strs = [str(r) + os.sep for r in roots]
+    known = {r for r in root_strs if any(p.startswith(r) for p in baseline)}
 
     for path, cf in current.items():
         entry = baseline.get(path)
@@ -325,6 +332,10 @@ def verify(files: list[ContextFile], roots: list[Path]) -> tuple[list[Change], l
         if entry is None:
             changes.append(Change(path, "added", cf.kind))
             findings.extend(scan_text(path, path, text, cf.kind))
+            # A config file that appeared where AgentDetox has looked before is checked like a
+            # change; a project seen for the first time is its own, which the agent asks to trust.
+            if cf.kind == "config" and max((r for r in root_strs if path.startswith(r)), key=len, default=None) in known:
+                findings.extend(_config_changes(path, cf.path, text, {}))
             continue
         if _sha(cf.path.read_bytes()) == entry["sha256"]:
             continue
@@ -350,7 +361,6 @@ def verify(files: list[ContextFile], roots: list[Path]) -> tuple[list[Change], l
                 f.message = f"{f.message} (added since snapshot)"
                 findings.append(f)
 
-    root_strs = [str(r) + os.sep for r in roots]
     for path, entry in baseline.items():
         if path not in current and any(path.startswith(r) for r in root_strs) and not Path(path).exists():
             changes.append(Change(path, "deleted", entry["kind"]))
@@ -383,17 +393,51 @@ def _config_changes(doc_id: str, path: Path, new: str, old_sections: dict) -> li
                                     f"AgentDetox hooks were removed from {key}", ""))
         else:
             verb = "added" if before is None else "removed" if after is None else "changed"
-            runs = runs_code_added(key, before, after)
-            if key == WHOLE_FILE and after is not None and "/.claude/hooks/" in path.as_posix():
-                runs = [f"hook script {path.name}"]
-            if runs:
-                findings.append(Finding(doc_id, str(path), "config-change", "high",
-                                        f"{key} {verb}: adds something that runs on this machine",
-                                        "; ".join(runs)[:200]))
-            else:
-                findings.append(Finding(doc_id, str(path), "config-change", "medium",
-                                        f"{key} {verb} since snapshot", (after or "")[:200]))
+            runs = _runs_finding(doc_id, path, key, before, after)
+            findings.append(runs or Finding(doc_id, str(path), "config-change", "medium",
+                                            f"{key} {verb} since snapshot", (after or "")[:200]))
     return findings
+
+
+_RUNS_LABEL = {"hooks": "hook", "statusLine": "status line command", "mcpServers": "MCP server",
+               "mcp": "MCP server", "mcp_servers": "MCP server", "notify": "notify command",
+               "env": "environment variable", "enabledPlugins": "plugin",
+               "enableAllProjectMcpServers": "automatic approval of project MCP servers",
+               "enabledMcpjsonServers": "approved project MCP server", "extraKnownMarketplaces": "plugin marketplace"}
+# Variables that make the programs the agent runs load other code, or send their traffic
+# elsewhere. Any other variable is worth recording but does not run anything.
+_RISKY_ENV = re.compile(r"NODE_OPTIONS|BASH_ENV|ENV|ZDOTDIR|PATH|LD_\w+|DYLD_\w+|PYTHON(PATH|STARTUP|HOME)|"
+                        r"PERL5?(OPT|LIB)|RUBY(OPT|LIB)|JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|GIT_\w+|\w*_BASE_URL|"
+                        r"\w*_PROXY|NODE_EXTRA_CA_CERTS|SSL_CERT_\w+|REQUESTS_CA_BUNDLE|CURL_CA_BUNDLE|"
+                        r"NPM_CONFIG_\w+|PIP_\w+|UV_\w+|NODE_PATH|CLASSPATH", re.IGNORECASE)
+
+
+def _runs_finding(doc_id: str, path: Path, key: str, before: str | None, after: str | None) -> Finding | None:
+    """A finding naming what a guarded section now runs that it did not before (the MCP
+    server, hook event, plugin or variable), or None when it runs nothing new."""
+    name = key.rsplit(".", 1)[-1]
+    if key == WHOLE_FILE and after is not None and is_hook_script(path):
+        return Finding(doc_id, str(path), "config-change", "high",
+                       f"hook script {'added' if before is None else 'changed'}: {path.name}")
+    runs = runs_code_added(key, before, after)
+    if not runs:
+        return None
+    old = json.loads(_without_own(key, before)) if before else None
+    new = json.loads(_without_own(key, after or "null"))
+    names: list[str] = []
+    if isinstance(new, dict) and name != "statusLine":
+        old = old if isinstance(old, dict) else {}
+        names = [k for k, v in new.items() if v != old.get(k) and (name != "enabledPlugins" or v)]
+        if name == "enabledPlugins" and not names:
+            return None  # only disabled
+    elif isinstance(new, list):
+        names = [str(v) for v in new if v not in (old if isinstance(old, list) else [])]
+    added = before is None or (isinstance(old, dict) and all(k not in old for k in names))
+    severity = "medium" if name == "env" and not any(_RISKY_ENV.fullmatch(n) for n in names) else "high"
+    label = _RUNS_LABEL.get(name, f"{name} helper command")
+    message = f"{label} {'added' if added else 'changed'} ({name})" + (f": {', '.join(names)}" if names else "")
+    evidence = "; ".join(r.removeprefix(key + ".").removeprefix(key) for r in runs)
+    return Finding(doc_id, str(path), "config-change", severity, message[:200], evidence[:200])
 
 
 def snapshot_text(path: str) -> str | None:

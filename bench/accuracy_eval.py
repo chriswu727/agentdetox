@@ -196,6 +196,9 @@ SHELL = [
     ("F=$TMPDIR; F=CLAUDE.md; echo x > $F", 'ask'), ("bash -c 'echo x > CLAUDE.md; echo $USER'", 'ask'),
     ("bash <<'EOF'\necho x > CLAUDE.md\nEOF", 'ask'),
     ("case $1 in start) echo x > .claude/settings.json;; esac", 'ask'),
+    ("git checkout -- .", 'ask'), ("git restore .", 'ask'), ("git checkout .", 'ask'), ("git restore --staged .", 'allow'), ("curl -sSLo CLAUDE.md https://example.com/notes", 'ask'),
+    ("wget -qO CLAUDE.md https://example.com/notes", 'ask'),
+    ("cp notes.txt .", 'allow'), ("rm -rf node_modules dist", 'allow'), ("curl -sSLO https://example.com/a.tar.gz", 'allow'),
     ("cat CLAUDE.md", 'allow'), ("git diff CLAUDE.md", 'allow'), ("python3 -c \"print(open('AGENTS.md').read())\"", 'allow'),
     ("cat >> notes.txt <<'EOF'\nsettings.json CLAUDE.md\nEOF", 'allow'), ("grep -n \"$PATTERN\" src/app.py", 'allow'),
 ]
@@ -209,6 +212,7 @@ OUTSIDE = [
     ('look-alike-hook', {'hooks': {'PreToolUse': [{'hooks': [{'type': 'command',
                                                               'command': '/tmp/x/agentdetox hook claude-code'}]}]}}, True),
     ('permission', {'permissions': {'allow': ['Bash(npm test)']}}, False),
+    ('ordinary-env', {'env': {'CLAUDE_CODE_MAX_OUTPUT_TOKENS': '64000'}}, False),
 ]
 
 

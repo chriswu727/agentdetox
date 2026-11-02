@@ -44,7 +44,8 @@ def handle(agent: str, payload: dict) -> tuple[int, str]:
             text = ''
             if adapter.observes_shell and payload.get('tool_use_id'):
                 text = observation.finish(adapter.name, adapter.session(payload), str(payload['tool_use_id']),
-                                          project, failed=event == 'post-failed')
+                                          project, failed=event == 'post-failed',
+                                          command=adapter.command(payload) or '')
             return 0, adapter.render_observation(text, str(payload.get('hook_event_name')))
         if event == "post":
             engine.after_write(adapter.written(payload, cwd), project,
@@ -54,6 +55,8 @@ def handle(agent: str, payload: dict) -> tuple[int, str]:
             return 0, adapter.render_allow()
         if event == "session":
             notice = session.notice(project, settings.mode("contradiction"))
+            if adapter.name == "claude-code":
+                notice = "\n".join(filter(None, (notice, session.upgrade_notice(project))))
             if notice:
                 events.record("session_notice", agent=agent, project=str(project), notice=notice[:1500])
             return 0, adapter.render_session(notice)

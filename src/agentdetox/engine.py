@@ -26,7 +26,7 @@ from .consistency import (
     statements,
     store_statements,
 )
-from .context import ContextFile, classify, named_like_context, related_files, short_path
+from .context import ContextFile, classify, discover, named_like_context, related_files, short_path
 from .findings import Finding, printable
 from .integrity import baseline_entries, object_text, snapshot, store_dir, store_lock
 from .persistence import guard_changes, guarded_sections
@@ -121,10 +121,17 @@ def check_command(command: str, project: Path, cwd: Path | None = None) -> list[
     tokens = shell.split(command_only)
     fed, fed_changes = shell.heredoc_targets(bodies)
     targets = shell.write_targets(tokens) + fed
+    trees = {t.removesuffix(shell.TREE) for t in targets if t.endswith(shell.TREE)}
+    targets = [t.removesuffix(shell.TREE) for t in targets]
     # A target in a folder only known at run time is judged by its name alone.
     context = [t for t in targets if named_like_context(t[len(shell.UNKNOWN):]) if t.startswith(shell.UNKNOWN)]
     targets = [t for t in targets if not t.startswith(shell.UNKNOWN)]
     context += [t for t in targets if any(classify(p, project=project) for p in shell.resolve_all(t, cwd))]
+    folders = [p for t in targets if t in trees for p in shell.resolve_all(t, cwd) if p.is_dir()]
+    if folders:
+        inside = [os.path.realpath(cf.path) for cf in discover(project=project)]
+        context += [str(f) for f in folders
+                    if any(Path(p).is_relative_to(os.path.realpath(f)) for p in inside)]
     if context:
         findings = allowlist.unsuppressed(scan_text("shell", "shell", command, "memory"))
         if _worst(findings) == "high":

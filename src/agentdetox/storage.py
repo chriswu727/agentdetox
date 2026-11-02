@@ -88,6 +88,8 @@ def connection(*, write: bool = False, seed: dict | None = None):
                     yield None
                     return
                 if write:
+                    if version:
+                        _backup(db, store_dir() / f'state.v{version}.sqlite3')
                     db.execute('BEGIN IMMEDIATE')
                     if version == 0:
                         _migrate(db, seed)
@@ -112,6 +114,27 @@ def connection(*, write: bool = False, seed: dict | None = None):
                 _ACTIVE.reset(token)
             if db is not None:
                 db.close()
+
+
+def _backup(db: sqlite3.Connection, target: Path) -> None:
+    """Copy the database before a one-way upgrade, so the version that wrote it can be
+    reinstalled with its history."""
+    from .integrity import write_private
+
+    if target.exists():
+        return
+    write_private(target, b'')
+    copy = sqlite3.connect(target)
+    try:
+        db.backup(copy)
+    finally:
+        copy.close()
+
+
+def format_version() -> int | None:
+    """The format the store is in, which an older store keeps until something writes to it."""
+    with connection() as db:
+        return db.execute('PRAGMA user_version').fetchone()[0] if db is not None else None
 
 
 def _json_lines(file: Path) -> list[dict]:

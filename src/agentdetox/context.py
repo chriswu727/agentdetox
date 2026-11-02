@@ -195,6 +195,49 @@ def _globs(profile: AgentProfile, home: Path, project: Path | None, writes: bool
                 yield "project", parent, kind, name
 
 
+_SCRIPT_SUFFIXES = {".sh", ".bash", ".zsh", ".fish", ".py", ".js", ".mjs", ".cjs", ".ts", ".rb", ".pl", ".php",
+                    ".lua", ".ps1", ".bat", ".cmd", ".exe"}
+# What a package manager installs beside a hook. A hook that imports from one can be changed
+# through it, as through any installed package; watching every file would bury real changes.
+_DEPENDENCY_DIRS = {"node_modules", ".venv", "venv", "site-packages", "__pycache__", ".git"}
+
+
+def _counts(pattern: str, path: Path) -> bool:
+    """Whether a file matching `pattern` is context. In a hooks folder only what can run
+    counts; the logs and state a hook keeps beside itself change all the time."""
+    if not pattern.endswith("hooks/**/*"):
+        return True
+    hooks = _hooks_dir(path)
+    if hooks and _DEPENDENCY_DIRS.intersection(path.relative_to(hooks).parts[:-1]):
+        return False
+    if path.suffix.lower() in _SCRIPT_SUFFIXES:
+        return True
+    try:
+        with path.open("rb") as file:
+            # Windows reports every file as executable.
+            return file.read(2) == b"#!" or (os.name != "nt" and os.access(path, os.X_OK))
+    except FileNotFoundError:
+        return True  # not written yet: what it will hold, a shebang say, is not known here
+    except OSError:
+        return True
+
+
+def watched_roots(project: Path | None) -> list[Path]:
+    """The folders snapshots cover; a watched file deleted outside one goes unnoticed."""
+    roots = [home_dir()] + ([project] if project else [])
+    config = claude_dir()
+    return roots if any(config.is_relative_to(r) for r in roots) else roots + [config]
+
+
+def _hooks_dir(path: Path) -> Path | None:
+    return next((d for d in reversed(path.parents)
+                 if d.name == "hooks" and (d.parent.name == ".claude" or d.parent == claude_dir())), None)
+
+
+def is_hook_script(path: Path) -> bool:
+    return _hooks_dir(path) is not None
+
+
 def discover(agents: list[str] | None = None, project: Path | None = None, home: Path | None = None) -> list[ContextFile]:
     home = home or home_dir()
     found: dict[Path, ContextFile] = {}
@@ -203,7 +246,7 @@ def discover(agents: list[str] | None = None, project: Path | None = None, home:
         for scope, root, kind, pattern in _globs(profile, home, project):
             for p in sorted(glob.glob(str(root / pattern), recursive=True, include_hidden=True)):
                 path = Path(p)
-                if path.is_file() and path not in found:
+                if path.is_file() and path not in found and _counts(pattern, path):
                     found[path] = ContextFile(profile.name, kind, scope, path)
     return list(found.values())
 
@@ -216,7 +259,7 @@ def discover_session(project: Path, agent: str) -> list[ContextFile]:
             root, pattern = claude_memory_dir(project, home), '*.md'
         for value in sorted(glob.glob(str(root / pattern), recursive=True, include_hidden=True)):
             path = Path(value)
-            if path.is_file() and not path.is_symlink():
+            if path.is_file() and not path.is_symlink() and _counts(pattern, path):
                 found.setdefault(path, ContextFile(agent, kind, scope, path))
     return list(found.values())
 
@@ -237,7 +280,7 @@ def classify(path: Path, agents: list[str] | None = None, project: Path | None =
                 given = Path(os.path.abspath(root))
                 for base in dict.fromkeys((given, Path(os.path.realpath(root)))):
                     rel = _relative(candidate, base)
-                    if rel is not None and _glob_regex(pattern, CASELESS).fullmatch(rel):
+                    if rel is not None and _glob_regex(pattern, CASELESS).fullmatch(rel) and _counts(pattern, candidate):
                         return ContextFile(profile.name, kind, scope, given / rel if rel else given)
     return None
 

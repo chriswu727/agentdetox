@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -12,7 +13,7 @@ from . import __version__, allowlist, daemon, demo, doctor, events, ledger, revi
 from .agentscan import consistency_findings, scan_context
 from .allowlist import finding_flag
 from .consistency import NLI, NLI_MODEL
-from .context import KINDS, PROFILES, discover, display_path, home_dir, short_path
+from .context import KINDS, PROFILES, discover, display_path, short_path, watched_roots
 from .corpus import load_corpus
 from .findings import ID_LENGTH, SEVERITY_ORDER, at_least, finding_id, printable
 from .hooks import main_hook
@@ -23,9 +24,11 @@ from .install import (
     default_settings_path,
     hook_command,
     install_claude_code,
+    remove_claude_code_hooks,
     uninstall_claude_code,
 )
-from .integrity import StoreError, gc, reset_baseline, snapshot, store_dir, verify
+from .integrity import StoreError, gc, reset_baseline, snapshot, snapshot_text, store_dir, verify
+from .persistence import guarded_sections
 
 
 def _utf8_output() -> None:
@@ -225,6 +228,8 @@ def main(argv: list[str] | None = None) -> int:
         removed, backup = uninstall_claude_code(target)
         print(f"removed AgentDetox hooks from {target} (backup: {backup})" if removed
               else f"no AgentDetox hooks found in {target}")
+        if removed:
+            _trust_own_removal(target, args.project.expanduser().absolute())
         return 0
     if args.command == "agent":
         return _agent(args)
@@ -301,6 +306,28 @@ def _blame(args) -> int:
     return 0
 
 
+def _trust_own_removal(path: Path, project: Path) -> None:
+    """Take the file without AgentDetox's hooks as its new snapshot, as `install` does with
+    them, so the removal is not reported as tampering. Only when nothing else it guards has
+    changed since the snapshot: anything that has is still reported at the next session."""
+    before = snapshot_text(str(path))
+    if before is None:
+        return
+    data = path.read_bytes()
+    try:
+        expected = json.dumps(remove_claude_code_hooks(json.loads(before)))
+    except ValueError:
+        return
+    cf = next((cf for cf in discover(project=project) if cf.path == path), None)
+    if cf is None:
+        return
+    if guarded_sections(path, expected) != guarded_sections(path, data.decode("utf-8", "replace")):
+        print("Other settings in this file changed since AgentDetox last checked it; the next session reports "
+              "them, with the hooks' removal. `agentdetox review` shows them.")
+        return
+    snapshot([cf], watched_roots(project), expected={str(path): hashlib.sha256(data).hexdigest()})
+
+
 def _install(args) -> int:
     project = args.project.expanduser().absolute()
     target = default_settings_path(args.agent_name, args.scope, project)
@@ -321,7 +348,7 @@ def _install(args) -> int:
         files = discover(project=project)
         flagged = {f.doc_id for f in allowlist.unsuppressed(scan_context(files)) if f.severity == "high"}
         trusted = [cf for cf in files if str(cf.path) not in flagged]
-        snapshot(trusted, [home_dir(), project])
+        snapshot(trusted, watched_roots(project))
         kinds = Counter(cf.kind for cf in trusted)
         print(f"AgentDetox hooks added to {short_path(str(target))}"
               + (f" (backup: {short_path(str(backup))})" if backup else "") + ".")
@@ -470,7 +497,7 @@ def _agent_command(args) -> int:
 
     project = None if args.user_only else args.project.expanduser().absolute()
     files = discover(args.agent, project)
-    roots = [home_dir()] + ([project] if project else [])
+    roots = watched_roots(project)
 
     if args.agent_command == "snapshot":
         if args.reset:
