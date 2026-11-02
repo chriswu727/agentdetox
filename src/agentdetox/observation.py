@@ -9,7 +9,7 @@ import stat
 import time
 from pathlib import Path
 
-from . import allowlist, events, ledger, storage
+from . import allowlist, events, ledger, shell, storage
 from .agentscan import scan_text
 from .context import ContextFile, discover_session, short_path
 from .engine import _added_text
@@ -142,17 +142,26 @@ def _approval(path: Path, old: str, new: str, command: str) -> bool:
     added = after - before
     if not command or not added or before - after:
         return False
-    parts = [p.strip() for p in re.split(r'&&|\|\||[;|\n]', command)] + [command.strip()]
+    # Commands as the shell splits them, so a separator inside quotes does not start one.
+    parts: list[list[str]] = [[]]
+    for token in shell.split(command):
+        if token in shell.SEGMENT_BREAKS:
+            parts.append([])
+        else:
+            parts[-1].append(token)
+    whole = command.strip()
     for where, rule in added:
         m = re.fullmatch(r'Bash\((.+)\)', rule, re.S)
         if not where.endswith('permissions.allow') or m is None:
             return False
         body = m.group(1)
         prefix = re.sub(r'(:\*| \*)$', '', body)
-        if prefix == body and body not in parts:
+        words = shell.split(prefix)
+        if not words or '*' in prefix:
             return False
-        if prefix != body and (not prefix.strip() or '*' in prefix or not any(
-                p == prefix or p.startswith(prefix + ' ') for p in parts)):
+        if prefix == body and body != whole and words not in parts:
+            return False
+        if prefix != body and not any(p[:len(words)] == words for p in parts):
             return False
     return True
 

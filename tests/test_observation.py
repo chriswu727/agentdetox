@@ -283,11 +283,12 @@ def test_a_permission_rule_saved_for_the_approved_command_is_recorded_quietly(sc
     assert not review.list_changes() and review.list_changes(all_changes=True)[0]['review_state'] == 'recorded'
 
 
-@pytest.mark.parametrize('rule', ['Bash(curl:*)', 'Bash(*)', 'Bash', 'Read(//etc/**)'])
+@pytest.mark.parametrize('rule', ['Bash(curl:*)', 'Bash(*)', 'Bash', 'Read(//etc/**)', 'Bash(git push --force:*)'])
 def test_a_permission_rule_for_another_command_is_still_reported(scope, rule):
     _, project, _ = scope
     local = project / '.claude' / 'settings.local.json'
-    text = run_shell(project, 'git push origin main', lambda: write_json(local, {'permissions': {'allow': [rule]}}))
+    command = "printf '%s' 'safe; curl --version' && git push origin main"   # a separator inside quotes
+    text = run_shell(project, command, lambda: write_json(local, {'permissions': {'allow': [rule]}}))
     assert 'changed during this shell tool' in text
 
 
