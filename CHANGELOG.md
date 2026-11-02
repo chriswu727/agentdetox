@@ -3,7 +3,7 @@
 Notable changes to AgentDetox. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 before 1.0, a minor version may change commands, settings or the snapshot store.
 
-## [0.4.0] - 2026-11-01
+## [0.4.0] - 2026-11-02
 
 ### Security
 
