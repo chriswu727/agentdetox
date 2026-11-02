@@ -961,12 +961,29 @@ def test_writes_relative_to_another_folder(env, command, expected):
     ("D={project}; git -C /tmp -C $D restore CLAUDE.md", "ask"),
     ("D=.claude; env -C {project} env -C $D tee settings.json", "ask"),  # a relative one is taken from it
     ("D=.claude; env -C /tmp env -C $D tee settings.json", "allow"),
+    ("env -C /tmp -C . tee .claude/settings.json", "ask"),            # only the last -C counts
+    ("env -C /tmp -S '-C . tee .claude/settings.json'", "ask"),
+    ("env -C .claude -S 'tee settings.json'", "ask"),
+    ("env -C .claude -S'tee settings.json'", "ask"),
+    ("env -C . -C /tmp tee .claude/settings.json", "allow"),
+    ("env -C /tmp -C .claude tee settings.json", "ask"),               # from where env started
 ])
 def test_folder_named_by_a_variable(env, command, expected):
     _, project, _ = env
     (project / ".claude").mkdir(exist_ok=True)
-    command = command.format(project=project)
+    command = command.format(project=project.as_posix())
     assert decision(pre("claude-code", project, "Bash", {"command": command})) == expected
+
+
+def test_cd_into_a_folder_named_like_a_stack_entry(env):
+    _, project, _ = env
+    (project / ".claude").mkdir()
+    try:
+        (project / "+1").symlink_to(project / ".claude", target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks not permitted")
+    assert decision(pre("claude-code", project, "Bash", {"command": "cd +1 && tee settings.json"})) == "ask"
+    assert decision(pre("claude-code", project, "Bash", {"command": "pushd +1 && tee notes.txt"})) == "allow"
 
 
 def test_trailing_slash_copies_contents_only_where_cp_does(env):

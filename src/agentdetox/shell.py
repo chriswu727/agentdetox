@@ -166,21 +166,24 @@ def _unwrap_in(words: list[str], folder: str = "") -> tuple[list[str], str]:
             break
         i += 1
         values = _WRAPPER_VALUES.get(name, set())
+        chdir = ""      # the last folder option counts, taken from where this wrapper started
         while i < len(words):
             word = words[i]
             if word == "--":
                 i += 1
                 break
-            if name == "env" and word in ("-S", "--split-string") and i + 1 < len(words):
-                return _unwrap_in(["env", *split(words[i + 1]), *words[i + 2:]], folder)
-            if name == "env" and word.startswith(("-S", "--split-string=")) and len(word) > 2:
+            if name == "env" and word.startswith(("-S", "--split-string")) and word not in ("-S", "--split-string"):
                 value = word.removeprefix("--split-string=") if word.startswith("--") else word[2:]
-                return _unwrap_in(["env", *split(value), *words[i + 1:]], folder)
+                words = [*words[:i], "-S", value, *words[i + 1:]]
+                continue
+            if name == "env" and word in ("-S", "--split-string") and i + 1 < len(words):
+                return _unwrap_in(["env", *(["-C", chdir] if chdir else []), *split(words[i + 1]), *words[i + 2:]],
+                                  folder)
             if word.startswith("-") and word != "-":
                 options, used = _options(words, i, values)
                 for option, given in options:
                     if option in _WRAPPER_DIRS.get(name, ()) and given:
-                        folder = _join(folder, given)
+                        chdir = given
                     elif option in _WRAPPER_HOME.get(name, ()):
                         folder = "~"
                 i += used
@@ -188,6 +191,7 @@ def _unwrap_in(words: list[str], folder: str = "") -> tuple[list[str], str]:
                 i += 1
             else:
                 break
+        folder = _join(folder, chdir) if chdir else folder
         i += _WRAPPER_OPERANDS.get(name, 0)
     return words[i:], folder
 
@@ -406,8 +410,10 @@ def write_targets(tokens: list[str], depth: int = 0) -> list[str]:
 
 def _cd_operands(words: list[str]) -> list[str] | None:
     """The folder a cd or pushd names, past its options (`cd -P dir`, `pushd -n dir`):
-    an empty list for the home folder, None when it goes back to a folder already seen."""
-    if compat.program(words[0]) == "popd" or any(re.fullmatch(r"[+-]\d+", w) for w in words[1:2]):
+    an empty list for the home folder, None when it goes back to a folder already seen
+    (`popd`, and `pushd +1`, which rotates the stack; for cd, `+1` is a folder name)."""
+    name = compat.program(words[0])
+    if name == "popd" or name == "pushd" and any(re.fullmatch(r"[+-]\d+", w) for w in words[1:2]):
         return None
     rest = words[1:]
     while rest and re.fullmatch(r"-[LPe@n]+", rest[0]):
