@@ -121,6 +121,8 @@ def check_command(command: str, project: Path, cwd: Path | None = None) -> list[
     tokens = shell.split(command_only)
     fed, fed_changes = shell.heredoc_targets(bodies)
     targets = shell.write_targets(tokens) + fed
+    targets = [t.removesuffix(shell.INTO) for t in targets if not t.endswith(shell.INTO)
+               or not t.startswith(shell.UNKNOWN) and shell.resolve(t.removesuffix(shell.INTO), cwd).parent.is_dir()]
     trees = {t.removesuffix(shell.TREE) for t in targets if t.endswith(shell.TREE)}
     targets = [t.removesuffix(shell.TREE) for t in targets]
     # A target in a folder only known at run time is judged by its name alone.

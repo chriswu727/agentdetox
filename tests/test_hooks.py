@@ -2,6 +2,7 @@ import json
 import os
 import re
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -896,6 +897,110 @@ def test_a_contradiction_is_attached_only_to_the_version_that_was_checked(env, m
 def test_more_shell_forms_that_write_context(env, command, expected):
     _, project, _ = env
     assert decision(pre("claude-code", project, "Bash", {"command": command})) == expected
+
+
+@pytest.mark.parametrize("command,expected", [
+    ("env -C .claude tee settings.json", "ask"),                     # a wrapper that runs its command elsewhere
+    ("env --chdir=.claude tee settings.json", "ask"),
+    ("env -iC .claude tee settings.json", "ask"),
+    ("sudo -D .claude tee settings.json", "ask"),
+    ("env -C .claude bash -c 'tee settings.json'", "ask"),
+    ("sudo -D src env -C ../.claude tee settings.json", "ask"),
+    ("sudo -i tee .claude.json", "ask"),                             # a login shell starts at home
+    ("sudo -D / env -C .claude tee settings.json", "allow"),         # /.claude is not this project's
+    ("env -C src tee out.txt", "allow"),
+    ("git -C .claude restore settings.json", "ask"),                 # git's options before the subcommand
+    ("git -C .claude checkout -- settings.json", "ask"),
+    ("git -C .claude checkout .", "ask"),
+    ("git -C src -C .. restore CLAUDE.md", "ask"),
+    ("git -c core.autocrlf=false restore CLAUDE.md", "ask"),
+    ("git --git-dir .git restore CLAUDE.md", "ask"),
+    ("git --work-tree=.claude checkout HEAD -- settings.json", "ask"),
+    ("GIT_WORK_TREE=.claude git restore settings.json", "ask"),
+    ("export GIT_WORK_TREE=.claude; git restore settings.json", "ask"),
+    ("git -C .claude status", "allow"),
+    ("git -C .claude log -- settings.json", "allow"),
+    ("git -C src restore app.py", "allow"),
+    ("cd -P .claude && tee settings.json", "ask"),                   # cd's own options
+    ("cd -- .claude && tee settings.json", "ask"),
+    ("pushd -n .claude && popd && tee settings.json", "ask"),
+    ("export CDPATH=$HOME; cd work && tee settings.json", "ask"),    # may enter a folder under CDPATH
+    ("cd work && tee settings.json", "allow"),
+    ("cd -P src && tee out.txt", "allow"),
+    ("sudo -Eu root tee CLAUDE.md", "ask"),                          # a value option inside a bundle
+    ("env -iu X tee CLAUDE.md", "ask"),
+    ("sudo -Eu root tee out.txt", "allow"),
+    ("cp /tmp/x/CLAUDE.md .", "ask"),                                # a copy into a folder keeps its name
+    ("cp /tmp/x/settings.json .claude", "ask"),
+    ("cp -t .claude /tmp/x/settings.json", "ask"),
+    ("mv --target-directory=. /tmp/x/CLAUDE.md", "ask"),
+    ("install -m 644 /tmp/x/settings.json .claude", "ask"),
+    ("rsync -a /tmp/x/CLAUDE.md . --exclude y", "ask"),
+    ("ln -s /tmp/x/CLAUDE.md", "ask"),
+    ("mkdir -p d && cp /tmp/x/CLAUDE.md d", "ask"),
+    ("cp -r /tmp/evil/.claude .", "ask"),                            # a folder copied over one holding context
+    ("rsync -a /tmp/evil/ .claude/", "ask"),
+    ("rsync -a src/ dest/ --log-file .claude/settings.json", "ask"),  # an option's value it writes
+    ("rsync -a src/ dest/ --log-file=CLAUDE.md", "ask"),
+    ("rsync -a src/ dest/ --log-file /tmp/rsync.log", "allow"),
+    ("time -o CLAUDE.md make", "ask"),                                # GNU time writes its report there
+    ("env -C .claude time --output=settings.json make", "ask"),
+    ("time -o /tmp/timing.txt make", "allow"),
+    ("cp CLAUDE.md CLAUDE.md.bak", "allow"),
+    ("cp CLAUDE.md /tmp/backup", "allow"),
+    ("cp src/a.txt src/b.txt dist/", "allow"),
+    ("cd src && cp ../README.md .", "allow"),
+    ("mv notes.md .claude/", "allow"),
+    ("cp -r src build", "allow"),
+    ("rsync -av --delete src/ build/", "allow"),
+])
+def test_writes_relative_to_another_folder(env, command, expected):
+    _, project, _ = env
+    (project / ".claude").mkdir(exist_ok=True)
+    (project / ".claude/settings.json").write_text("{}", encoding="utf-8")
+    (project / "src").mkdir(exist_ok=True)
+    assert decision(pre("claude-code", project, "Bash", {"command": command})) == expected
+
+
+@pytest.mark.parametrize("command,expected", [
+    ("D={project}; env -C /tmp env -C \"$D\" tee CLAUDE.md", "ask"),     # an absolute folder replaces the earlier one
+    ("D={project}; git -C /tmp -C $D restore CLAUDE.md", "ask"),
+    ("D=.claude; env -C {project} env -C $D tee settings.json", "ask"),  # a relative one is taken from it
+    ("D=.claude; env -C /tmp env -C $D tee settings.json", "allow"),
+    ("D={relative}; env -C / env -C \"$D\" tee .claude/settings.json", "ask"),  # taken from the root folder
+    ("env -C /tmp -C . tee .claude/settings.json", "ask"),            # only the last -C counts
+    ("env -C /tmp -S '-C . tee .claude/settings.json'", "ask"),
+    ("env -C .claude -S 'tee settings.json'", "ask"),
+    ("env -C .claude -S'tee settings.json'", "ask"),
+    ("env -C . -C /tmp tee .claude/settings.json", "allow"),
+    ("env -C /tmp -C .claude tee settings.json", "ask"),               # from where env started
+])
+def test_folder_named_by_a_variable(env, command, expected):
+    _, project, _ = env
+    (project / ".claude").mkdir(exist_ok=True)
+    command = command.format(project=project.as_posix(), relative=project.as_posix().lstrip("/"))
+    assert decision(pre("claude-code", project, "Bash", {"command": command})) == expected
+
+
+def test_cd_into_a_folder_named_like_a_stack_entry(env):
+    _, project, _ = env
+    (project / ".claude").mkdir()
+    try:
+        (project / "+1").symlink_to(project / ".claude", target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks not permitted")
+    assert decision(pre("claude-code", project, "Bash", {"command": "cd +1 && tee settings.json"})) == "ask"
+    assert decision(pre("claude-code", project, "Bash", {"command": "pushd +1 && tee notes.txt"})) == "allow"
+
+
+def test_trailing_slash_copies_contents_only_where_cp_does(env):
+    _, project, _ = env
+    (project / "assets").mkdir()
+    (project / "assets/a.txt").write_text("x", encoding="utf-8")
+    copy = decision(pre("claude-code", project, "Bash", {"command": "cp -r assets/ ."}))
+    assert copy == ("ask" if sys.platform == "darwin" else "allow")     # BSD cp copies what is in assets/
+    assert decision(pre("claude-code", project, "Bash", {"command": "rsync -a assets/ ."})) == "ask"
+    assert decision(pre("claude-code", project, "Bash", {"command": "mv assets/ dist"})) == "allow"
 
 
 @pytest.mark.parametrize("command", [

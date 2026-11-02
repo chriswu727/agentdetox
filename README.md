@@ -208,12 +208,14 @@ reports the removal.
   made outside the agent, and text it copied in its own words as the agent's.
 - The check before a shell command reads the command, it does not run it. It follows redirects,
   `tee`, `sed -i`, `perl -i`, `cp`, `mv`, `rm` (including a whole folder that holds context files),
-  `git checkout`/`restore` (also of `.`), `curl -o` and `wget -O` (also in bundles such as `-sSLo`),
+  a copy into a folder (`cp x/CLAUDE.md .`, `cp -t .claude …`, `cp -r`), `git checkout`/`restore`
+  (also of `.`, and with `git -C dir`), `curl -o` and `wget -O` (also in bundles such as `-sSLo`),
   inline `python -c`/`node -e` code that names a context file, `bash -c` (also `bash -lc`) and
-  `eval`, wrappers such as `sudo -u root` or `xargs -I {}`, and a `cd` or variable set earlier in the same command. A script
-  file, a path built at run time, or an archive being unpacked is not stopped beforehand; the
-  check right after the command finds the change and, if the new content is flagged, tells the
-  agent not to follow it.
+  `eval`, wrappers such as `sudo -u root`, `env -C dir` or `xargs -I {}`, and a `cd` or variable set
+  earlier in the same command. A script file, a path built at run time (`find … -exec`), a folder
+  copied to a place that holds no context yet, or an archive being unpacked is not stopped
+  beforehand; the check right after the command finds the change and, if the new content is
+  flagged, tells the agent not to follow it.
 - Writes made by MCP tools are not checked when they happen; the next session's comparison finds
   them.
 - CLAUDE.md files in subfolders are checked when the agent writes them, but changes made to them

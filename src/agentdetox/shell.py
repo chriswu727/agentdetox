@@ -9,8 +9,11 @@ target is resolved against the agent's working directory.
 from __future__ import annotations
 
 import glob
+import posixpath
 import re
 import shlex
+import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 from . import compat
@@ -45,6 +48,12 @@ _WRAPPER_VALUES = {
     "caffeinate": {"-t", "-w"},
     "ionice": {"-c", "-n", "-p", "-P", "-u", "--class", "--classdata", "--pid", "--pgid", "--uid"},
 }
+# Options that make a wrapper run its command in another folder: `env -C .claude tee
+# settings.json` writes .claude/settings.json. `sudo -i` starts in the home folder.
+_WRAPPER_DIRS = {"env": {"-C", "--chdir"}, "sudo": {"-D", "--chdir"}}
+_WRAPPER_HOME = {"sudo": {"-i", "--login"}}
+# Wrapper options whose value is a file the wrapper writes: `time -o FILE`.
+_WRAPPER_WRITES = {"time": {"-o", "--output"}}
 # Words a wrapper takes after its options, before the command: `timeout 10 cmd`,
 # `taskset 0x3 cmd`, `chrt 10 cmd`.
 _WRAPPER_OPERANDS = {"timeout": 1, "taskset": 1, "chrt": 1}
@@ -102,9 +111,57 @@ def _segments(tokens: list[str]) -> list[tuple[list[str], list[str]]]:
     return [(w, r) for w, r in out if w or r]
 
 
+def _options(words: list[str], i: int, values: set[str]) -> tuple[list[tuple[str, str | None]], int]:
+    """The options in `words[i]` with the value each takes, and how many words they use:
+    `-u root`, `-uroot`, a bundle such as `-Eu root`, `--user root` and `--user=root`."""
+    word = words[i]
+    following = words[i + 1] if i + 1 < len(words) else ""
+    if word.startswith("--"):
+        name, eq, value = word.partition("=")
+        if eq:
+            return [(name, value)], 1
+        return ([(name, following)], 2) if name in values else ([(name, None)], 1)
+    found: list[tuple[str, str | None]] = []
+    for j, letter in enumerate(word[1:], 1):
+        if f"-{letter}" in values:
+            rest = word[j + 1:]
+            return [*found, (f"-{letter}", rest or following)], 1 if rest else 2
+        found.append((f"-{letter}", None))
+    return found, 1
+
+
+# Joins a folder to a path named by a variable. Whether the path is taken from the folder is
+# only known once the variable is expanded: an absolute value replaces the folder.
+_THEN = "\2"
+
+
+def _join(folder: str, path: str) -> str:
+    """`path` taken from `folder`, also when `path` is a variable whose value is not known yet."""
+    if not folder or not _relative(path):
+        return path
+    if path.startswith("$"):
+        return f"{folder.rstrip('/') or '/'}{_THEN}{path}"
+    return f"{folder.rstrip('/')}/{path}"
+
+
+def _settle(path: str) -> str:
+    """A path joined by `_join`, once its variables are expanded."""
+    first, *rest = path.split(_THEN)
+    for part in rest:
+        first = _under(first, part)
+    return first
+
+
 def _unwrap(words: list[str]) -> list[str]:
-    """The command a wrapper runs: `sudo -u root`, `env -u X Y=1`, `nice -n 5`,
-    `timeout -s KILL 10`, `xargs -I {}` and leading variable assignments are skipped."""
+    return _unwrap_in(words)[0]
+
+
+def _unwrap_in(words: list[str], folder: str = "",
+               written: list[tuple[str, str]] | None = None) -> tuple[list[str], str]:
+    """The command a wrapper runs, and the folder it runs it in relative to where the
+    wrapper started ("" for the same one): `sudo -u root`, `env -u X Y=1`, `nice -n 5`,
+    `timeout -s KILL 10`, `xargs -I {}` and leading variable assignments are skipped.
+    Files the wrappers themselves write are added to `written`, with their folder."""
     i = 0
     while i < len(words):
         if _ASSIGN.match(words[i]):
@@ -115,24 +172,36 @@ def _unwrap(words: list[str]) -> list[str]:
             break
         i += 1
         values = _WRAPPER_VALUES.get(name, set())
+        chdir = ""      # the last folder option counts, taken from where this wrapper started
         while i < len(words):
             word = words[i]
             if word == "--":
                 i += 1
                 break
-            if name == "env" and word in ("-S", "--split-string") and i + 1 < len(words):
-                return _unwrap(["env", *split(words[i + 1]), *words[i + 2:]])
-            if name == "env" and word.startswith(("-S", "--split-string=")) and len(word) > 2:
+            if name == "env" and word.startswith(("-S", "--split-string")) and word not in ("-S", "--split-string"):
                 value = word.removeprefix("--split-string=") if word.startswith("--") else word[2:]
-                return _unwrap(["env", *split(value), *words[i + 1:]])
-            if word in values:
-                i += 2
-            elif word.startswith("-") or _ASSIGN.match(word):
+                words = [*words[:i], "-S", value, *words[i + 1:]]
+                continue
+            if name == "env" and word in ("-S", "--split-string") and i + 1 < len(words):
+                return _unwrap_in(["env", *(["-C", chdir] if chdir else []), *split(words[i + 1]), *words[i + 2:]],
+                                  folder, written)
+            if word.startswith("-") and word != "-":
+                options, used = _options(words, i, values)
+                for option, given in options:
+                    if option in _WRAPPER_DIRS.get(name, ()) and given:
+                        chdir = given
+                    elif option in _WRAPPER_HOME.get(name, ()):
+                        folder = "~"
+                    elif option in _WRAPPER_WRITES.get(name, ()) and given and written is not None:
+                        written.append((folder, given))
+                i += used
+            elif word == "-" or _ASSIGN.match(word):
                 i += 1
             else:
                 break
+        folder = _join(folder, chdir) if chdir else folder
         i += _WRAPPER_OPERANDS.get(name, 0)
-    return words[i:]
+    return words[i:], folder
 
 
 def _inner(words: list[str]) -> str | None:
@@ -252,16 +321,21 @@ class _Scope:
     back anywhere earlier, so following exactly which one took effect would risk missing a
     write. Checking every possibility can only add a question."""
 
-    def __init__(self, cwds: list[str], env: dict[str, list[str]], lost: bool = False) -> None:
+    def __init__(self, cwds: list[str], env: dict[str, list[str]], lost: bool = False,
+                 made: set[str] | None = None) -> None:
         self.cwds = cwds
         self.env = env
         self.lost = lost            # a folder decided at run time, or too many to follow
+        self.made = made or set()   # folders `mkdir` may have created
 
     def copy(self) -> _Scope:
-        return _Scope(list(self.cwds), {k: list(v) for k, v in self.env.items()}, self.lost)
+        return _Scope(list(self.cwds), {k: list(v) for k, v in self.env.items()}, self.lost, set(self.made))
 
 
 UNKNOWN = "?/"   # prefix of a target whose folder is unknown; only its name can be checked
+# Ends a file a copy writes only if its destination is a folder (`cp x/CLAUDE.md dest`):
+# whether `dest` is one is known when the command is checked, not here.
+INTO = "\1"
 
 
 def write_targets(tokens: list[str], depth: int = 0) -> list[str]:
@@ -280,13 +354,17 @@ def write_targets(tokens: list[str], depth: int = 0) -> list[str]:
         scope = scopes[-1]
         # A cd or assignment in a pipeline or in the background runs in a subshell of its own.
         lasting = before != "|" and after not in ("|", "&")
-        body = _unwrap(words)
-        found: list[str] = []
+        body, runs_in = _unwrap_in(words)
+        found: list[tuple[str, str]] = []           # (folder it is relative to, target)
         if body and compat.program(body[0]) in _CHANGE_DIR:
-            if lasting and compat.program(body[0]) != "popd":     # popd returns to a folder already seen
-                arg = body[1] if len(body) > 1 else "~"
+            operands = _cd_operands(body)
+            # popd, and pushd +N, return to a folder already seen.
+            if lasting and operands is not None:
+                arg = operands[0] if operands else "~"
                 values = [] if arg == "-" else _expand(arg, scope.env)
-                if not values or any(v.startswith(UNKNOWN) for v in values):
+                # With CDPATH set, `cd name` may enter a folder under any of its entries.
+                if not values or any(v.startswith(UNKNOWN) for v in values) or "CDPATH" in scope.env or any(
+                        w.startswith("CDPATH=") for w in words):
                     scope.lost = True
                 entered = [_under(cwd, v) for cwd in scope.cwds for v in values if not v.startswith(UNKNOWN)]
                 scope.cwds, overflow = _bounded(scope.cwds + entered)
@@ -309,25 +387,58 @@ def write_targets(tokens: list[str], depth: int = 0) -> list[str]:
             if dynamic:
                 # A program or option from a variable (`$C`, `sed $O`) may turn on writing, so
                 # any of the command's arguments may be written.
-                found += [a for i, a in enumerate(body) if i and i not in code and not a.startswith("-")]
+                found += [(runs_in, a) for i, a in enumerate(body) if i and i not in code and not a.startswith("-")]
             for variant in variants:
-                command = _unwrap(variant)
+                wrapped: list[tuple[str, str]] = []
+                command, folder = _unwrap_in(variant, written=wrapped)
+                found += wrapped
                 inner = _inner(command) if command else None
                 if inner is not None:
-                    found += write_targets(split(inner), depth + 1) if depth < _MAX_DEPTH else []
+                    found += [(folder, t) for t in write_targets(split(inner), depth + 1)] if depth < _MAX_DEPTH else []
                 elif command and command[0].startswith(UNKNOWN):
                     # A program named at run time could be anything that writes its arguments.
-                    found += [a for a in command[1:] if not a.startswith("-")]
+                    found += [(folder, a) for a in command[1:] if not a.startswith("-")]
+                elif command and compat.program(command[0]) == "mkdir":
+                    scope.made |= {posixpath.normpath(_under(cwd, v)) for a in command[1:] if not a.startswith("-")
+                                   for v in map(_settle, _expand(_join(folder, a), scope.env))
+                                   for cwd in scope.cwds}
                 else:
-                    found += _segment_targets(command)
+                    trees = [w.partition("=")[2] for w in variant[:len(variant) - len(command)]
+                             if w.startswith("GIT_WORK_TREE=")] + scope.env.get("GIT_WORK_TREE", [])
+                    found += [(_join(folder, f), t) for f, t in _segment_targets(command, trees)]
         # A command's own redirections are opened before it runs, in the folder it starts in.
-        for raw in redirects + found:
-            for value in _expand(raw, scope.env):
+        for folder, raw in [("", r) for r in redirects] + found:
+            for value in (v for e in _expand(raw, scope.env) for v in _within(folder, e, scope.env)):
+                if value.endswith(INTO) and posixpath.normpath(posixpath.dirname(value)) in scope.made:
+                    value = value.removesuffix(INTO)    # a folder made earlier in the command
                 if value.startswith(UNKNOWN) or _relative(value) and scope.lost:
                     targets.append(UNKNOWN + value.removeprefix(UNKNOWN))
                 if not value.startswith(UNKNOWN):
                     targets += [_under(cwd, value) for cwd in scope.cwds]
     return list(dict.fromkeys(t for t in targets if t != UNKNOWN))
+
+
+def _cd_operands(words: list[str]) -> list[str] | None:
+    """The folder a cd or pushd names, past its options (`cd -P dir`, `pushd -n dir`):
+    an empty list for the home folder, None when it goes back to a folder already seen
+    (`popd`, and `pushd +1`, which rotates the stack; for cd, `+1` is a folder name)."""
+    name = compat.program(words[0])
+    if name == "popd" or name == "pushd" and any(re.fullmatch(r"[+-]\d+", w) for w in words[1:2]):
+        return None
+    rest = words[1:]
+    while rest and re.fullmatch(r"-[LPe@n]+", rest[0]):
+        rest = rest[1:]
+    if rest[:1] == ["--"]:
+        rest = rest[1:]
+    return rest[:1]
+
+
+def _within(folder: str, value: str, env: dict[str, list[str]]) -> list[str]:
+    """`value` taken from `folder`, with the folder's variables expanded."""
+    if not folder or value.startswith(UNKNOWN) or not _relative(value):
+        return [value]
+    return [UNKNOWN + value if f.startswith(UNKNOWN) else _under(f, value)
+            for f in map(_settle, _expand(folder, env))]
 
 
 _CHANGE_DIR = {"cd", "pushd", "popd"}
@@ -417,37 +528,132 @@ def _under(cwd: str, target: str) -> str:
     return f"{cwd.rstrip('/')}/{target}"
 
 
-def _segment_targets(seg: list[str]) -> list[str]:
+def _segment_targets(seg: list[str], work_trees: Sequence[str] = ()) -> list[tuple[str, str]]:
+    """What a command writes, each with the folder it is relative to ("" for the folder
+    the command runs in)."""
     if not seg:
         return []
     # Skip a trailing fd number left over from "2>&1" style redirects.
     args = [a for a in seg[1:] if not a.startswith("-") and not a.isdigit()]
     name = compat.program(seg[0])
-    if name == "tee":
-        return args
-    if name == "sed" and any(a.startswith("-i") for a in seg[1:]):
-        return args[1:]
-    if name in _COPY_COMMANDS and args:
-        return [args[-1]]
-    if name in _DELETE_COMMANDS:
-        return [a + TREE for a in args]
-    if name == "dd":
-        return [a[3:] for a in seg[1:] if a.startswith("of=")]
     if name == "git":
-        return [a + TREE for a in _git_targets(seg[1:])]
-    if name in ("curl", "wget"):
-        return _download_targets(name, seg[1:])
-    if name in _INTERPRETERS:
-        return _interpreter_targets(name, seg[1:])
-    return []
+        return _git_targets(seg[1:], work_trees)
+    if name in _COPY_COMMANDS:
+        return [("", t) for t in _copy_targets(name, seg[1:])]
+    if name == "tee":
+        found = args
+    elif name == "sed" and any(a.startswith("-i") for a in seg[1:]):
+        found = args[1:]
+    elif name in _DELETE_COMMANDS:
+        found = [a + TREE for a in args]
+    elif name == "dd":
+        found = [a[3:] for a in seg[1:] if a.startswith("of=")]
+    elif name in ("curl", "wget"):
+        found = _download_targets(name, seg[1:])
+    elif name in _INTERPRETERS:
+        found = _interpreter_targets(name, seg[1:])
+    else:
+        found = []
+    return [("", t) for t in found]
 
 
-def _git_targets(args: list[str]) -> list[str]:
-    words = [a for a in args if not a.startswith("-")]
-    sub = words[0] if words else ""
+# Copy options that take the next word as their value.
+_COPY_VALUES = {
+    "cp": {"-t", "-S", "--target-directory", "--suffix"},
+    "mv": {"-t", "-S", "--target-directory", "--suffix"},
+    "ln": {"-t", "-S", "--target-directory", "--suffix"},
+    "install": {"-t", "-S", "-m", "-o", "-g", "--target-directory", "--suffix", "--mode", "--owner", "--group"},
+    "rsync": {"-e", "-f", "-T", "--rsh", "--filter", "--exclude", "--include", "--exclude-from", "--include-from",
+              "--files-from", "--temp-dir", "--backup-dir", "--suffix", "--chmod", "--chown", "--log-file"},
+}
+# rsync options whose value is a file it writes.
+_COPY_WRITES = {"--log-file", "--write-batch", "--only-write-batch"}
+
+
+def _copy_targets(name: str, args: list[str]) -> list[str]:
+    """What a copy, move or link writes: its destination, and each source's name inside it
+    when that is a folder (`cp x/CLAUDE.md .`, `cp -t .claude x/settings.json`). A folder
+    copied or moved into it replaces what is under that name."""
+    values = _COPY_VALUES.get(name, set())
+    operands: list[str] = []
+    written: list[str] = []
+    folder = None
+    recursive = name in ("mv", "rsync")
+    i = 0
+    while i < len(args):
+        word = args[i]
+        if word == "--":
+            operands += args[i + 1:]
+            break
+        if word.startswith("-") and word != "-":
+            options, used = _options(args, i, values)
+            for option, value in options:
+                if option in ("-t", "--target-directory") and name != "rsync" and value:
+                    folder = value
+                recursive |= option in ("-r", "-R", "-a", "--recursive", "--archive")
+                if option in _COPY_WRITES and name == "rsync" and value:
+                    written.append(value)
+            i += used
+            continue
+        if not word.isdigit():
+            operands.append(word)
+        i += 1
+    if folder is None and len(operands) == 1 and name == "ln":
+        folder = ""    # `ln -s x/CLAUDE.md` links CLAUDE.md here
+    elif folder is None:
+        if not operands:
+            return written
+        *sources, dest = operands
+        if not sources:
+            return [*written, dest]
+        # Several sources, or a destination written as a folder, can only be a folder.
+        certain = len(sources) > 1 or dest.endswith("/") or posixpath.basename(dest) in (".", "..")
+        return [*written, dest, *(_inside(name, dest, s, recursive) + ("" if certain else INTO) for s in sources)]
+    return [*written, *(_inside(name, folder, s, recursive) for s in operands)]
+
+
+# BSD cp, as on macOS, copies what is in `src/` rather than the folder itself; GNU cp does not.
+_BSD = sys.platform.startswith(("darwin", "freebsd", "openbsd", "netbsd"))
+
+
+def _inside(program: str, folder: str, source: str, recursive: bool) -> str:
+    """Where `source` lands when copied into `folder`. rsync copies what is in `src/`,
+    not the folder itself."""
+    contents = recursive and source.endswith("/") and (program == "rsync" or program == "cp" and _BSD)
+    name = "." if contents else posixpath.basename(source.rstrip("/"))
+    return (f"{folder.rstrip('/')}/{name}" if folder else name) + (TREE if recursive else "")
+
+
+# Git options before the subcommand that take the next word as their value.
+_GIT_VALUES = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env",
+               "--attr-source"}
+
+
+def _git_targets(args: list[str], work_trees: Sequence[str]) -> list[tuple[str, str]]:
+    """Files a git checkout or restore writes, each with the folder it is relative to:
+    `git -C .claude restore settings.json` writes .claude/settings.json. Given another work
+    tree (`--work-tree`, GIT_WORK_TREE), a path may be relative to either folder."""
+    folder = ""
+    trees = list(work_trees)
+    i = 0
+    while i < len(args) and args[i].startswith("-"):
+        name, eq, value = args[i].partition("=")
+        if name in _GIT_VALUES and not eq:
+            value = args[i + 1] if i + 1 < len(args) else ""
+            i += 1
+        i += 1
+        if name == "-C" and value:
+            folder = _join(folder, value)
+        elif name == "--work-tree" and value:
+            trees.append(_join(folder, value))
+    return [(f, t + TREE) for t in _git_paths(args[i:]) for f in dict.fromkeys([folder, *trees])]
+
+
+def _git_paths(args: list[str]) -> list[str]:
+    sub = args[0] if args else ""
     if sub not in ("checkout", "restore"):
         return []
-    rest = args[args.index(sub) + 1:]
+    rest = args[1:]
     options = rest[:rest.index("--")] if "--" in rest else rest
     if sub == "restore" and any(a in ("-S", "--staged") for a in options) and not any(
             a in ("-W", "--worktree") for a in options):
