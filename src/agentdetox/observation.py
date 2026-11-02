@@ -11,10 +11,10 @@ from pathlib import Path
 
 from . import allowlist, events, ledger, shell, storage
 from .agentscan import scan_text
-from .context import ContextFile, discover_session, short_path
+from .context import ContextFile, discover_session, short_path, watched_roots
 from .engine import _added_text
 from .findings import Finding, finding_id, printable
-from .integrity import StoreError, _config_changes, object_text, store_lock, store_object
+from .integrity import StoreError, _config_changes, object_text, snapshot, store_lock, store_object
 from .persistence import WHOLE_FILE, guarded_sections, leaves
 
 MAX_AGE = 24 * 3600
@@ -109,6 +109,8 @@ def finish(agent: str, session: str, tool_id: str, project: Path, *, failed: boo
             runs = sorted({f.message for f in findings if f.severity == 'high' and f.detector == 'config-change'})
             if runs:
                 settings.append((f'C{entry.id}', f'{short_path(name)} (C{entry.id}): {printable("; ".join(runs))}'))
+                if not high:  # told now, so the next session compares from this version, as its own notice does
+                    snapshot([cf], watched_roots(project), expected={name: after_hash})
         db.execute('DELETE FROM tool_runs WHERE id=?', (run_id,))
         if changes:
             events.record('shell_context_changed', agent=agent, project=str(project), session=session,

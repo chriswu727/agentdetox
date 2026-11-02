@@ -88,8 +88,8 @@ scans what is already there before recording recovery checkpoints; `agentdetox a
   server, a plugin or marketplace, or an environment variable that loads code or redirects traffic
   (`NODE_OPTIONS`, `*_BASE_URL`, proxies and the like). If you added it yourself (`claude mcp add`,
   `/plugin install`), there is nothing to do; it stays in `agentdetox review` until you accept or
-  dismiss it. Other edits that look benign, such as a new permission or an ordinary variable, are
-  recorded silently as made outside the agent.
+  dismiss it. Other edits that look benign, such as a new permission or an ordinary variable, do
+  not interrupt; they are listed in `agentdetox review` as made outside the agent.
 
 **Where memory came from.** A memory write that is mostly copied from web pages, MCP data, command
 output or files the agent just read asks for approval, unless you asked the agent to remember it.
@@ -226,8 +226,15 @@ reports the removal.
   reported for the hooks and MCP servers it brings; Claude Code asks you to trust it.
 - A shell command that adds a permission rule for itself (`Bash(python:*)` while running a Python
   script) looks the same as Claude Code saving your approval, and is recorded without a notice.
-- In `.claude/hooks`, only scripts are watched (a script extension, `#!`, or the executable bit). A
-  data file that a hook script reads is not.
+- In `.claude/hooks`, only scripts are watched (a script extension, `#!`, or the executable bit),
+  not packages installed beside them (`node_modules`, `.venv`). A data file or package that a hook
+  script loads is not.
+- Routine changes outside the agent, such as a `git checkout` or formatter touching CLAUDE.md or a
+  permission saved for a tool other than Bash, each add an item to `agentdetox review`. There is no
+  bulk accept yet; once the file has changed again, an older item is cleared by dismissing its
+  findings one at a time.
+- `restore C42` refuses once the file has changed again for any reason. `agent restore` then puts
+  back the latest checkpoint, which already includes a settings change that was mentioned once.
 - On Windows the shell checks understand Git Bash commands (`/c/...` paths, `agentdetox.exe`), not
   PowerShell or cmd.exe syntax.
 

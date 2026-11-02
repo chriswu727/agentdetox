@@ -25,7 +25,7 @@ from pathlib import Path
 
 from .agentscan import read_text, scan_text
 from .compat import hook_executable, quote_executable, release, try_lock
-from .context import ContextFile
+from .context import ContextFile, is_hook_script
 from .findings import Finding
 from .persistence import RUNS_CODE, WHOLE_FILE, guarded_sections, leaves
 
@@ -96,14 +96,19 @@ def _without_own(key: str, section: str) -> str:
 def runs_code_added(key: str, before: str | None, after: str | None) -> list[str]:
     """What a change to a guarded config section added that runs on this machine: a hook,
     helper command, MCP server, environment variable or plugin, other than AgentDetox's own."""
-    if after is None or key.rsplit(".", 1)[-1] not in RUNS_CODE:
+    name = key.rsplit(".", 1)[-1]
+    if after is None or name not in RUNS_CODE:
         return []
     try:
+        if name == "enableAllProjectMcpServers" and json.loads(after) is not True:
+            return []
         old = leaves({key: _without_own(key, before)}, ordered=True) if before else set()
         new = leaves({key: _without_own(key, after)}, ordered=True)
     except ValueError:
         return []
-    return [f"{k}: {v}" for k, v in sorted(new - old)]
+    # Of a status line, only its command runs; padding and the like do not.
+    return [f"{k}: {v}" for k, v in sorted(new - old)
+            if name != "statusLine" or k.split("[")[0].endswith(".command") or k == key]
 
 
 def store_dir() -> Path:
@@ -404,14 +409,14 @@ _RUNS_LABEL = {"hooks": "hook", "statusLine": "status line command", "mcpServers
 _RISKY_ENV = re.compile(r"NODE_OPTIONS|BASH_ENV|ENV|ZDOTDIR|PATH|LD_\w+|DYLD_\w+|PYTHON(PATH|STARTUP|HOME)|"
                         r"PERL5?(OPT|LIB)|RUBY(OPT|LIB)|JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|GIT_\w+|\w*_BASE_URL|"
                         r"\w*_PROXY|NODE_EXTRA_CA_CERTS|SSL_CERT_\w+|REQUESTS_CA_BUNDLE|CURL_CA_BUNDLE|"
-                        r"NPM_CONFIG_\w+|PIP_\w+|UV_\w+", re.IGNORECASE)
+                        r"NPM_CONFIG_\w+|PIP_\w+|UV_\w+|NODE_PATH|CLASSPATH", re.IGNORECASE)
 
 
 def _runs_finding(doc_id: str, path: Path, key: str, before: str | None, after: str | None) -> Finding | None:
     """A finding naming what a guarded section now runs that it did not before (the MCP
     server, hook event, plugin or variable), or None when it runs nothing new."""
     name = key.rsplit(".", 1)[-1]
-    if key == WHOLE_FILE and after is not None and "/.claude/hooks/" in path.as_posix():
+    if key == WHOLE_FILE and after is not None and is_hook_script(path):
         return Finding(doc_id, str(path), "config-change", "high",
                        f"hook script {'added' if before is None else 'changed'}: {path.name}")
     runs = runs_code_added(key, before, after)

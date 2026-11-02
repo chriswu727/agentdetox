@@ -100,6 +100,19 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 - `review accept` works on `~/.claude.json` and other settings that Claude Code rewrites at every
   start: it compares the security-relevant settings, not the whole file.
 - Hooks registered twice (plugin and settings) no longer record a hook error for every shell command.
+- `agentdetox uninstall`, for example when switching to the plugin, no longer leaves a security
+  notice about AgentDetox's hooks being removed at every session. When nothing else in the file
+  changed, the file without them becomes the new snapshot, as `install` does with them.
+- Packages installed beside hook scripts (`node_modules`, `.venv`, `site-packages`, `__pycache__`,
+  `.git`) are not watched, so `npm install` or `uv sync` in `.claude/hooks` no longer adds thousands
+  of review items. A `.exe` there counts as a script on Windows.
+- Session notices list at most ten items per section, so their guidance is never cut off.
+- A setting a shell tool added is not mentioned again at the next session start.
+- Hook scripts added outside the agent are named as such when `CLAUDE_CONFIG_DIR` moves the config
+  folder, and deleting watched files is reported when that folder is outside the home folder.
+- Changing a status line's options, or turning off `enableAllProjectMcpServers`, is no longer
+  described as something new that runs. `NODE_PATH` and `CLASSPATH` count as variables that load
+  code.
 - Disabling a plugin is no longer reported as something new that runs.
 - Review-based recovery warns about residual rule findings, retains them for review and does not
   advance the safe checkpoint to a version with unsuppressed high findings.

@@ -233,6 +233,25 @@ def test_uninstall_removes_only_our_hooks(env, capsys):
     assert all(stat.S_IMODE(b.stat().st_mode) == 0o600 for b in settings.parent.glob("settings.json.agentdetox-backup-*"))
 
 
+def test_uninstall_is_not_reported_as_tampering(env, capsys):
+    home, project, _ = env
+    main(["install", "claude-code", "--project", str(project), "--apply"])
+    session("claude-code", project)
+    assert main(["uninstall", "claude-code", "--project", str(project)]) == 0
+    assert session("claude-code", project) == ""
+
+
+def test_uninstall_leaves_other_outside_changes_reported(env, capsys):
+    home, project, _ = env
+    main(["install", "claude-code", "--project", str(project), "--apply"])
+    session("claude-code", project)
+    edit_settings(home, apiKeyHelper="sh ~/.cache/key.sh")
+    main(["uninstall", "claude-code", "--project", str(project)])
+    assert "changed since AgentDetox last checked" in capsys.readouterr().out
+    notice = session("claude-code", project)
+    assert "AgentDetox hooks were removed" in notice and "apiKeyHelper" in notice
+
+
 @posix_only
 def test_snapshot_copies_are_private(env, tmp_path, capsys):
     _, project, _ = env
@@ -276,6 +295,7 @@ def edit_settings(home, **changes):
     ({"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "node ~/.cache/x.js"}]}]}}, "node ~/.cache/x.js"),
     ({"apiKeyHelper": "sh ~/.cache/key.sh"}, "sh ~/.cache/key.sh"),
     ({"env": {"NODE_OPTIONS": "--require /tmp/x.js"}}, "NODE_OPTIONS"),
+    ({"env": {"NODE_PATH": "/tmp/modules"}}, "NODE_PATH"),
     ({"enabledPlugins": {"helper@somewhere": True}}, "helper@somewhere"),
 ])
 def test_something_new_that_runs_added_outside_the_agent_is_told_once(env, change, evidence):
@@ -298,6 +318,23 @@ def test_an_ordinary_environment_variable_or_a_disabled_plugin_does_not_interrup
     assert session("claude-code", project) == ""
     edit_settings(home, env={"ANTHROPIC_BASE_URL": "https://relay.example"})
     assert "ANTHROPIC_BASE_URL" in session("claude-code", project)
+
+
+def test_a_status_line_option_or_turning_off_auto_approval_does_not_interrupt(env):
+    home, project, _ = env
+    edit_settings(home, statusLine={"type": "command", "command": "~/bin/line.sh"})
+    session("claude-code", project)
+    edit_settings(home, statusLine={"type": "command", "command": "~/bin/line.sh", "padding": 0},
+                  enableAllProjectMcpServers=False)
+    assert session("claude-code", project) == ""
+
+
+def test_deleting_our_settings_in_a_config_folder_outside_home_is_reported(env, tmp_path, monkeypatch, capsys):
+    _, project, _ = env
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "config"))
+    main(["install", "claude-code", "--project", str(project), "--apply"])
+    (tmp_path / "config/settings.json").unlink()
+    assert "registered AgentDetox hooks was deleted" in session("claude-code", project)
 
 
 def test_mcp_add_in_the_churning_user_config_is_told_once_and_can_be_accepted(env):
@@ -466,6 +503,42 @@ def test_hook_scripts_are_guarded_and_outside_changes_reported(env):
     log.write_text("formatted b.py\n", encoding="utf-8")
     assert session("claude-code", project) == ""
     assert classify(log, project=project) is None and classify(script, project=project) is not None
+
+
+def test_dependencies_installed_beside_hooks_are_not_hook_scripts(env):
+    _, project, _ = env
+    hooks = project / ".claude/hooks"
+    session("claude-code", project)
+    for name in ["node_modules/left-pad/index.js", ".venv/lib/python3.12/site-packages/x/__init__.py",
+                 "__pycache__/check.cpython-312.pyc"]:
+        (hooks / name).parent.mkdir(parents=True, exist_ok=True)
+        (hooks / name).write_text("#!/bin/sh\n", encoding="utf-8")
+        assert classify(hooks / name, project=project) is None
+    assert session("claude-code", project) == ""
+    (hooks / "check.py").write_text("print('ok')\n", encoding="utf-8")
+    assert "hook script added: check.py" in session("claude-code", project)
+
+
+def test_hook_scripts_in_a_moved_config_folder_are_told(env, monkeypatch):
+    home, project, _ = env
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home / ".claude-work"))
+    (home / ".claude-work/hooks").mkdir(parents=True)
+    (home / ".claude-work/settings.json").write_text("{}", encoding="utf-8")
+    session("claude-code", project)
+    (home / ".claude-work/hooks/notify.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    assert "hook script added: notify.sh" in session("claude-code", project)
+
+
+def test_a_long_notice_keeps_its_guidance(env):
+    _, project, _ = env
+    hooks = project / ".claude/hooks"
+    hooks.mkdir(parents=True)
+    session("claude-code", project)
+    for i in range(15):
+        (hooks / f"step{i}.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    notice = session("claude-code", project)
+    assert notice.count("hook script added") == 10 and "and 5 more" in notice
+    assert "nothing needs doing" in notice
 
 
 def test_the_project_root_comes_from_claude_code_not_the_current_folder(env, monkeypatch):

@@ -298,6 +298,8 @@ def test_a_shell_tool_adding_an_mcp_server_says_so_without_calling_it_an_attack(
                      lambda: write_json(project / '.mcp.json', {'mcpServers': {'github': {'command': 'npx'}}}))
     assert 'MCP server added (mcpServers): github' in text and 'If the user asked for this' in text
     assert 'Do not follow' not in text and 'security notice' not in text
+    start = dict(cwd=str(project), hook_event_name='SessionStart', source='startup')
+    assert hooks.handle('claude-code', start)[1] == ''        # told once, not again at the next session
 
 
 def test_an_approval_saved_alongside_another_settings_change_is_reported(scope):
