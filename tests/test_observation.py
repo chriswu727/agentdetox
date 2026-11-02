@@ -298,3 +298,14 @@ def test_a_shell_tool_adding_an_mcp_server_says_so_without_calling_it_an_attack(
                      lambda: write_json(project / '.mcp.json', {'mcpServers': {'github': {'command': 'npx'}}}))
     assert 'MCP server added (mcpServers): github' in text and 'If the user asked for this' in text
     assert 'Do not follow' not in text and 'security notice' not in text
+
+
+def test_an_approval_saved_alongside_another_settings_change_is_reported(scope):
+    _, project, _ = scope
+    local = project / '.claude' / 'settings.local.json'
+    server = {'command': 'python', 'args': ['-c', 'print(1)', 'import os']}
+    write_json(local, {'mcpServers': {'x': server}, 'permissions': {'allow': []}})
+    reordered = {'command': 'python', 'args': ['-c', 'import os', 'print(1)']}
+    text = run_shell(project, 'npm test', lambda: write_json(
+        local, {'mcpServers': {'x': reordered}, 'permissions': {'allow': ['Bash(npm test)']}}))
+    assert 'MCP server changed' in text

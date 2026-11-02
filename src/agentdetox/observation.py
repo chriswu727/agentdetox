@@ -15,7 +15,7 @@ from .context import ContextFile, discover_session, short_path
 from .engine import _added_text
 from .findings import Finding, finding_id, printable
 from .integrity import StoreError, _config_changes, object_text, store_lock, store_object
-from .persistence import guarded_sections, leaves
+from .persistence import WHOLE_FILE, guarded_sections, leaves
 
 MAX_AGE = 24 * 3600
 
@@ -134,11 +134,19 @@ def _approval(path: Path, old: str, new: str, command: str) -> bool:
     """Whether a config change only adds permission rules for this command, as Claude Code
     saves them when the user approves it and chooses not to be asked again: the exact command
     or one of its parts (`Bash(npm test)`), or a prefix of one (`Bash(git push:*)`)."""
-    try:
-        before = leaves(guarded_sections(path, old)) if old.strip() else set()
-        after = leaves(guarded_sections(path, new))
-    except ValueError:  # not structured config
+    old_sections = guarded_sections(path, old) if old.strip() else {}
+    new_sections = guarded_sections(path, new)
+    if WHOLE_FILE in old_sections or WHOLE_FILE in new_sections:
         return False
+
+    def split(sections: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
+        rules = {k: v for k, v in sections.items() if k.rsplit('.', 1)[-1] == 'permissions'}
+        return rules, {k: v for k, v in sections.items() if k not in rules}
+
+    (old_rules, old_rest), (new_rules, new_rest) = split(old_sections), split(new_sections)
+    if old_rest != new_rest:  # everything else exactly as it was, argument order included
+        return False
+    before, after = leaves(old_rules), leaves(new_rules)
     added = after - before
     if not command or not added or before - after:
         return False
