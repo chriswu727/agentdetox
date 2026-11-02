@@ -961,6 +961,7 @@ def test_writes_relative_to_another_folder(env, command, expected):
     ("D={project}; git -C /tmp -C $D restore CLAUDE.md", "ask"),
     ("D=.claude; env -C {project} env -C $D tee settings.json", "ask"),  # a relative one is taken from it
     ("D=.claude; env -C /tmp env -C $D tee settings.json", "allow"),
+    ("D={relative}; env -C / env -C \"$D\" tee .claude/settings.json", "ask"),  # taken from the root folder
     ("env -C /tmp -C . tee .claude/settings.json", "ask"),            # only the last -C counts
     ("env -C /tmp -S '-C . tee .claude/settings.json'", "ask"),
     ("env -C .claude -S 'tee settings.json'", "ask"),
@@ -971,7 +972,7 @@ def test_writes_relative_to_another_folder(env, command, expected):
 def test_folder_named_by_a_variable(env, command, expected):
     _, project, _ = env
     (project / ".claude").mkdir(exist_ok=True)
-    command = command.format(project=project.as_posix())
+    command = command.format(project=project.as_posix(), relative=project.as_posix().lstrip("/"))
     assert decision(pre("claude-code", project, "Bash", {"command": command})) == expected
 
 

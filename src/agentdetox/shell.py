@@ -137,7 +137,9 @@ def _join(folder: str, path: str) -> str:
     """`path` taken from `folder`, also when `path` is a variable whose value is not known yet."""
     if not folder or not _relative(path):
         return path
-    return f"{folder.rstrip('/')}{_THEN if path.startswith('$') else '/'}{path}"
+    if path.startswith("$"):
+        return f"{folder.rstrip('/') or '/'}{_THEN}{path}"
+    return f"{folder.rstrip('/')}/{path}"
 
 
 def _settle(path: str) -> str:
