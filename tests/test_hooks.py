@@ -798,6 +798,24 @@ def test_a_contradiction_is_attached_only_to_the_version_that_was_checked(env, m
     ("eval 'echo note >> CLAUDE.md'", "ask"),
     ("nice -n 5 tee -a CLAUDE.md < notes.txt", "ask"),
     ("timeout 10 sed -i 's/pnpm/bun/' CLAUDE.md", "ask"),
+    ("bash -lc 'echo note >> CLAUDE.md'", "ask"),                    # -c inside an option bundle
+    ("sh -ec 'echo note >> CLAUDE.md'", "ask"),
+    ("bash -c -l 'echo note >> CLAUDE.md'", "ask"),                  # an option after -c
+    ("bash -o pipefail -c 'echo note >> CLAUDE.md'", "ask"),         # an option that takes a value
+    ("env -u UNUSED tee CLAUDE.md", "ask"),                          # a wrapper option that takes a value
+    ("env --unset=UNUSED tee CLAUDE.md", "ask"),
+    ("env -C . tee CLAUDE.md", "ask"),
+    ("env -S 'tee CLAUDE.md'", "ask"),
+    ("sudo -u root tee CLAUDE.md", "ask"),
+    ("doas -u root tee CLAUDE.md", "ask"),
+    ("timeout -s KILL 10 tee CLAUDE.md", "ask"),
+    ("xargs -I {} tee CLAUDE.md", "ask"),
+    ("ionice -c 3 tee CLAUDE.md", "ask"),
+    ("taskset -c 0 tee CLAUDE.md", "ask"),
+    ("sudo -u root bash -lc 'echo note >> CLAUDE.md'", "ask"),
+    ("bash -lc 'npm test'", "allow"),
+    ("bash scripts/check.sh CLAUDE.md", "allow"),
+    ("sudo -u root ls", "allow"),
     ("cd .claude && echo '{}' > settings.json", "ask"),
     ("F=CLAUDE.md; echo note >> $F", "ask"),
     ("echo note >> ${HOME}/.claude/CLAUDE.md", "ask"),
@@ -882,6 +900,9 @@ def test_more_shell_forms_that_write_context(env, command, expected):
     "nice agentdetox allow 0123456789",
     "timeout 5 agentdetox allow 0123456789",
     "bash -c 'agentdetox allow 0123456789'",
+    "bash -lc 'agentdetox allow 0123456789'",
+    "sudo -u root agentdetox allow 0123456789",
+    "env -u UNUSED agentdetox config copied off",
     "echo 0123456789 | xargs agentdetox allow",
     "uv run agentdetox config copied off",
 ])

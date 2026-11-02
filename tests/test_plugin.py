@@ -31,6 +31,8 @@ def test_plugin_matches_the_package():
     market = json.loads((ROOT / ".claude-plugin/marketplace.json").read_text(encoding="utf-8"))
     [entry] = market["plugins"]
     assert entry["name"] == manifest["name"] and (ROOT / entry["source"]).resolve() == PLUGIN
+    # Keys Claude Code 2.1.111 rejects as unrecognised (`claude plugin validate`), though later versions accept them.
+    assert "description" not in market and "displayName" not in manifest
 
 
 def run(tmp_path, event, path_dirs=()):

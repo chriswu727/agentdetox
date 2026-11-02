@@ -209,8 +209,8 @@ reports the removal.
 - The check before a shell command reads the command, it does not run it. It follows redirects,
   `tee`, `sed -i`, `perl -i`, `cp`, `mv`, `rm` (including a whole folder that holds context files),
   `git checkout`/`restore` (also of `.`), `curl -o` and `wget -O` (also in bundles such as `-sSLo`),
-  inline `python -c`/`node -e` code that names a context file, `bash -c` and `eval`, wrappers
-  such as `nice` or `xargs`, and a `cd` or variable set earlier in the same command. A script
+  inline `python -c`/`node -e` code that names a context file, `bash -c` (also `bash -lc`) and
+  `eval`, wrappers such as `sudo -u root` or `xargs -I {}`, and a `cd` or variable set earlier in the same command. A script
   file, a path built at run time, or an archive being unpacked is not stopped beforehand; the
   check right after the command finds the change and, if the new content is flagged, tells the
   agent not to follow it.
