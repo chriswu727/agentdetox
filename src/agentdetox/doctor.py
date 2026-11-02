@@ -124,11 +124,31 @@ def _ours(hooks: dict) -> dict:
             for event, groups in hooks.items()}
 
 
-def _check_claude_settings(path: Path, settings: dict, command: str) -> Check:
+def _registered_by_older(settings: dict, command: str) -> bool:
     # Compare only AgentDetox's own groups: the user's hooks and their order are theirs.
     expected = {k: v for k, v in _ours(claude_code_settings(settings, command)["hooks"]).items() if v}
     actual = {k: v for k, v in _ours(settings.get("hooks", {})).items() if v}
-    if expected != actual:
+    return expected != actual
+
+
+def outdated_settings(project: Path) -> list[Path]:
+    """Claude Code settings whose AgentDetox hooks an older version registered. Runs no
+    subprocess, so session start can afford it."""
+    out = []
+    for path in dict.fromkeys(default_settings_path("claude-code", scope, project) for scope in ("user", "project")):
+        try:
+            settings = json.loads(path.read_text(encoding="utf-8"))
+            commands = [h.get("command", "") for groups in settings.get("hooks", {}).values()
+                        for g in groups for h in g.get("hooks", []) if is_self_hook(h.get("command", ""))]
+        except (OSError, ValueError, AttributeError, TypeError):
+            continue
+        if commands and _registered_by_older(settings, commands[0]):
+            out.append(path)
+    return out
+
+
+def _check_claude_settings(path: Path, settings: dict, command: str) -> Check:
+    if _registered_by_older(settings, command):
         return Check("warn", f"Claude Code: hooks in {path} are from an older version; "
                              "re-run `agentdetox install claude-code --apply`")
     exe = compat.hook_executable(command)
@@ -188,7 +208,11 @@ def _store() -> list[Check]:
         tracked = usage()["tracked"]
     except StoreError as e:
         return [Check("fail", str(e))]
-    checks = [Check("ok", f"snapshot store {store}: {tracked} file(s) tracked (store format {storage.VERSION})")]
+    found = storage.format_version()
+    checks = [Check("ok", f"snapshot store {store}: {tracked} file(s) tracked (store format {found or 'not created'})")]
+    if found and found < storage.VERSION:
+        checks.append(Check("ok", f"store format {found} upgrades to {storage.VERSION} at the next write; "
+                                  f"a copy is kept as {storage.path().with_name(f'state.v{found}.sqlite3')}"))
     # Windows reports 0o777 for every directory; access there comes from the profile's ACLs.
     for p in (store, store / "objects") if not compat.WINDOWS else ():
         if p.exists() and stat.S_IMODE(p.stat().st_mode) & 0o077:

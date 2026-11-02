@@ -139,3 +139,20 @@ def test_a_snapshot_newer_than_the_old_ledger_stays_the_newest_version(already_m
         with storage.connection(write=True):
             pass
     assert engine.previous_version('/project/CLAUDE.md') == hashlib.sha256(new).hexdigest()
+
+
+def test_an_upgrade_keeps_a_copy_the_older_version_can_open():
+    legacy()
+    with storage.connection(write=True):
+        pass
+    with storage.connection(write=True) as db:
+        db.execute('PRAGMA user_version=2')
+    assert storage.format_version() == 2
+    copy = storage.path().with_name('state.v2.sqlite3')
+    with storage.connection(write=True):
+        pass
+    assert storage.format_version() == storage.VERSION
+    with sqlite3.connect(copy) as db:
+        assert db.execute('PRAGMA user_version').fetchone()[0] == 2
+        assert db.execute('SELECT count(*) FROM changes').fetchone()[0] == 1
+    assert not storage.path().with_name('state.v0.sqlite3').exists()   # nothing to keep from the JSON import

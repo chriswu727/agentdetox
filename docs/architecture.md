@@ -28,14 +28,19 @@ SQLite. Before a write, a file that no longer matches the last version AgentDeto
 first recorded as changed outside the agent, so the agent is never credited with that change.
 After a write, the engine records the observed version, attribution evidence and findings.
 Eligible recovery checkpoint updates and history additions commit in one transaction. At session start, `session.py` compares every watched file with
-its snapshot, records changes made outside the agent, and tells the agent about suspicious ones.
+its snapshot, records changes made outside the agent, and tells the agent about them. A file with
+flagged content keeps its old snapshot, so it is reported every session until reviewed; a settings
+addition that runs code is told once and the snapshot moves on, since repeating it would not stop
+it running. Config files are compared by their security-relevant sections only, because agents
+rewrite their own config (counters, caches) at every start.
 
 Shell tools with stable tool-use ids additionally pass through `observation.py`. A transaction stores
 pre-tool content references for the current project, its Claude auto memory and shared user-level
 Claude context. Success and failure hooks compare those files and discover additions. Records keep
 external authorship and before/after evidence, deduplicate versions already recorded by edit tools,
-and preserve the recovery checkpoint. A brief `systemMessage` reaches the terminal as well as the
-agent context. The observer hashes scoped contents; it does not rely on mtime as an integrity proof.
+and preserve the recovery checkpoint. A config change that only adds a permission rule for the
+command being run is how Claude Code saves an approval; it is recorded without a notice. A brief
+`systemMessage` reaches the terminal as well as the agent context. The observer hashes scoped contents; it does not rely on mtime as an integrity proof.
 
 ## Modules
 

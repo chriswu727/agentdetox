@@ -195,6 +195,24 @@ def _globs(profile: AgentProfile, home: Path, project: Path | None, writes: bool
                 yield "project", parent, kind, name
 
 
+_SCRIPT_SUFFIXES = {".sh", ".bash", ".zsh", ".fish", ".py", ".js", ".mjs", ".cjs", ".ts", ".rb", ".pl", ".php",
+                    ".lua", ".ps1", ".bat", ".cmd"}
+
+
+def _counts(pattern: str, path: Path) -> bool:
+    """Whether a file matching `pattern` is context. In a hooks folder only what can run
+    counts; the logs and state a hook keeps beside itself change all the time."""
+    if not pattern.endswith("hooks/**/*") or path.suffix.lower() in _SCRIPT_SUFFIXES:
+        return True
+    try:
+        with path.open("rb") as file:
+            return file.read(2) == b"#!" or os.access(path, os.X_OK)
+    except FileNotFoundError:
+        return not path.suffix  # a file not written yet, named like an executable
+    except OSError:
+        return True
+
+
 def discover(agents: list[str] | None = None, project: Path | None = None, home: Path | None = None) -> list[ContextFile]:
     home = home or home_dir()
     found: dict[Path, ContextFile] = {}
@@ -203,7 +221,7 @@ def discover(agents: list[str] | None = None, project: Path | None = None, home:
         for scope, root, kind, pattern in _globs(profile, home, project):
             for p in sorted(glob.glob(str(root / pattern), recursive=True, include_hidden=True)):
                 path = Path(p)
-                if path.is_file() and path not in found:
+                if path.is_file() and path not in found and _counts(pattern, path):
                     found[path] = ContextFile(profile.name, kind, scope, path)
     return list(found.values())
 
@@ -216,7 +234,7 @@ def discover_session(project: Path, agent: str) -> list[ContextFile]:
             root, pattern = claude_memory_dir(project, home), '*.md'
         for value in sorted(glob.glob(str(root / pattern), recursive=True, include_hidden=True)):
             path = Path(value)
-            if path.is_file() and not path.is_symlink():
+            if path.is_file() and not path.is_symlink() and _counts(pattern, path):
                 found.setdefault(path, ContextFile(agent, kind, scope, path))
     return list(found.values())
 
@@ -237,7 +255,7 @@ def classify(path: Path, agents: list[str] | None = None, project: Path | None =
                 given = Path(os.path.abspath(root))
                 for base in dict.fromkeys((given, Path(os.path.realpath(root)))):
                     rel = _relative(candidate, base)
-                    if rel is not None and _glob_regex(pattern, CASELESS).fullmatch(rel):
+                    if rel is not None and _glob_regex(pattern, CASELESS).fullmatch(rel) and _counts(pattern, candidate):
                         return ContextFile(profile.name, kind, scope, given / rel if rel else given)
     return None
 

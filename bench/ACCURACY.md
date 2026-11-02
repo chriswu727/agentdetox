@@ -29,18 +29,22 @@ package run against the same cases.
 
 | Family | Cases | 0.3.0 | Now |
 |---|---:|---:|---:|
-| Shell commands, decided before they run (22 that write context, 6 that must stay allowed) | 28 | 11 | 28 |
-| Settings changed outside the agent (5 that add something that runs, 1 permission control) | 6 | 1 | 6 |
+| Shell commands, decided before they run (27 that write context, 10 that must stay allowed) | 37 | 15 | 37 |
+| Settings changed outside the agent (5 that add something that runs; a permission and an ordinary variable as controls) | 7 | 2 | 7 |
 | Writes to files the agent loads under another name or place (case, symlink, subfolder, parent folder, output style) | 5 | 0 | 5 |
 | A planted file name adding a fake line to AgentDetox's notice | 1 | fail | pass |
 
 The shell cases are commands that each got past an earlier version of the parser: nested
 `bash -c`/`eval`, wrappers, a `cd` that may fail or be skipped, variables naming the program, an
-option or the target, `git checkout --`, `curl -o`, inline code, and shell heredocs. The allowed
-controls are reads and heredoc data. A replay of 985 real Bash commands from an agent session
+option or the target, `git checkout --`, `curl -o`, inline code, shell heredocs, a git restore of a
+whole folder, and bundled download flags (`-sSLo`). The allowed controls are reads, heredoc data,
+an index-only `git restore --staged .`, a copy into a folder and deleting folders without context.
+The settings cases are reported once; the report is worded as a question, not as flagged content. A replay of 985 real Bash commands from an agent session
 changed one decision compared with the previous parser (a real write to an agent memory file
 through a variable path, which now asks), and no longer crashed on four commands with unbalanced
-parentheses that made the previous parser fail open.
+parentheses that made the previous parser fail open. A later replay of 7,780 distinct real Bash
+commands, before the 0.4.0 release, changed one decision: a `git checkout -q -- .` in a project
+holding context files, which now asks.
 
 ## Results
 

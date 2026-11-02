@@ -20,6 +20,7 @@ from .findings import printable
 from .integrity import (
     StoreError,
     baseline_entries,
+    object_text,
     private_dir,
     restore_object,
     store_dir,
@@ -27,6 +28,7 @@ from .integrity import (
     store_object,
     write_private,
 )
+from .persistence import guarded_sections
 
 
 def number(value: str, prefix: str = 'C') -> int:
@@ -49,11 +51,21 @@ def _digest(path: Path) -> str | None:
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
 
 
-def _check_current(row: dict) -> Path:
+def _check_current(row: dict, settings: bool = False) -> Path:
     path = Path(row['path'])
-    if _digest(path) != row['after_hash']:
+    if _digest(path) != row['after_hash'] and not (settings and _same_settings(path, row['after_hash'])):
         raise StoreError(f'{path} changed after C{row["id"]}; inspect the latest file before taking action')
     return path
+
+
+def _same_settings(path: Path, digest: str | None) -> bool:
+    """A config file whose security-relevant sections are still those of `digest`. Agents
+    rewrite their own config at every start (counters, caches), which must not make a
+    reviewed version impossible to accept."""
+    if path.suffix not in ('.json', '.toml') or digest is None or not path.is_file():
+        return False
+    return guarded_sections(path, path.read_text(encoding='utf-8', errors='replace')) == \
+        guarded_sections(path, object_text(digest))
 
 
 def list_changes(since: str | None = None, all_changes: bool = False) -> list[dict]:
@@ -247,12 +259,12 @@ def detail(change_id: str) -> str:
 def accept(change_id: str) -> None:
     with store_lock(), storage.connection(write=True) as db:
         row = get(change_id)
-        path = _check_current(row)
+        path = _check_current(row, settings=True)
         db.execute('UPDATE files SET accepted_hash=?, accepted_change=? WHERE path=?',
                    (row['after_hash'], row['id'], row['path']))
         db.execute("UPDATE changes SET review_state='accepted' WHERE id=?", (row['id'],))
         db.execute("UPDATE findings SET status='accepted' WHERE change_id=?", (row['id'],))
-        if _digest(path) != row['after_hash']:
+        if _digest(path) != row['after_hash'] and not _same_settings(path, row['after_hash']):
             raise StoreError('File changed while accepting; no approval was saved')
         events.record("review_accepted", change=change_id, path=row["path"])
 

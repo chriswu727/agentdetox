@@ -76,14 +76,20 @@ scans what is already there before recording recovery checkpoints; `agentdetox a
   enter review immediately, with a short terminal notice. Config counters do not produce changes;
   security-relevant settings do. The record says the change happened during the tool, not which
   process authored it. If a separate Write/Edit hook already recorded the final version, it keeps
-  that observed writer. Existing installations need updated hook registration (`install claude-code
-  --apply` or update the plugin); this requires agent-supplied tool-use ids.
+  that observed writer. A permission rule for the command being run, which Claude Code saves when
+  you approve the command and choose not to be asked again, is recorded without a notice.
+  Installations from 0.3 need updated hook registration (`install claude-code --apply`, or update
+  the plugin); `agentdetox doctor` says when.
 - **At session start**, files changed outside the agent since the last session are compared with
-  the snapshot. Suspicious changes are reported to the agent, which is told not to follow them and
-  to tell you, with the command that restores each file. So is anything new that would run on
-  your machine: a hook, a helper command, an MCP server, an environment variable or a plugin, other
-  than AgentDetox's own. Other edits you made yourself that look benign, such as a new permission,
-  are accepted silently and recorded as made outside the agent.
+  the snapshot. Suspicious content is reported to the agent, which is told not to follow it and to
+  tell you, with the command that restores each file; this repeats until you review it. Anything new
+  that would run on your machine, other than AgentDetox's own, is mentioned once instead, worded as
+  a question rather than an alarm: a hook or hook script, a helper or status line command, an MCP
+  server, a plugin or marketplace, or an environment variable that loads code or redirects traffic
+  (`NODE_OPTIONS`, `*_BASE_URL`, proxies and the like). If you added it yourself (`claude mcp add`,
+  `/plugin install`), there is nothing to do; it stays in `agentdetox review` until you accept or
+  dismiss it. Other edits that look benign, such as a new permission or an ordinary variable, are
+  recorded silently as made outside the agent.
 
 **Where memory came from.** A memory write that is mostly copied from web pages, MCP data, command
 output or files the agent just read asks for approval, unless you asked the agent to remember it.
@@ -101,17 +107,22 @@ and Chinese.
 change. `agentdetox review C42` shows the diff, observed writer, attribution evidence and individual
 `F` finding ids. `agentdetox restore C42` previews the recovery; add `--apply` to restore the version
 before that change. The current file is backed up in `~/.agentdetox/quarantine` before replacement.
-Accept and restore refuse if the file has changed since that record. The legacy
-`agentdetox agent restore <file>` still restores the recovery checkpoint directly.
-On main, review-based recovery rescans the target version, warns about residual rule findings and
+Accept and restore refuse if the file has changed since that record; for a settings file, accept
+compares only the security-relevant settings, since Claude Code rewrites its own config at every
+start. `agentdetox agent restore <file>` restores the recovery checkpoint through the same
+journalled recovery. Recovery rescans the target version, warns about residual rule findings and
 keeps them pending. Recovery restores a whole version; it does not certify that the file is safe
-or preserve benign additions made within the change being undone.
+or preserve benign additions made within the change being undone. For a setting added outside the
+agent, removing it with the tool that added it (`claude mcp remove`, `/plugin uninstall`) is safer
+than restoring the whole settings file.
 
 A missing or damaged metadata store is reported instead of silently rebuilt. Keep a backup of the
-whole store, including `objects/`. The unreleased shell observer upgrades SQLite metadata to schema 2;
-PyPI 0.3.0 cannot read that schema. Continue using the main checkout after that upgrade, or restore
-a full pre-upgrade store backup before returning to 0.3.0. `agentdetox agent snapshot --reset` explicitly resets recovery
-checkpoints; it does not erase history or make a corrupt database safe to use.
+whole store, including `objects/`. 0.4 upgrades the metadata format (from 1 in 0.3.x to 3) on its
+first write and keeps the old database beside it as `~/.agentdetox/state.v1.sqlite3`. 0.3.x refuses
+the upgraded store; to go back, reinstall 0.3.x and put that copy back as `state.sqlite3` (changes
+recorded since the upgrade are lost). `agentdetox doctor` shows the format in use.
+`agentdetox agent snapshot --reset` explicitly resets recovery checkpoints; it does not erase
+history or make a corrupt database safe to use.
 
 ## Day to day
 
@@ -196,7 +207,8 @@ reports the removal.
 - The ledger knows what the hooks saw. A change the agent makes with a shell command is recorded as
   made outside the agent, and text it copied in its own words as the agent's.
 - The check before a shell command reads the command, it does not run it. It follows redirects,
-  `tee`, `sed -i`, `perl -i`, `cp`, `mv`, `rm`, `git checkout`/`restore`, `curl -o`, `wget -O`,
+  `tee`, `sed -i`, `perl -i`, `cp`, `mv`, `rm` (including a whole folder that holds context files),
+  `git checkout`/`restore` (also of `.`), `curl -o` and `wget -O` (also in bundles such as `-sSLo`),
   inline `python -c`/`node -e` code that names a context file, `bash -c` and `eval`, wrappers
   such as `nice` or `xargs`, and a `cd` or variable set earlier in the same command. A script
   file, a path built at run time, or an archive being unpacked is not stopped beforehand; the
@@ -209,6 +221,13 @@ reports the removal.
 - The guard on AgentDetox's own settings recognises plain commands and file writes. An agent that
   can run arbitrary code can still change them (a script that edits `~/.agentdetox` is not
   inspected), and nothing stops a person or process outside the agent.
+- Settings added outside the agent are mentioned once. If nobody acts on that notice, the setting
+  stays and is only listed in `agentdetox review`. A project opened for the first time is not
+  reported for the hooks and MCP servers it brings; Claude Code asks you to trust it.
+- A shell command that adds a permission rule for itself (`Bash(python:*)` while running a Python
+  script) looks the same as Claude Code saving your approval, and is recorded without a notice.
+- In `.claude/hooks`, only scripts are watched (a script extension, `#!`, or the executable bit). A
+  data file that a hook script reads is not.
 - On Windows the shell checks understand Git Bash commands (`/c/...` paths, `agentdetox.exe`), not
   PowerShell or cmd.exe syntax.
 

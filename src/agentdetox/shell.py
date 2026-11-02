@@ -37,6 +37,10 @@ _WRITES = re.compile(r"write|append|open\([^,)]*,\s*(?:mode\s*=\s*)?['\"][rb+]*[
                      r"|os\.replace|truncate"
                      r"|shutil|copyfile|\bmove\b|fs\.|>", re.I)
 _MAX_DEPTH = 3
+# Ends a target that acts on everything under it when it is a folder (`rm -r .claude`,
+# `git checkout -- .`); a copy's destination folder only receives the copied file. Shell
+# words cannot contain NUL.
+TREE = "\0"
 
 
 def split(command: str) -> list[str]:
@@ -372,11 +376,11 @@ def _segment_targets(seg: list[str]) -> list[str]:
     if name in _COPY_COMMANDS and args:
         return [args[-1]]
     if name in _DELETE_COMMANDS:
-        return args
+        return [a + TREE for a in args]
     if name == "dd":
         return [a[3:] for a in seg[1:] if a.startswith("of=")]
     if name == "git":
-        return _git_targets(seg[1:])
+        return [a + TREE for a in _git_targets(seg[1:])]
     if name in ("curl", "wget"):
         return _download_targets(name, seg[1:])
     if name in _INTERPRETERS:
@@ -390,8 +394,15 @@ def _git_targets(args: list[str]) -> list[str]:
     if sub not in ("checkout", "restore"):
         return []
     rest = args[args.index(sub) + 1:]
+    options = rest[:rest.index("--")] if "--" in rest else rest
+    if sub == "restore" and any(a in ("-S", "--staged") for a in options) and not any(
+            a in ("-W", "--worktree") for a in options):
+        return []  # the index only
     if "--" in rest:
         return rest[rest.index("--") + 1:]
+    if sub == "checkout":
+        # Without `--` a word may be a branch; `.` and `./…` can only be paths.
+        return [a for a in rest if a == "." or a.startswith("./")]
     if sub == "restore":
         skip = {i + 1 for i, a in enumerate(rest) if a in ("-s", "--source")}
         return [a for i, a in enumerate(rest) if not a.startswith("-") and i not in skip]
@@ -399,12 +410,16 @@ def _git_targets(args: list[str]) -> list[str]:
 
 
 def _download_targets(name: str, args: list[str]) -> list[str]:
-    flags = ("-o", "--output") if name == "curl" else ("-O", "--output-document")
+    short, long = ("o", "--output") if name == "curl" else ("O", "--output-document")
     out = []
     for i, a in enumerate(args):
-        if a in flags and i + 1 < len(args):
+        # Short options bundle (`-sSLo file`), and the value may follow the letter (`-ofile`).
+        bundle = re.fullmatch(rf"-[A-Za-z]*?{short}(.*)", a) if not a.startswith("--") else None
+        if bundle and bundle.group(1):
+            out.append(bundle.group(1))
+        elif (bundle or a == long) and i + 1 < len(args):
             out.append(args[i + 1])
-        elif a.startswith(flags[1] + "="):
+        elif a.startswith(long + "="):
             out.append(a.split("=", 1)[1])
     return out
 

@@ -30,9 +30,9 @@ In scope:
 - **Planted instructions the agent is steered into writing**, through its edit tools or a shell
   command, including text copied from web pages, MCP data or files it read.
 - **Changes made outside the agent**, by a dependency's install script, another program or a sync:
-  suspicious content and anything new that would run (a hook, helper command, MCP server,
-  environment variable or plugin) reported at the next session, recorded in the ledger, and reversible with
-  `agentdetox agent restore`.
+  suspicious content reported at the next session until reviewed, anything new that would run (a
+  hook, helper command, MCP server, plugin, or an environment variable that loads code) mentioned
+  once, both recorded in the ledger and reversible with `agentdetox restore C<ID>`.
 - **An agent changing its own guardrails**: hooks, MCP servers, permissions, environment variables
   and helper commands.
 - **An agent changing AgentDetox's own state**: its settings, allowlist and snapshots, by writing

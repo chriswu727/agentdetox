@@ -13,22 +13,30 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
   the check fail (and so let the command through).
 - More shell writes are stopped before they run: commands inside `bash -c`, `sh -c` and `eval`;
   behind `nice`, `timeout`, `xargs`, `env` or `sudo`; after a `cd` or with a variable set earlier
-  in the same command; `${HOME}` and globs; `git checkout -- <file>` and `git restore`; `curl -o`
-  and `wget -O`; `perl -i`; and inline `python -c`, `node -e` and similar code that writes a
-  file it names. The same applies to commands that change AgentDetox's own settings.
+  in the same command; `${HOME}` and globs; `git checkout -- <file>`, `git restore` and
+  `git checkout .`; `rm -r` of a folder that holds context files; `curl -o` and `wget -O`, also
+  in bundles such as `-sSLo`; `perl -i`; and inline `python -c`, `node -e` and similar code that
+  writes a file it names. The same applies to commands that change AgentDetox's own settings.
+  `git restore --staged`, which only changes the index, is not asked about.
 - A Write or Edit whose text contained `*** Begin Patch` was parsed as a Codex patch, so a
   planted CLAUDE.md write could skip the content check by including that marker. Only a call
   that names no target file is treated as a patch.
-- A hook, helper command (`apiKeyHelper` and the like), MCP server, environment variable or plugin
-  added outside the agent is reported at the next session start instead of being accepted
-  silently. AgentDetox's own hooks count only when they run this installation.
+- A hook or hook script, helper or status line command, MCP server, plugin or marketplace added
+  outside the agent, by an install script for example, is mentioned at the next session start
+  instead of being accepted silently, including in a settings file that did not exist before. The
+  notice names what was added, says there is nothing to do if you added it yourself
+  (`claude mcp add`, `/plugin install`), and is given once; the change stays in review. An
+  environment variable counts when it loads code or redirects traffic (`NODE_OPTIONS`,
+  `*_BASE_URL`, proxies); any other is recorded quietly. AgentDetox's own hooks count only when
+  they run this installation. A shell tool that adds such a setting gets the same wording.
 - Agent writes that change `env`, helper commands or MCP auto-enable settings need approval, and
   setting an `AGENTDETOX_*` variable through them is denied.
 - Watched files are matched by their real location and, on macOS and Windows, regardless of case,
   so writing `claude.md` or through a symlink is checked like writing `CLAUDE.md`.
 - CLAUDE.md, CLAUDE.local.md and AGENTS.md in parent folders, output styles and `.claude/hooks`
   scripts are watched; a CLAUDE.md or AGENTS.md in any subfolder is checked when written. A hook
-  script changed outside the agent is reported at the next session.
+  script changed outside the agent is reported at the next session; logs and state files a hook
+  keeps beside its script are not watched.
 - Claude Code hooks take the project root from `CLAUDE_PROJECT_DIR`, so a session working in a
   subfolder still guards the project's CLAUDE.md and `.claude/` settings.
 - File names, flagged lines and config values shown to the agent or in the terminal have line
@@ -58,8 +66,11 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 - Session start no longer re-saves files whose trusted version is unchanged: with 1,000 watched
   files it takes about 130 ms (p50), down from 177 ms in 0.3.0, while watching more files
   (`bench/HOOK_LATENCY.md`).
-- The store upgrades itself to format 3 on first use. A one-time step corrects the newest known
+- The store upgrades itself to format 3 on first use and keeps the previous database as
+  `state.v1.sqlite3`, which 0.3.x can open again. A one-time step corrects the newest known
   version of files migrated from the 0.2 JSON store. 0.3.0 cannot open a format 3 store.
+- A permission rule that Claude Code saves for the command being run, when you approve it and
+  choose not to be asked again, is recorded without a mid-session notice or a review item.
 - The accuracy gallery (`bench/ACCURACY.md`, run in CI) adds four attack families: shell commands,
   settings changed outside the agent, writes under another name or place, and notice injection.
 
@@ -84,7 +95,12 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 - Negated, quoted and recollected remember phrases no longer automatically exempt copied writes;
   later explicit revocation overrides an earlier save request.
 - Findings sharing an anchor retain the highest observed severity.
-- `doctor` run from the home folder no longer reports the same settings file twice.
+- `doctor` run from the home folder no longer reports the same settings file twice, and shows the
+  format the store is in rather than the newest one.
+- `review accept` works on `~/.claude.json` and other settings that Claude Code rewrites at every
+  start: it compares the security-relevant settings, not the whole file.
+- Hooks registered twice (plugin and settings) no longer record a hook error for every shell command.
+- Disabling a plugin is no longer reported as something new that runs.
 - Review-based recovery warns about residual rule findings, retains them for review and does not
   advance the safe checkpoint to a version with unsuppressed high findings.
 
