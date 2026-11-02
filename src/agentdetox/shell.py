@@ -52,6 +52,8 @@ _WRAPPER_VALUES = {
 # settings.json` writes .claude/settings.json. `sudo -i` starts in the home folder.
 _WRAPPER_DIRS = {"env": {"-C", "--chdir"}, "sudo": {"-D", "--chdir"}}
 _WRAPPER_HOME = {"sudo": {"-i", "--login"}}
+# Wrapper options whose value is a file the wrapper writes: `time -o FILE`.
+_WRAPPER_WRITES = {"time": {"-o", "--output"}}
 # Words a wrapper takes after its options, before the command: `timeout 10 cmd`,
 # `taskset 0x3 cmd`, `chrt 10 cmd`.
 _WRAPPER_OPERANDS = {"timeout": 1, "taskset": 1, "chrt": 1}
@@ -154,10 +156,12 @@ def _unwrap(words: list[str]) -> list[str]:
     return _unwrap_in(words)[0]
 
 
-def _unwrap_in(words: list[str], folder: str = "") -> tuple[list[str], str]:
+def _unwrap_in(words: list[str], folder: str = "",
+               written: list[tuple[str, str]] | None = None) -> tuple[list[str], str]:
     """The command a wrapper runs, and the folder it runs it in relative to where the
     wrapper started ("" for the same one): `sudo -u root`, `env -u X Y=1`, `nice -n 5`,
-    `timeout -s KILL 10`, `xargs -I {}` and leading variable assignments are skipped."""
+    `timeout -s KILL 10`, `xargs -I {}` and leading variable assignments are skipped.
+    Files the wrappers themselves write are added to `written`, with their folder."""
     i = 0
     while i < len(words):
         if _ASSIGN.match(words[i]):
@@ -180,7 +184,7 @@ def _unwrap_in(words: list[str], folder: str = "") -> tuple[list[str], str]:
                 continue
             if name == "env" and word in ("-S", "--split-string") and i + 1 < len(words):
                 return _unwrap_in(["env", *(["-C", chdir] if chdir else []), *split(words[i + 1]), *words[i + 2:]],
-                                  folder)
+                                  folder, written)
             if word.startswith("-") and word != "-":
                 options, used = _options(words, i, values)
                 for option, given in options:
@@ -188,6 +192,8 @@ def _unwrap_in(words: list[str], folder: str = "") -> tuple[list[str], str]:
                         chdir = given
                     elif option in _WRAPPER_HOME.get(name, ()):
                         folder = "~"
+                    elif option in _WRAPPER_WRITES.get(name, ()) and given and written is not None:
+                        written.append((folder, given))
                 i += used
             elif word == "-" or _ASSIGN.match(word):
                 i += 1
@@ -383,7 +389,9 @@ def write_targets(tokens: list[str], depth: int = 0) -> list[str]:
                 # any of the command's arguments may be written.
                 found += [(runs_in, a) for i, a in enumerate(body) if i and i not in code and not a.startswith("-")]
             for variant in variants:
-                command, folder = _unwrap_in(variant)
+                wrapped: list[tuple[str, str]] = []
+                command, folder = _unwrap_in(variant, written=wrapped)
+                found += wrapped
                 inner = _inner(command) if command else None
                 if inner is not None:
                     found += [(folder, t) for t in write_targets(split(inner), depth + 1)] if depth < _MAX_DEPTH else []
@@ -558,6 +566,8 @@ _COPY_VALUES = {
     "rsync": {"-e", "-f", "-T", "--rsh", "--filter", "--exclude", "--include", "--exclude-from", "--include-from",
               "--files-from", "--temp-dir", "--backup-dir", "--suffix", "--chmod", "--chown", "--log-file"},
 }
+# rsync options whose value is a file it writes.
+_COPY_WRITES = {"--log-file", "--write-batch", "--only-write-batch"}
 
 
 def _copy_targets(name: str, args: list[str]) -> list[str]:
@@ -566,6 +576,7 @@ def _copy_targets(name: str, args: list[str]) -> list[str]:
     copied or moved into it replaces what is under that name."""
     values = _COPY_VALUES.get(name, set())
     operands: list[str] = []
+    written: list[str] = []
     folder = None
     recursive = name in ("mv", "rsync")
     i = 0
@@ -580,6 +591,8 @@ def _copy_targets(name: str, args: list[str]) -> list[str]:
                 if option in ("-t", "--target-directory") and name != "rsync" and value:
                     folder = value
                 recursive |= option in ("-r", "-R", "-a", "--recursive", "--archive")
+                if option in _COPY_WRITES and name == "rsync" and value:
+                    written.append(value)
             i += used
             continue
         if not word.isdigit():
@@ -589,14 +602,14 @@ def _copy_targets(name: str, args: list[str]) -> list[str]:
         folder = ""    # `ln -s x/CLAUDE.md` links CLAUDE.md here
     elif folder is None:
         if not operands:
-            return []
+            return written
         *sources, dest = operands
         if not sources:
-            return [dest]
+            return [*written, dest]
         # Several sources, or a destination written as a folder, can only be a folder.
         certain = len(sources) > 1 or dest.endswith("/") or posixpath.basename(dest) in (".", "..")
-        return [dest, *(_inside(name, dest, s, recursive) + ("" if certain else INTO) for s in sources)]
-    return [_inside(name, folder, s, recursive) for s in operands]
+        return [*written, dest, *(_inside(name, dest, s, recursive) + ("" if certain else INTO) for s in sources)]
+    return [*written, *(_inside(name, folder, s, recursive) for s in operands)]
 
 
 # BSD cp, as on macOS, copies what is in `src/` rather than the folder itself; GNU cp does not.

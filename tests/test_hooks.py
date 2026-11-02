@@ -940,6 +940,12 @@ def test_more_shell_forms_that_write_context(env, command, expected):
     ("mkdir -p d && cp /tmp/x/CLAUDE.md d", "ask"),
     ("cp -r /tmp/evil/.claude .", "ask"),                            # a folder copied over one holding context
     ("rsync -a /tmp/evil/ .claude/", "ask"),
+    ("rsync -a src/ dest/ --log-file .claude/settings.json", "ask"),  # an option's value it writes
+    ("rsync -a src/ dest/ --log-file=CLAUDE.md", "ask"),
+    ("rsync -a src/ dest/ --log-file /tmp/rsync.log", "allow"),
+    ("time -o CLAUDE.md make", "ask"),                                # GNU time writes its report there
+    ("env -C .claude time --output=settings.json make", "ask"),
+    ("time -o /tmp/timing.txt make", "allow"),
     ("cp CLAUDE.md CLAUDE.md.bak", "allow"),
     ("cp CLAUDE.md /tmp/backup", "allow"),
     ("cp src/a.txt src/b.txt dist/", "allow"),

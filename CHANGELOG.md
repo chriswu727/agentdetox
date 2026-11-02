@@ -20,7 +20,8 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
   globs; `git checkout -- <file>`, `git restore` and `git checkout .`, also after git's own options
   (`git -C .claude`, `-c`, `--work-tree`, `GIT_WORK_TREE`); a copy, move or link into a folder, which
   keeps the source's name (`cp x/CLAUDE.md .`, `cp -t .claude`, `ln -s x/CLAUDE.md`), or of a folder
-  over one that holds context files (`cp -r`, `rsync`); `rm -r` of a folder that holds context files; `curl -o` and `wget -O`, also
+  over one that holds context files (`cp -r`, `rsync`); the file `time -o` or `rsync --log-file`
+  writes; `rm -r` of a folder that holds context files; `curl -o` and `wget -O`, also
   in bundles such as `-sSLo`; `perl -i`; and inline `python -c`, `node -e` and similar code that
   writes a file it names. The same applies to commands that change AgentDetox's own settings.
   `git restore --staged`, which only changes the index, is not asked about.
