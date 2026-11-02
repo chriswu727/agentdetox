@@ -25,7 +25,31 @@ _SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "fish"}
 # Shell keywords and braces run what follows in the current shell.
 _KEYWORDS = {"{", "}", "!", "if", "then", "else", "elif", "do", "while", "until"}
 _WRAPPERS = {"sudo", "doas", "env", "nice", "nohup", "exec", "command", "builtin", "time", "timeout", "stdbuf",
-             "xargs", "caffeinate", "unbuffer", *_KEYWORDS}
+             "xargs", "caffeinate", "unbuffer", "ionice", "taskset", "chrt", *_KEYWORDS}
+# Options that take the next word as their value, so that word is not the command run:
+# `sudo -u root tee CLAUDE.md` runs tee. Long forms may also be written `--user=root`.
+_WRAPPER_VALUES = {
+    "sudo": {"-C", "-D", "-g", "-h", "-p", "-R", "-r", "-T", "-t", "-U", "-u", "--close-from", "--chdir",
+             "--group", "--host", "--prompt", "--chroot", "--role", "--command-timeout", "--type",
+             "--other-user", "--user"},
+    "doas": {"-C", "-u"},
+    "env": {"-u", "-C", "-P", "--unset", "--chdir"},
+    "nice": {"-n", "--adjustment"},
+    "timeout": {"-s", "-k", "--signal", "--kill-after"},
+    # GNU's --replace, --eof and --max-lines take a value only when attached with `=`.
+    "xargs": {"-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--max-args",
+              "--max-procs", "--max-chars", "--process-slot-var"},
+    "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
+    "time": {"-f", "-o", "--format", "--output"},
+    "exec": {"-a"},
+    "caffeinate": {"-t", "-w"},
+    "ionice": {"-c", "-n", "-p", "-P", "-u", "--class", "--classdata", "--pid", "--pgid", "--uid"},
+}
+# Words a wrapper takes after its options, before the command: `timeout 10 cmd`,
+# `taskset 0x3 cmd`, `chrt 10 cmd`.
+_WRAPPER_OPERANDS = {"timeout": 1, "taskset": 1, "chrt": 1}
+# Shell options that take the next word as their value.
+_SHELL_VALUES = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
 _INTERPRETERS = {"python", "python2", "python3", "node", "nodejs", "perl", "ruby", "php", "deno", "bun"}
 _ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _VAR = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
@@ -79,8 +103,8 @@ def _segments(tokens: list[str]) -> list[tuple[list[str], list[str]]]:
 
 
 def _unwrap(words: list[str]) -> list[str]:
-    """The command a wrapper runs: `sudo`, `env X=1`, `nice -n 5`, `timeout 10`, `xargs`
-    and leading variable assignments are skipped."""
+    """The command a wrapper runs: `sudo -u root`, `env -u X Y=1`, `nice -n 5`,
+    `timeout -s KILL 10`, `xargs -I {}` and leading variable assignments are skipped."""
     i = 0
     while i < len(words):
         if _ASSIGN.match(words[i]):
@@ -90,18 +114,48 @@ def _unwrap(words: list[str]) -> list[str]:
         if name not in _WRAPPERS:
             break
         i += 1
-        while i < len(words) and (words[i].startswith("-") or _ASSIGN.match(words[i])
-                                  or (name == "timeout" and re.fullmatch(r"[\d.]+[smhd]?", words[i]))
-                                  or (name == "nice" and words[i - 1] == "-n")):
-            i += 1
+        values = _WRAPPER_VALUES.get(name, set())
+        while i < len(words):
+            word = words[i]
+            if word == "--":
+                i += 1
+                break
+            if name == "env" and word in ("-S", "--split-string") and i + 1 < len(words):
+                return _unwrap(["env", *split(words[i + 1]), *words[i + 2:]])
+            if name == "env" and word.startswith(("-S", "--split-string=")) and len(word) > 2:
+                value = word.removeprefix("--split-string=") if word.startswith("--") else word[2:]
+                return _unwrap(["env", *split(value), *words[i + 1:]])
+            if word in values:
+                i += 2
+            elif word.startswith("-") or _ASSIGN.match(word):
+                i += 1
+            else:
+                break
+        i += _WRAPPER_OPERANDS.get(name, 0)
     return words[i:]
 
 
 def _inner(words: list[str]) -> str | None:
-    """The command string a shell runs with `-c`, or that `eval` runs."""
+    """The command string a shell runs with `-c`, also in a bundle such as `-lc` or
+    `-ec`, or that `eval` runs."""
     name = compat.program(words[0])
-    if name in _SHELLS and "-c" in words[1:-1]:
-        return words[words.index("-c") + 1]
+    if name in _SHELLS:
+        command = False
+        i = 1
+        while i < len(words):
+            word = words[i]
+            if word in _SHELL_VALUES:
+                i += 2
+                continue
+            if word == "--":
+                i += 1
+                break
+            if not word.startswith(("-", "+")) or word in ("-", "+"):
+                break
+            if re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", word):
+                command = True
+            i += 1
+        return words[i] if command and i < len(words) else None
     if name == "eval":
         return " ".join(words[1:])
     return None
