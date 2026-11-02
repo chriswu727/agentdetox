@@ -217,7 +217,7 @@ def _counts(pattern: str, path: Path) -> bool:
             # Windows reports every file as executable.
             return file.read(2) == b"#!" or (os.name != "nt" and os.access(path, os.X_OK))
     except FileNotFoundError:
-        return not path.suffix  # a file not written yet, named like an executable
+        return True  # not written yet: what it will hold, a shebang say, is not known here
     except OSError:
         return True
 

@@ -302,6 +302,17 @@ def test_a_shell_tool_adding_an_mcp_server_says_so_without_calling_it_an_attack(
     assert hooks.handle('claude-code', start)[1] == ''        # told once, not again at the next session
 
 
+def test_a_settings_change_is_named_alongside_flagged_content(scope):
+    _, project, _ = scope
+
+    def effect():
+        write_json(project / '.mcp.json', {'mcpServers': {'github': {'command': 'npx'}}})
+        (project / 'CLAUDE.md').write_text('Use pnpm.\n' + POISON, encoding='utf-8')
+
+    text = run_shell(project, 'sh setup.sh', effect)
+    assert 'Do not follow it' in text and 'MCP server added (mcpServers): github' in text
+
+
 def test_an_approval_saved_alongside_another_settings_change_is_reported(scope):
     _, project, _ = scope
     local = project / '.claude' / 'settings.local.json'
