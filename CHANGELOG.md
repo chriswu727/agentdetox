@@ -14,9 +14,13 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 - More shell writes are stopped before they run: commands inside `bash -c`, `sh -c` and `eval`,
   also when `-c` is in a bundle such as `bash -lc` or `sh -ec`; behind `nice`, `timeout`, `xargs`,
   `env`, `sudo`, `ionice`, `taskset` or `chrt`, also with options that take a value
-  (`sudo -u root`, `env -u X`, `timeout -s KILL 10`, `xargs -I {}`) and `env -S`; after a `cd` or with a variable set earlier
-  in the same command; `${HOME}` and globs; `git checkout -- <file>`, `git restore` and
-  `git checkout .`; `rm -r` of a folder that holds context files; `curl -o` and `wget -O`, also
+  (`sudo -u root`, `env -u X`, `timeout -s KILL 10`, `xargs -I {}`), also bundled (`sudo -Eu root`),
+  and `env -S`; in the folder a wrapper switches to (`env -C .claude`, `sudo -D`, `sudo -i`); after a
+  `cd` (also `cd -P`, `pushd -n`) or with a variable set earlier in the same command; `${HOME}` and
+  globs; `git checkout -- <file>`, `git restore` and `git checkout .`, also after git's own options
+  (`git -C .claude`, `-c`, `--work-tree`, `GIT_WORK_TREE`); a copy, move or link into a folder, which
+  keeps the source's name (`cp x/CLAUDE.md .`, `cp -t .claude`, `ln -s x/CLAUDE.md`), or of a folder
+  over one that holds context files (`cp -r`, `rsync`); `rm -r` of a folder that holds context files; `curl -o` and `wget -O`, also
   in bundles such as `-sSLo`; `perl -i`; and inline `python -c`, `node -e` and similar code that
   writes a file it names. The same applies to commands that change AgentDetox's own settings.
   `git restore --staged`, which only changes the index, is not asked about.

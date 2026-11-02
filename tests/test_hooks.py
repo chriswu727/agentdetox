@@ -898,6 +898,63 @@ def test_more_shell_forms_that_write_context(env, command, expected):
     assert decision(pre("claude-code", project, "Bash", {"command": command})) == expected
 
 
+@pytest.mark.parametrize("command,expected", [
+    ("env -C .claude tee settings.json", "ask"),                     # a wrapper that runs its command elsewhere
+    ("env --chdir=.claude tee settings.json", "ask"),
+    ("env -iC .claude tee settings.json", "ask"),
+    ("sudo -D .claude tee settings.json", "ask"),
+    ("env -C .claude bash -c 'tee settings.json'", "ask"),
+    ("sudo -D src env -C ../.claude tee settings.json", "ask"),
+    ("sudo -i tee .claude.json", "ask"),                             # a login shell starts at home
+    ("sudo -D / env -C .claude tee settings.json", "allow"),         # /.claude is not this project's
+    ("env -C src tee out.txt", "allow"),
+    ("git -C .claude restore settings.json", "ask"),                 # git's options before the subcommand
+    ("git -C .claude checkout -- settings.json", "ask"),
+    ("git -C .claude checkout .", "ask"),
+    ("git -C src -C .. restore CLAUDE.md", "ask"),
+    ("git -c core.autocrlf=false restore CLAUDE.md", "ask"),
+    ("git --git-dir .git restore CLAUDE.md", "ask"),
+    ("git --work-tree=.claude checkout HEAD -- settings.json", "ask"),
+    ("GIT_WORK_TREE=.claude git restore settings.json", "ask"),
+    ("export GIT_WORK_TREE=.claude; git restore settings.json", "ask"),
+    ("git -C .claude status", "allow"),
+    ("git -C .claude log -- settings.json", "allow"),
+    ("git -C src restore app.py", "allow"),
+    ("cd -P .claude && tee settings.json", "ask"),                   # cd's own options
+    ("cd -- .claude && tee settings.json", "ask"),
+    ("pushd -n .claude && popd && tee settings.json", "ask"),
+    ("export CDPATH=$HOME; cd work && tee settings.json", "ask"),    # may enter a folder under CDPATH
+    ("cd work && tee settings.json", "allow"),
+    ("cd -P src && tee out.txt", "allow"),
+    ("sudo -Eu root tee CLAUDE.md", "ask"),                          # a value option inside a bundle
+    ("env -iu X tee CLAUDE.md", "ask"),
+    ("sudo -Eu root tee out.txt", "allow"),
+    ("cp /tmp/x/CLAUDE.md .", "ask"),                                # a copy into a folder keeps its name
+    ("cp /tmp/x/settings.json .claude", "ask"),
+    ("cp -t .claude /tmp/x/settings.json", "ask"),
+    ("mv --target-directory=. /tmp/x/CLAUDE.md", "ask"),
+    ("install -m 644 /tmp/x/settings.json .claude", "ask"),
+    ("rsync -a /tmp/x/CLAUDE.md . --exclude y", "ask"),
+    ("ln -s /tmp/x/CLAUDE.md", "ask"),
+    ("mkdir -p d && cp /tmp/x/CLAUDE.md d", "ask"),
+    ("cp -r /tmp/evil/.claude .", "ask"),                            # a folder copied over one holding context
+    ("rsync -a /tmp/evil/ .claude/", "ask"),
+    ("cp CLAUDE.md CLAUDE.md.bak", "allow"),
+    ("cp CLAUDE.md /tmp/backup", "allow"),
+    ("cp src/a.txt src/b.txt dist/", "allow"),
+    ("cd src && cp ../README.md .", "allow"),
+    ("mv notes.md .claude/", "allow"),
+    ("cp -r src build", "allow"),
+    ("rsync -av --delete src/ build/", "allow"),
+])
+def test_writes_relative_to_another_folder(env, command, expected):
+    _, project, _ = env
+    (project / ".claude").mkdir(exist_ok=True)
+    (project / ".claude/settings.json").write_text("{}", encoding="utf-8")
+    (project / "src").mkdir(exist_ok=True)
+    assert decision(pre("claude-code", project, "Bash", {"command": command})) == expected
+
+
 @pytest.mark.parametrize("command", [
     "nice agentdetox allow 0123456789",
     "timeout 5 agentdetox allow 0123456789",
