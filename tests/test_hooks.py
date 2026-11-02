@@ -810,6 +810,8 @@ def test_a_contradiction_is_attached_only_to_the_version_that_was_checked(env, m
     ("doas -u root tee CLAUDE.md", "ask"),
     ("timeout -s KILL 10 tee CLAUDE.md", "ask"),
     ("xargs -I {} tee CLAUDE.md", "ask"),
+    ("xargs --replace tee CLAUDE.md", "ask"),                        # an option whose value is optional
+    ("xargs --eof tee CLAUDE.md", "ask"),
     ("ionice -c 3 tee CLAUDE.md", "ask"),
     ("taskset -c 0 tee CLAUDE.md", "ask"),
     ("sudo -u root bash -lc 'echo note >> CLAUDE.md'", "ask"),
@@ -903,6 +905,7 @@ def test_more_shell_forms_that_write_context(env, command, expected):
     "bash -lc 'agentdetox allow 0123456789'",
     "sudo -u root agentdetox allow 0123456789",
     "env -u UNUSED agentdetox config copied off",
+    "xargs --replace agentdetox config copied off",
     "echo 0123456789 | xargs agentdetox allow",
     "uv run agentdetox config copied off",
 ])

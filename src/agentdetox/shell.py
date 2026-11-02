@@ -36,8 +36,9 @@ _WRAPPER_VALUES = {
     "env": {"-u", "-C", "-P", "--unset", "--chdir"},
     "nice": {"-n", "--adjustment"},
     "timeout": {"-s", "-k", "--signal", "--kill-after"},
-    "xargs": {"-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--eof",
-              "--replace", "--max-lines", "--max-args", "--max-procs", "--max-chars", "--process-slot-var"},
+    # GNU's --replace, --eof and --max-lines take a value only when attached with `=`.
+    "xargs": {"-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--max-args",
+              "--max-procs", "--max-chars", "--process-slot-var"},
     "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
     "time": {"-f", "-o", "--format", "--output"},
     "exec": {"-a"},
