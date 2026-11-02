@@ -12,6 +12,7 @@ import glob
 import posixpath
 import re
 import shlex
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -127,12 +128,24 @@ def _options(words: list[str], i: int, values: set[str]) -> tuple[list[tuple[str
     return found, 1
 
 
+# Joins a folder to a path named by a variable. Whether the path is taken from the folder is
+# only known once the variable is expanded: an absolute value replaces the folder.
+_THEN = "\2"
+
+
 def _join(folder: str, path: str) -> str:
-    """`path` taken from `folder`. Unlike `_under`, a path starting with a variable is
-    relative; its value is only known once expanded."""
+    """`path` taken from `folder`, also when `path` is a variable whose value is not known yet."""
     if not folder or not _relative(path):
         return path
-    return f"{folder.rstrip('/')}/{path}"
+    return f"{folder.rstrip('/')}{_THEN if path.startswith('$') else '/'}{path}"
+
+
+def _settle(path: str) -> str:
+    """A path joined by `_join`, once its variables are expanded."""
+    first, *rest = path.split(_THEN)
+    for part in rest:
+        first = _under(first, part)
+    return first
 
 
 def _unwrap(words: list[str]) -> list[str]:
@@ -373,7 +386,8 @@ def write_targets(tokens: list[str], depth: int = 0) -> list[str]:
                     found += [(folder, a) for a in command[1:] if not a.startswith("-")]
                 elif command and compat.program(command[0]) == "mkdir":
                     scope.made |= {posixpath.normpath(_under(cwd, v)) for a in command[1:] if not a.startswith("-")
-                                   for v in _expand(_join(folder, a), scope.env) for cwd in scope.cwds}
+                                   for v in map(_settle, _expand(_join(folder, a), scope.env))
+                                   for cwd in scope.cwds}
                 else:
                     trees = [w.partition("=")[2] for w in variant[:len(variant) - len(command)]
                              if w.startswith("GIT_WORK_TREE=")] + scope.env.get("GIT_WORK_TREE", [])
@@ -407,7 +421,8 @@ def _within(folder: str, value: str, env: dict[str, list[str]]) -> list[str]:
     """`value` taken from `folder`, with the folder's variables expanded."""
     if not folder or value.startswith(UNKNOWN) or not _relative(value):
         return [value]
-    return [UNKNOWN + value if f.startswith(UNKNOWN) else _under(f, value) for f in _expand(folder, env)]
+    return [UNKNOWN + value if f.startswith(UNKNOWN) else _under(f, value)
+            for f in map(_settle, _expand(folder, env))]
 
 
 _CHANGE_DIR = {"cd", "pushd", "popd"}
@@ -572,15 +587,20 @@ def _copy_targets(name: str, args: list[str]) -> list[str]:
             return [dest]
         # Several sources, or a destination written as a folder, can only be a folder.
         certain = len(sources) > 1 or dest.endswith("/") or posixpath.basename(dest) in (".", "..")
-        return [dest, *(_inside(dest, s, recursive) + ("" if certain else INTO) for s in sources)]
-    return [_inside(folder, s, recursive) for s in operands]
+        return [dest, *(_inside(name, dest, s, recursive) + ("" if certain else INTO) for s in sources)]
+    return [_inside(name, folder, s, recursive) for s in operands]
 
 
-def _inside(folder: str, source: str, recursive: bool) -> str:
+# BSD cp, as on macOS, copies what is in `src/` rather than the folder itself; GNU cp does not.
+_BSD = sys.platform.startswith(("darwin", "freebsd", "openbsd", "netbsd"))
+
+
+def _inside(program: str, folder: str, source: str, recursive: bool) -> str:
     """Where `source` lands when copied into `folder`. rsync copies what is in `src/`,
     not the folder itself."""
-    name = "." if recursive and source.endswith("/") else posixpath.basename(source.rstrip("/"))
-    return _join(folder, name) + (TREE if recursive else "")
+    contents = recursive and source.endswith("/") and (program == "rsync" or program == "cp" and _BSD)
+    name = "." if contents else posixpath.basename(source.rstrip("/"))
+    return (f"{folder.rstrip('/')}/{name}" if folder else name) + (TREE if recursive else "")
 
 
 # Git options before the subcommand that take the next word as their value.

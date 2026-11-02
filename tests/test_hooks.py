@@ -2,6 +2,7 @@ import json
 import os
 import re
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -953,6 +954,29 @@ def test_writes_relative_to_another_folder(env, command, expected):
     (project / ".claude/settings.json").write_text("{}", encoding="utf-8")
     (project / "src").mkdir(exist_ok=True)
     assert decision(pre("claude-code", project, "Bash", {"command": command})) == expected
+
+
+@pytest.mark.parametrize("command,expected", [
+    ("D={project}; env -C /tmp env -C \"$D\" tee CLAUDE.md", "ask"),     # an absolute folder replaces the earlier one
+    ("D={project}; git -C /tmp -C $D restore CLAUDE.md", "ask"),
+    ("D=.claude; env -C {project} env -C $D tee settings.json", "ask"),  # a relative one is taken from it
+    ("D=.claude; env -C /tmp env -C $D tee settings.json", "allow"),
+])
+def test_folder_named_by_a_variable(env, command, expected):
+    _, project, _ = env
+    (project / ".claude").mkdir(exist_ok=True)
+    command = command.format(project=project)
+    assert decision(pre("claude-code", project, "Bash", {"command": command})) == expected
+
+
+def test_trailing_slash_copies_contents_only_where_cp_does(env):
+    _, project, _ = env
+    (project / "assets").mkdir()
+    (project / "assets/a.txt").write_text("x", encoding="utf-8")
+    copy = decision(pre("claude-code", project, "Bash", {"command": "cp -r assets/ ."}))
+    assert copy == ("ask" if sys.platform == "darwin" else "allow")     # BSD cp copies what is in assets/
+    assert decision(pre("claude-code", project, "Bash", {"command": "rsync -a assets/ ."})) == "ask"
+    assert decision(pre("claude-code", project, "Bash", {"command": "mv assets/ dist"})) == "allow"
 
 
 @pytest.mark.parametrize("command", [
