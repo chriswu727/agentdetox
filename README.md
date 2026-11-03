@@ -38,10 +38,6 @@ validation through daily use on a real machine.
 </picture>
 </p>
 
-| Prevent risky writes | Notice context changes | Review and recover |
-|---|---|---|
-| Deny rule-matched high-risk instructions; ask about copied memory and changes to guardrails. | Compare context after shell tools and at session start, including changes made outside edit tools. | Inspect diffs and source evidence, accept an exact version, or preview recovery with a backup. |
-
 ## Quick start
 
 Requires **Python 3.11+**. Install with [uv](https://docs.astral.sh/uv/) or `pipx`:
@@ -136,11 +132,15 @@ paths may escape pre-execution checks; scoped post-tool observation can detect p
 afterwards. Detached background writes need later reconciliation. Hooks fail open on errors,
 which remain visible in `doctor` and `status`. Code running as your user can alter the hooks or store.
 
-| Evidence | What it establishes | Where to inspect it |
-|---|---|---|
-| Offline regression gallery | Authored prevention, monitoring and byte-exact recovery cases, with two explicit semantic misses. It is not a real-world accuracy estimate. | [Protocol and results](https://github.com/chriswu727/agentdetox/blob/main/bench/ACCURACY.md) |
-| Real Claude Code lab, 2026-11-02 | 16 sessions across eight scenarios, both arms; all scenario assertions passed. Guardrail success and user-task completion are reported separately. | [Results](https://github.com/chriswu727/agentdetox/blob/main/lab/results/latest.md) |
-| Reference latency, 2026-11-01 | 100 samples per case on one Mac, NLI off: Bash pre/post P95 **126.3 ms**, session start with 1,000 unchanged files **139.2 ms**. | [Method, raw data and budgets](https://github.com/chriswu727/agentdetox/blob/main/bench/HOOK_LATENCY.md) |
+- **Offline regression gallery:** authored prevention, monitoring and byte-exact recovery cases,
+  with two explicit semantic misses. It is not a real-world accuracy estimate.
+  [Protocol and results](https://github.com/chriswu727/agentdetox/blob/main/bench/ACCURACY.md).
+- **Real Claude Code lab, 2026-11-02:** 16 sessions across eight scenarios, both arms; all scenario
+  assertions passed. Guardrail success and user-task completion are reported separately.
+  [Recorded results](https://github.com/chriswu727/agentdetox/blob/main/lab/results/latest.md).
+- **Reference latency, 2026-11-01:** 100 samples per case on one Mac, NLI off. Bash pre/post P95
+  **126.3 ms**; session start with 1,000 unchanged files **139.2 ms**.
+  [Method, raw data and budgets](https://github.com/chriswu727/agentdetox/blob/main/bench/HOOK_LATENCY.md).
 
 Source matching is evidence of copied text, not proof of malicious intent or human authorship.
 An empty rescan does not certify a file as safe.
