@@ -28,6 +28,7 @@ Everything lives in `~/.agentdetox` (or `AGENTDETOX_HOME`), private to your user
 |---|---|
 | `objects/` | Full copies of each watched file at its last trusted version, and of the earlier versions the ledger refers to, named by hash. These include settings files, so any secret written in them (an MCP server's token, say) is copied too |
 | `state.sqlite3` | Transactional checkpoints, observed and accepted hashes, changes and per-line attribution evidence, findings and review state, hook events and recovery operations. Shell start states store scoped paths, hashes, file kinds, permissions and tool/session ids until completion. No shell command text is stored by this observation feature |
+| `state.v1.sqlite3` | Pre-0.4 metadata database retained when format 1 upgrades to format 3; keep it with the corresponding content objects for a 0.3.x rollback |
 | `baseline.json`, `ledger.jsonl`, `events.jsonl` | Original pre-0.3 files retained unchanged after a successful migration. No longer the authoritative store |
 | `quarantine/` | Unique recovery backups and manifests; never automatically deleted |
 | `events-fallback.jsonl` | Events written while SQLite was unavailable; retained until `health acknowledge fallback` moves them to an acknowledged archive |
@@ -49,6 +50,6 @@ it is not a complete backup. Back up the entire store for recovery.
 
 ## Removing it
 
-`/plugin uninstall agentdetox` or `agentdetox uninstall claude-code`, then `agentdetox daemon stop`,
+`claude plugin uninstall agentdetox@agentdetox` or `agentdetox uninstall claude-code`, then `agentdetox daemon stop`,
 `uv tool uninstall agentdetox`, and delete `~/.agentdetox`. Deleting the folder also deletes the
 quarantined files.

@@ -32,8 +32,10 @@ the user is the authority on their own text; hidden text never counts as theirs.
 
 On one real user's memory the NLI model called many unrelated notes contradictory, and thresholds
 low enough to be quiet left little recall. So contradiction checks run after the write, in a
-background model server, and are logged. Trade-off: a fabricated fact is noticed, not stopped. The
-roadmap replaces the model with an LLM judge before this asks again.
+background model server, and are logged. Trade-off: some conflicting claims may be noticed after
+they persist; a novel false fact can
+pass entirely. A stronger opt-in judge is a roadmap consideration, not an implemented replacement
+or a commitment to enable prompting by default.
 
 ## ADR 6: Local only
 
@@ -64,8 +66,10 @@ run every check twice. `install` declines when the plugin is enabled and `doctor
 Every change to a watched file is recorded with its origin (the user, the agent, a named input the
 agent copied, or something outside the agent) and the versions before and after, which are kept
 while the ledger refers to them. Text attribution is an inference and can be evaded by paraphrase; history is
-what makes `blame`, review and rollback possible. Trade-off: the store grows with use unless the user explicitly prunes it, and a change made by the agent's shell commands is recorded as "outside the agent's edit
-tools" until a post-command check tells the two apart.
+what makes `blame`, review and rollback possible. Trade-off: the store grows with use unless the
+user explicitly prunes it, and a change observed during a shell command retains unknown-process
+attribution.
+The interval does not establish process authorship (see ADR 16).
 
 ## ADR 11: Prepare recovery before replacing a file
 

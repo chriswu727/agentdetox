@@ -1,6 +1,9 @@
 # Contributing
 
-Code, documentation and release notes are in English. Detection rules cover English and Chinese.
+English is the primary language for code, documentation, release notes and repository metadata.
+Keep `README.zh-CN.md` aligned with the English README when installation, behavior, support or
+limits change. Detailed references remain in English; attack fixtures retain their original text.
+Detection rules cover English and Chinese.
 
 ## Setup and checks
 
@@ -42,14 +45,19 @@ To release:
 1. Run the lab (`lab/README.md`) against the release candidate.
 2. Set the version in `src/agentdetox/__init__.py`, `plugins/agentdetox/.claude-plugin/plugin.json`
    and `VERSION=` in `plugins/agentdetox/scripts/hook`.
-3. Date the version's `CHANGELOG.md` heading (`## [0.3.0] - 2026-11-20`) and merge.
-4. Publish a GitHub release tagged `v0.3.0`. The release workflow checks that the tag, the three
+3. Date the version's `CHANGELOG.md` heading (`## [X.Y.Z] - YYYY-MM-DD`) and merge.
+4. Publish a GitHub release tagged `vX.Y.Z` for that version. The release workflow checks that the tag, the three
    versions and the dated changelog agree (`scripts/check_release.py`), runs the checks and tests,
    smoke-tests the built wheel in a clean environment, attaches the distributions to the release,
    and publishes to PyPI through trusted publishing. Nothing is uploaded if any step fails.
 
 PyPI accepts the upload only from this repository's `release.yml`, running in the `pypi`
 environment, as set in the project's trusted-publisher settings on PyPI.
+
+Validate Claude manifests separately: `claude plugin validate .` for the marketplace, then
+`claude plugin validate plugins/agentdetox` for the plugin. A root validation alone does not
+validate both. Real-model lab runs consume subscription usage and require explicit authorization
+and a session cap; local checks and the demo make no model calls.
 
 ## Where changes belong
 
@@ -64,7 +72,9 @@ See [docs/architecture.md](docs/architecture.md) for how the pieces fit.
   severity: high blocks, medium asks), `hidden.py` for hidden text and injection phrasing. Every
   rule needs a test with benign text that must not match, and should be run against real memory
   before it ships.
-- **Shell commands**: `shell.py` parses them. It does not follow `cd` or expand variables, by design.
+- **Shell commands**: `shell.py` parses recognized writes, wrappers, literal working-directory
+  changes and assignments conservatively; it never executes the command. Preserve uncertain paths
+  and values as candidates. Post-tool observation covers scoped persistent changes the parser misses.
 - **Snapshots, restore, quarantine**: `integrity.py`. Never delete a user's file; move it to
   quarantine. Bump `SCHEMA_VERSION` and handle the old format when the store's layout changes.
 - **The ledger**: `ledger.py`. Changes append transactionally; failures reach the fail-open hook boundary and become visible

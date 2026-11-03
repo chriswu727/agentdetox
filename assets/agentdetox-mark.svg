@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">AgentDetox</title>
+  <desc id="desc">A mint shield protects three pages of persistent agent context.</desc>
+  <rect width="128" height="128" rx="30" fill="#102A2A"/>
+  <path d="M64 17 103 32v29c0 24-16 41-39 51C41 102 25 85 25 61V32l39-15Z" fill="#163D38" stroke="#73E2BA" stroke-width="3"/>
+  <rect x="43" y="37" width="35" height="44" rx="5" transform="rotate(-10 43 37)" fill="#1F5148" stroke="#45AA8D" stroke-width="2"/>
+  <rect x="45" y="39" width="36" height="46" rx="5" fill="#DFF8EC"/>
+  <path d="M54 51h18M54 59h12" stroke="#237761" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="79" cy="80" r="16" fill="#73E2BA" stroke="#102A2A" stroke-width="4"/>
+  <path d="m72 80 5 5 9-11" stroke="#102A2A" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

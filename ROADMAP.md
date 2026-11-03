@@ -1,6 +1,8 @@
 # Roadmap
 
-Last updated 2026-11-01. The [changelog](CHANGELOG.md) records releases; this document separates
+Last updated 2026-11-02. Current published release:
+[0.4.0](https://github.com/chriswu727/agentdetox/releases/tag/v0.4.0). The
+[changelog](CHANGELOG.md) records releases; this document separates
 implemented capabilities from product hypotheses and future work.
 
 ## Direction
@@ -36,7 +38,7 @@ self-use; no external user recruitment is planned.
 
 ## 0.3: Review and recovery
 
-Implemented in this release:
+Shipped in 0.3.0:
 
 - A single review list, diffs, per-finding dismissal and acceptance of an exact version.
 - Per-added-line attribution evidence, separated from the observed writer.

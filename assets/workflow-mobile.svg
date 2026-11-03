@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="380" height="620" viewBox="0 0 380 620" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">The AgentDetox workflow</title>
+  <desc id="desc">Check planned context writes, notice changes after shell tools and at session start, review diffs and source evidence, and restore an earlier version with a backup.</desc>
+  <rect x="1" y="1" width="378" height="618" rx="20" fill="#102A2A" stroke="#2F5550" stroke-width="2"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <text x="24" y="34" fill="#9DC6B9" font-size="11" font-weight="600" letter-spacing="1.5">AGENTDETOX / CONTEXT PROTECTION</text>
+    <g fill="#173B36" stroke="#356457">
+      <rect x="20" y="52" width="340" height="118" rx="12"/>
+      <rect x="20" y="190" width="340" height="118" rx="12"/>
+      <rect x="20" y="328" width="340" height="118" rx="12"/>
+      <rect x="20" y="466" width="340" height="118" rx="12"/>
+    </g>
+    <g fill="#73E2BA" font-size="12" font-weight="700" letter-spacing="1.2">
+      <text x="38" y="78">01 / CHECK</text><text x="38" y="216">02 / NOTICE</text>
+      <text x="38" y="354">03 / REVIEW</text><text x="38" y="492">04 / RECOVER</text>
+    </g>
+    <g fill="#F0FAF5" font-size="21" font-weight="600">
+      <text x="38" y="110">Before it persists</text><text x="38" y="248">When it changes</text>
+      <text x="38" y="386">See the evidence</text><text x="38" y="524">Go back safely</text>
+    </g>
+    <g fill="#B8D5C9" font-size="14">
+      <text x="38" y="144">Planned writes · Rules + source matching</text>
+      <text x="38" y="282">After shell tools · At session start</text>
+      <text x="38" y="420">Diffs + sources · Accept an exact version</text>
+      <text x="38" y="558">Preview · Back up · Restore an earlier version</text>
+    </g>
+    <g stroke="#73E2BA" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M190 174v11m-5-5 5 5 5-5"/><path d="M190 312v11m-5-5 5 5 5-5"/><path d="M190 450v11m-5-5 5 5 5-5"/>
+    </g>
+  </g>
+</svg>

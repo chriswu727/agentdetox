@@ -1,5 +1,10 @@
 # Agent memory poisoning benchmark, v0
 
+Historical detector evaluation from the 0.2 development period. The tables below retain their
+original protocol and measurements; they are not an overall accuracy score for 0.4.0. The
+[0.4.0 regression report](ACCURACY.md#existing-public-data-evaluation) separately records a
+rerun of the provenance split.
+
 v0 measures how AgentDetox and [OWASP Agent Memory Guard](https://github.com/OWASP/www-project-agent-memory-guard)
 (AMG) 0.3.3 handle poisoned and legitimate writes to a Claude Code-style project memory. It uses
 public attack data only, and its limits (below) matter as much as its numbers.

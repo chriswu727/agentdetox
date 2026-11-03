@@ -1,5 +1,9 @@
 # Hook latency
 
+Latest recorded suite: [0.4.0 release candidate, 2026-11-01](#040-release-candidate-2026-11-01).
+0.4.0 was published on 2026-11-02. These are dated reference measurements, not timings of
+every later commit or of a full Claude plugin launch. They exclude `uvx` startup and downloads.
+
 Run `python -m bench.hook_latency --samples 100 --output bench/results/local.json`.
 No model, network, or subscription calls are made. Each timing includes a fresh Python process,
 CLI parsing and hook execution. Each case has one untimed warmup; P95 uses the nearest-rank
@@ -20,10 +24,10 @@ not a cross-platform latency guarantee. The raw report is [results/hooks-2026-10
 All five measured P95 budgets passed. These cases exclude optional NLI inference and initial legacy
 migration. Ordinary hooks no longer import NumPy; file history lookup uses SQLite's path index.
 
-## Unreleased shell observation, 2026-10-30
+## Development baseline: shell observation, 2026-10-30
 
-The main checkout now measures Bash pre-checks with fresh agent tool-use ids and additionally
-measures the complete pre/post pair. The active-memory stress case has 1,000 files belonging to
+That development checkout measured Bash pre-checks with fresh agent tool-use ids and the
+complete pre/post pair. The active-memory stress case has 1,000 files belonging to
 the current project plus 1,000 unrelated files, exercising the scope boundary. Each case has 100
 samples and one untimed warmup, with NLI disabled. Raw report:
 [results/hooks-self-use-2026-10-30.json](results/hooks-self-use-2026-10-30.json).

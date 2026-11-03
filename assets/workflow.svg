@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="248" viewBox="0 0 960 248" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">From a context write to a recoverable change</title>
+  <desc id="desc">Check planned writes, notice context changes, review diffs and source evidence, then restore an earlier version with a backup. A workflow illustration, not a screenshot.</desc>
+  <rect x="1" y="1" width="958" height="246" rx="20" fill="#102A2A" stroke="#2F5550" stroke-width="2"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <text x="30" y="36" fill="#9DC6B9" font-size="12" font-weight="600" letter-spacing="2">PERSISTENT CONTEXT · VISIBLE CHANGES · RECOVERABLE VERSIONS</text>
+    <g fill="#173B36" stroke="#356457">
+      <rect x="26" y="60" width="208" height="150" rx="12"/>
+      <rect x="260" y="60" width="208" height="150" rx="12"/>
+      <rect x="494" y="60" width="208" height="150" rx="12"/>
+      <rect x="728" y="60" width="206" height="150" rx="12"/>
+    </g>
+    <g fill="#73E2BA" font-size="12" font-weight="700" letter-spacing="1.2">
+      <text x="44" y="88">01 / CHECK</text><text x="278" y="88">02 / NOTICE</text>
+      <text x="512" y="88">03 / REVIEW</text><text x="746" y="88">04 / RECOVER</text>
+    </g>
+    <g fill="#F0FAF5" font-size="21" font-weight="600">
+      <text x="44" y="124">Before it persists</text><text x="278" y="124">When it changes</text>
+      <text x="512" y="124">See the evidence</text><text x="746" y="124">Go back safely</text>
+    </g>
+    <g fill="#B8D5C9" font-size="14">
+      <text x="44" y="157">Planned context writes</text><text x="44" y="180">Rules + source matching</text>
+      <text x="278" y="157">After shell tools</text><text x="278" y="180">And at session start</text>
+      <text x="512" y="157">Diffs + source evidence</text><text x="512" y="180">Accept an exact version</text>
+      <text x="746" y="157">Preview the earlier version</text><text x="746" y="180">Back up before restoring</text>
+    </g>
+    <g stroke="#73E2BA" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M241 135h12m-5-5 5 5-5 5"/><path d="M475 135h12m-5-5 5 5-5 5"/><path d="M709 135h12m-5-5 5 5-5 5"/>
+    </g>
+    <text x="30" y="232" fill="#9DC6B9" font-size="11">AGENTDETOX / CLAUDE CODE WORKFLOW</text>
+  </g>
+</svg>

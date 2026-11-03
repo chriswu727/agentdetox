@@ -38,7 +38,7 @@ In scope:
 - **An agent changing AgentDetox's own state**: its settings, allowlist and snapshots, by writing
   them or by running the commands that change them.
 
-Out of scope, and stated in the README:
+Out of scope; see the [full limitations](docs/user-guide.md#what-it-does-not-catch):
 
 - **Someone or something running code as the user** outside the agent's tool calls. It can edit
   `~/.agentdetox`, the ledger included, or remove the hooks; the session-start check and
@@ -55,8 +55,8 @@ Out of scope, and stated in the README:
 - **The store is private.** `~/.agentdetox` is created 0700 and its files 0600.
 - **No imports from the project.** Background processes and the `python -m` hook fallback start
   Python with `-I`, so a repository cannot plant an `agentdetox` package for the hook to import.
-- **No network.** Hooks and checks make no network calls. The one download is the Claude Code
-  plugin's fallback when no `agentdetox` is installed: `uvx` fetches the pinned release from PyPI,
+- **Local checks.** Hooks and checks make no network calls. Installation, the plugin's `uvx`
+  fallback and optional model downloads require network access. The fallback fetches a release
   pinned by version, not by hash. See [PRIVACY.md](PRIVACY.md).
 - **The shell check reads, it does not run.** A command is checked before it runs by parsing it;
   where the parse is uncertain (a `cd` that may fail, a variable set elsewhere) it assumes the

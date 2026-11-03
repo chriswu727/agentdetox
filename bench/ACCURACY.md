@@ -1,6 +1,8 @@
 # Detection and recovery regression gallery
 
-Recorded 2026-10-31. Accuracy is the current development priority: prevent risky persistence,
+Initial results recorded 2026-10-31; additional families added for the 0.4.0 release
+(published 2026-11-02). These are dated regression results, not a fresh measurement of each
+subsequent commit. Accuracy is the current development priority: prevent risky persistence,
 retain monitoring evidence, and recover without hiding remaining findings or overwriting newer work.
 These are separate outcomes; a notification alone is not prevention, and a successful rollback
 does not establish that a file is safe.
@@ -24,10 +26,10 @@ same gallery. The raw [before](results/accuracy-before-2026-10-31.json) and
 ## Attack families added 2026-11-01
 
 Four more families, from an independent security review and the code reviews of its fixes. All
-use the real hook handlers in isolated folders; none needs a model. "0.3.0" is the released
-package run against the same cases.
+use the real hook handlers in isolated folders; none needs a model. "0.3.0" is the previous release
+run against the same cases; the final column is the 0.4.0 regression result.
 
-| Family | Cases | 0.3.0 | Now |
+| Family | Cases | 0.3.0 | 0.4.0 |
 |---|---:|---:|---:|
 | Shell commands, decided before they run (36 that write context, 13 that must stay allowed) | 49 | 18 | 49 |
 | Settings changed outside the agent (5 that add something that runs; a permission and an ordinary variable as controls) | 7 | 2 | 7 |
@@ -112,8 +114,9 @@ This rerun checks regressions; the targeted fixes do not improve the existing ag
   preview and stale-version guard remain essential. Precise removal of poisoned spans while
   preserving later benign edits is not implemented.
 - Recovery rescanning covers deterministic rules, not factual verification or contradiction/model
-  checks. An empty scan is not a clean bill of health. The legacy checkpoint restore command does
-  not perform this new review-based rescan.
-- No new Claude/Codex sessions were run. This gallery does not verify real-client hook delivery or
-  alert display. Further self-use work should measure per-family misses, benign review burden,
+  checks. An empty scan is not a clean bill of health. In 0.4.0, the legacy checkpoint restore
+  command uses the same journalled recovery
+  and target rescan as review-based recovery.
+- No Claude/Codex sessions were run by this offline gallery. It does not verify real-client hook
+  delivery or alert display. Further self-use work should measure per-family misses, benign review burden,
   delayed/mixed-source persistence, and residual content after cleanup separately.

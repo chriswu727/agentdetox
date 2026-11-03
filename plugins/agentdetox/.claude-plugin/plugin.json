@@ -1,7 +1,7 @@
 {
   "name": "agentdetox",
   "version": "0.4.0",
-  "description": "Checks what Claude Code writes to its memory, rules, skills and config, records where each change came from, reports files changed behind its back, and puts them back.",
+  "description": "Checks Claude Code memory, instructions, skills and config; records changes and source evidence; helps you review and restore earlier versions.",
   "author": {"name": "Yichen Wu"},
   "homepage": "https://github.com/chriswu727/agentdetox",
   "repository": "https://github.com/chriswu727/agentdetox",

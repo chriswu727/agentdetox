@@ -1,5 +1,9 @@
 # Knowledge-base scanner benchmark
 
+Historical scanner comparison measured with AgentDetox 0.1, as labelled in the table. This is
+not a new comparison of 0.4.0 or the current versions of the other tools. The scanner remains
+available; see the [current user guide](../docs/user-guide.md#also-scanning-a-rag-knowledge-base).
+
 How `agentdetox scan` and `trace` do on published RAG poisoning and injection data. For agent memory,
 see [MEMORY_BENCHMARK.md](MEMORY_BENCHMARK.md).
 
