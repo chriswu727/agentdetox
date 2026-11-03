@@ -3,6 +3,15 @@
 Notable changes to AgentDetox. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 before 1.0, a minor version may change commands, settings or the snapshot store.
 
+## [Unreleased]
+
+### Documentation
+
+- English-first project home with a Simplified Chinese README, an illustrated workflow and a
+  documentation index; detailed instructions remain in the user guide.
+- Refresh installation commands, release guidance and published 0.4.0 status; distinguish
+  historical benchmark records from current capabilities and retain their limitations.
+
 ## [0.4.0] - 2026-11-02
 
 ### Security
@@ -207,5 +216,8 @@ Released on GitHub as `ragscan`. It scans RAG knowledge bases for hidden prompt 
 PoisonedRAG-style poisoning (CleanBase clique detection), and traces wrong answers back to the
 passages responsible.
 
-[0.2.0]: https://github.com/chriswu727/agentdetox/compare/ba1cc83...main
+[Unreleased]: https://github.com/chriswu727/agentdetox/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/chriswu727/agentdetox/releases/tag/v0.4.0
+[0.3.0]: https://github.com/chriswu727/agentdetox/releases/tag/v0.3.0
+[0.2.0]: https://github.com/chriswu727/agentdetox/releases/tag/v0.2.0
 [0.1.0]: https://github.com/chriswu727/agentdetox/commit/ba1cc83

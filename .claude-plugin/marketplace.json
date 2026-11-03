@@ -11,7 +11,7 @@
     {
       "name": "agentdetox",
       "source": "./plugins/agentdetox",
-      "description": "Checks what Claude Code writes to its memory, rules, skills and config, records where each change came from, reports files changed behind its back, and puts them back."
+      "description": "Checks Claude Code memory, instructions, skills and config; records changes and source evidence; helps you review and restore earlier versions."
     }
   ]
 }

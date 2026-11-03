@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "agentdetox"
 dynamic = ["version"]
-description = "Protection for what AI coding agents remember and obey: checks what they write to memory, rules, skills and config, records where each change came from, and puts back what was tampered with."
+description = "Check risky writes to coding agents' memory, instructions, skills and config. Review changes and source evidence, then restore earlier versions."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
