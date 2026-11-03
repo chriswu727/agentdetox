@@ -257,7 +257,8 @@ agentdetox scan ./knowledge_base            # directory of .txt/.md/.html, or a 
 agentdetox trace kb.jsonl -q "Who founded Acme?" -a "Bob Smith"
 ```
 
-Try it on the bundled example: `agentdetox scan examples/kb`.
+From a repository checkout, try `agentdetox scan examples/kb`. The example files are in the
+repository; they are not installed with the PyPI wheel.
 
 | Detector | What it catches | How |
 |---|---|---|
@@ -275,12 +276,13 @@ legitimately repetitive content (versioned docs, templated pages) also forms cli
 `high` only for members that also open with a question or carry injection markers. Use
 `--fail-on medium` if you want paraphrase-only poisoning to block ingestion too.
 
-`poison-cluster` implements CleanBase (Jin et al., arXiv 2605.00460): a k-nearest-neighbour
+`poison-cluster` implements [CleanBase](https://arxiv.org/abs/2605.00460) (Jin et al.): a k-nearest-neighbour
 cosine-similarity graph (k=10), edges kept above mu + 2.5 sigma of a 50% edge sample, and every
 passage in a clique of 3 or more flagged; exact duplicates are collapsed first. `trace` takes a
 question and the wrong answer your system gave, ranks the top `4 x top-k` passages by the mean
 z-score of similarity to the question, similarity to the wrong answer and whether the passage
-contains the answer, and splits them with 1-D 2-means. It is a cheap approximation of RAGOrigin
+contains the answer, and splits them with 1-D 2-means. It is a cheap approximation of
+[RAGOrigin](https://github.com/zhangbl6618/RAG-Responsibility-Attribution)
 (Zhang et al., IEEE S&P 2026); treat its output as a ranked lead list.
 
 Limits: `poison-cluster` cannot see an attacker who plants only one or two passages per target
