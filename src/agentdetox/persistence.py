@@ -126,10 +126,23 @@ RUNS_CODE = {"hooks", "statusLine", "mcpServers", "mcp", "mcp_servers", "notify"
              "enableAllProjectMcpServers", "enabledMcpjsonServers", "enabledPlugins", "extraKnownMarketplaces"}
 
 
+def _claude_config(data: dict) -> dict:
+    """Runtime caches share key names with settings but are not executable configuration."""
+    config = {k: v for k, v in data.items() if k in _GUARDED_KEYS}
+    projects = data.get("projects")
+    if isinstance(projects, dict):
+        config["projects"] = {
+            project: {k: v for k, v in values.items() if k in _GUARDED_KEYS}
+            for project, values in projects.items() if isinstance(values, dict)
+        }
+    return config
+
+
 def _parse_config(path: Path, text: str):
     try:
         if path.suffix == ".json":
-            return json.loads(text)
+            data = json.loads(text)
+            return _claude_config(data) if path.name == ".claude.json" and isinstance(data, dict) else data
         if path.suffix == ".toml":
             return tomllib.loads(text)
     except (ValueError, tomllib.TOMLDecodeError):

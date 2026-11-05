@@ -5,6 +5,12 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ## [Unreleased]
 
+### Fixed
+
+- Treat Claude Code's runtime feature caches as data rather than executable settings. A cached
+  `statusLine` display string no longer produces a high-severity command alert; real settings
+  and per-project MCP configuration remain guarded.
+
 ### Documentation
 
 - English-first project home with a Simplified Chinese README, an illustrated workflow and a
