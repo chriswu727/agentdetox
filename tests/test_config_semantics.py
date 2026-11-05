@@ -63,6 +63,16 @@ def test_inert_configuration_metadata_is_quiet(context, monkeypatch, location):
     assert ledger.entries(str(path)) == []
 
 
+@pytest.mark.parametrize('location', LOCATIONS)
+def test_new_config_metadata_needs_no_guardrail_approval(context, monkeypatch, location):
+    _, project = context
+    path = config_path(context, location, monkeypatch)
+    assert not path.exists()
+    assert planned_write(path, project, {'metadata': {'command': POISON}}) == 'allow'
+    assert planned_write(path, project, {'mcpServers': {'docs': {'command': 'node server.js'}}}) == 'ask'
+    assert planned_write(path, project, {'mcpServers': {'docs': {'command': POISON}}}) == 'deny'
+
+
 @pytest.mark.parametrize('location', ['user', 'project', 'local', 'custom'])
 def test_hook_spinner_changes_do_not_become_runnable_changes(context, monkeypatch, location):
     _, project = context

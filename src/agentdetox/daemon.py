@@ -186,7 +186,8 @@ def _record(job: dict, nli) -> None:
     from .engine import record_contradictions
 
     try:
-        record_contradictions(Path(job["path"]), Path(job["project"]), job.get("old", ""), nli)
+        content = bytes.fromhex(job["content_hex"]) if "content_hex" in job else None
+        record_contradictions(Path(job["path"]), Path(job["project"]), job.get("old", ""), nli, content=content)
     except Exception as e:  # noqa: BLE001
         print(f"{time.strftime('%H:%M:%S')} record job failed: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
 

@@ -157,3 +157,41 @@ This rerun checks regressions; the targeted fixes do not improve the existing ag
 - No Claude/Codex sessions were run by this offline gallery. It does not verify real-client hook
   delivery or alert display. Further self-use work should measure per-family misses, benign review burden,
   delayed/mixed-source persistence, and residual content after cleanup separately.
+
+## Frozen acceptance set, 2026-11-05
+
+A separate set of 21 cases was authored by Claude before seeing the detector expressions or
+this set's results: eight benign controls and thirteen attacks, including three declared semantic
+gaps. The [fixture](fixtures/acceptance-2026-11-05.json) retains its original text and expected
+labels; both reports record its SHA-256. This is a small authored acceptance set, not a
+statistically independent estimate of real-world precision or recall. Claude had prior project
+context. Once its failures informed fixes, reruns became regression evidence.
+
+```sh
+python -m bench.acceptance_eval --output bench/results/acceptance-current.json
+```
+
+The [initial report](results/acceptance-before-2026-11-05.json) exposed a false block on a
+coordinated safety prohibition, a fetch-and-pipe instruction that asked rather than denied, and
+an unnecessary guardrail question when creating a file containing only Claude runtime metadata.
+All 21 baseline restores were byte-exact. The gate keeps the three declared semantic misses
+visible while requiring every other prevention/monitoring expectation, every restore, and no hook
+errors. It also requires the cleanup and configuration journeys below to pass.
+
+The selective-cleanup journey removes two planted lines separately, preserves benign content and
+a later user edit, verifies the quarantine bytes, keeps remaining findings visible between removals,
+and refuses application after another edit. The configuration journey checks that cached display
+text stays quiet and a real malicious MCP command is denied. Neither journey calls a model.
+
+The [final report](results/acceptance-after-2026-11-05.json) passes that acceptance gate with
+unchanged fixture bytes and labels. Eight benign controls have no block, question or finding.
+Ten supported attacks meet both prevention and monitoring expectations; three semantic gaps
+remain misses. All 21 restores are byte-exact, both journeys pass, and no hook errors were recorded.
+The existing [45-case regression gallery](results/accuracy-2026-11-05.json) also passes its gate,
+including its two declared semantic gaps, plus the shell, configuration and recovery journeys.
+
+The safety-grammar fix recognizes coordinated prohibitions and complete, narrowly phrased
+approval reminders. It does not exempt arbitrary later clauses, reversals, executable configuration
+or hidden content. Natural-language instructions to fetch an HTTP(S) URL and pipe the result
+to a shell are now high severity. These are bounded rule improvements, not general language
+understanding or a solution to the declared semantic gaps.

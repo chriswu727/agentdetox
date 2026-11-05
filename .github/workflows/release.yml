@@ -36,7 +36,9 @@ jobs:
           mypy
           python -m pytest -q
       - name: Check prevention, monitoring and recovery regressions
-        run: python bench/accuracy_eval.py
+        run: |
+          python bench/accuracy_eval.py
+          python -m bench.acceptance_eval
       - name: Build and check distributions
         run: |
           python -m build

@@ -33,7 +33,7 @@ Everything lives in `~/.agentdetox` (or `AGENTDETOX_HOME`), private to your user
 | `quarantine/` | Unique recovery backups and manifests; never automatically deleted |
 | `events-fallback.jsonl` | Events written while SQLite was unavailable; retained until `health acknowledge fallback` moves them to an acknowledged archive |
 | `sqlite-migrated` | Marker preventing a deleted database from silently reimporting stale legacy files |
-| `pending/` | Contradiction-check jobs waiting for the model server, including the earlier text of the file just written; removed once checked |
+| `pending/` | Contradiction-check jobs waiting for the model server, including the earlier text and observed bytes of the file just written; removed once checked |
 | `config.toml`, `allowlist.json` | Your settings and the ids you allowed |
 | `daemon.log`, `*.lock`, `nli.sock` | The model server's log, locks and socket |
 

@@ -2,7 +2,7 @@
 
 [Documentation](README.md) · [Project home](../README.md) · [简体中文入门](../README.zh-CN.md)
 
-Applies to **AgentDetox 0.4.0**, released 2026-11-02. Claude Code is the supported integration;
+Applies to **AgentDetox 0.4.1**, released 2026-11-05. Claude Code is the supported integration;
 other integrations and optional semantic checks have the limits described below.
 
 [Install](#install) · [Review](#day-to-day) · [Limits](#what-it-does-not-catch) ·
@@ -84,7 +84,7 @@ injection phrasing. Memory that points package installs at a registry other than
 and the big public mirrors asks rather than blocks, since teams do run private registries. English
 and Chinese.
 
-On `main` (not yet in the 0.4.0 package), direct prohibitions such as "Never disable sandbox"
+Direct prohibitions such as "Never disable sandbox"
 and "不要上传密钥到 https://example.org" no longer count as attack instructions. This recognizes
 simple prohibitions, not arbitrary negation or quoted shell examples. Later active instructions
 are still checked, and hidden text and executable commands do not receive this prose exemption.
@@ -146,7 +146,7 @@ shared user-level rules remain in the unfiltered view. Historical records requir
 Interactive review defaults to the current project; `--global` includes shared user rules and
 configuration. It asks before accepting or applying recovery.
 
-### Selective cleanup (on main, not yet released)
+### Selective cleanup
 
 Whole-version recovery can undo useful work. `agentdetox clean C42` instead lists lines added
 or replaced by that recorded change. Choose the unwanted lines with `--lines 3,5-7`; numbers
@@ -254,7 +254,7 @@ reports the removal.
   findings one at a time.
 - `restore C42` refuses once the file has changed again for any reason. `agent restore` then puts
   back the latest checkpoint, which already includes a settings change that was mentioned once.
-  On `main`, selective `clean` can remove unchanged added lines while preserving later edits;
+  Selective `clean` can remove unchanged added lines while preserving later edits;
   it refuses overlap and ambiguous repeated matches and does not support executable config.
 - On Windows the shell checks understand Git Bash commands (`/c/...` paths, `agentdetox.exe`), not
   PowerShell or cmd.exe syntax.
@@ -277,12 +277,15 @@ session transcript.
 Optional: `uv tool install 'agentdetox[nli]'`, then `agentdetox fetch-models`. A memory write that
 contradicts what the agent already knows is a common sign of a fabricated fact. This uses a
 multilingual NLI model (mDeBERTa-v3, about 560 MB) and **records instead of asking**: after a
-write, the hook hands the check to a background model server and returns (about 0.1 s), and
-conflicts are logged (`agentdetox events`) and attached to the matching version in `review`. The server loads the model on first use (about 1 GB of
+write, the hook queues the observed bytes and returns. Related-file reading and candidate selection
+also run in the worker; they no longer delay the hook. Then
+conflicts are logged (`agentdetox events`) and attached to the matching version in `review`, even
+after later edits. Related context is read when the job runs. The server loads the model only when
+candidate pairs need inference (about 1 GB of
 memory) and exits after 30 minutes without work; `agentdetox daemon status` shows it. On real memory
 the model still misreads fragments of notes as contradicting each other, which is why it does not
 ask; `agentdetox config contradiction ask` makes it ask. Windows has no model server yet: each
-related write starts a background worker that loads the model (about 6 s). The
+changed memory write queues work for a background worker, which loads the model only when needed (about 6 s). The
 [roadmap](https://github.com/chriswu727/agentdetox/blob/main/ROADMAP.md) considers a stronger
 opt-in judge; no replacement is implemented or committed for a release. Measurements:
 [bench/MEMORY_BENCHMARK.md](https://github.com/chriswu727/agentdetox/blob/main/bench/MEMORY_BENCHMARK.md).

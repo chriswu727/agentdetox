@@ -20,6 +20,8 @@ _FETCH_EXEC = (
     r"|\b(ba|z)?sh\s+<\(\s*(curl|wget)\b"
     r"|\biex\s*\(\s*(iwr|invoke-webrequest|new-object\s+net\.webclient)"
     r"|base64\s+(-d|--decode)\b[^\n|]{0,80}\|\s*(ba|z)?sh\b"
+    r"|\b(?:fetch|download)\s+https?://[^\s;]{1,200}\s+(?:and|then)\s+pipe\s+"
+    r"(?:it|the\s+(?:result|response|output|script))\s+(?:to|into|through)\s+(?:ba|z|da)?sh\b"
 )
 _REVERSE_SHELL = r"/dev/tcp/\d|\bnc\b[^\n]{0,40}\s-e\s|\bmkfifo\b[^\n]{0,60}\bnc\b"
 # Every later install resolves through a registry a memory names, so a planted one swaps

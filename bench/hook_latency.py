@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from agentdetox import session, storage
@@ -97,6 +98,55 @@ def main() -> int:
         measure(f'Protected Write pre, {transcript.stat().st_size} byte transcript', 200,
                 lambda: hook('PreToolUse', 'Write', dict(file_path=str(target),
                              content='Run integration tests with pnpm test before committing changes.'), transcript))
+        added = ''.join(f'The service module_{n} uses a dedicated queue for batch processing.\n' for n in range(100))
+
+        def prepare_write(n):
+            target.write_text('Use pnpm.\n', encoding='utf-8')
+            snapshot(discover(project=project), [home, project])
+            target.write_text('Use pnpm.\n' + added, encoding='utf-8')
+
+        measure(f'Protected Write post, 100 added lines, {transcript.stat().st_size} byte transcript', 500,
+                lambda: hook('PostToolUse', 'Write', dict(file_path=str(target)), transcript), prepare_write)
+        for row in rows:
+            for block in row['message']['content'] if isinstance(row['message']['content'], list) else []:
+                if block['type'] == 'tool_result':
+                    block['content'] += f" Build identifier {block['tool_use_id']}."
+        transcript.write_text('\n'.join(map(json.dumps, rows)) + '\n', encoding='utf-8')
+        measure('Protected Write pre, 29 distinct large source outputs', 200,
+                lambda: hook('PreToolUse', 'Write', dict(file_path=str(target),
+                             content='Run integration tests with pnpm test before committing changes.'), transcript))
+        measure('Protected Write post, 100 added lines, 29 distinct large source outputs', 500,
+                lambda: hook('PostToolUse', 'Write', dict(file_path=str(target)), transcript), prepare_write)
+        parallel = [project / '.claude/rules' / f'parallel-{n}.md' for n in range(4)]
+        parallel[0].parent.mkdir(parents=True)
+
+        def prepare_parallel(n):
+            for path in parallel:
+                path.write_text('Use pnpm.\n', encoding='utf-8')
+            snapshot(discover(project=project), [home, project])
+            for path in parallel:
+                path.write_text('Use pnpm.\n' + added + f'Revision {n}.\n', encoding='utf-8')
+
+        def parallel_hooks():
+            with storage.connection() as db:
+                previous = db.execute('SELECT max(id) FROM changes').fetchone()[0]
+            with ThreadPoolExecutor(max_workers=5) as pool:
+                futures = [pool.submit(hook, 'PostToolUse', 'Write', dict(file_path=str(path)), transcript)
+                           for path in parallel]
+                futures.append(pool.submit(shell_round_trip))
+                for future in futures:
+                    future.result()
+            with storage.connection() as db:
+                recorded = {r[0] for r in db.execute('SELECT path FROM changes WHERE id>?', (previous,))}
+                if not {str(path) for path in parallel} <= recorded:
+                    raise RuntimeError('Concurrent write evidence is missing')
+                if db.execute("SELECT 1 FROM events WHERE event IN ('hook_error', 'shell_unobserved')").fetchone():
+                    raise RuntimeError('Concurrent hooks lost coverage')
+
+        measure('Four protected Write posts plus Bash pre/post, 100 lines per write', 1000,
+                parallel_hooks, prepare_parallel)
+        for path in parallel:
+            path.unlink()
         mem = home / '.claude/projects/-benchmark/memory'
         mem.mkdir(parents=True)
         for n in range(1000):
@@ -119,6 +169,28 @@ def main() -> int:
         for n in range(1000):
             (active_memory / f'note-{n}.md').write_bytes((mem / f'note-{n}.md').read_bytes())
         measure('Bash pre + post, 1000 active memory files plus 1000 unrelated files', 350, shell_round_trip)
+        queued = '''import json, sys
+from agentdetox import engine, hooks
+engine._nli_installed = lambda: True
+jobs = []
+engine.daemon.submit = jobs.append
+code = hooks.main_hook('claude-code')
+assert len(jobs) == 1 and jobs[0]['content_hex']
+assert 'numpy' not in sys.modules
+raise SystemExit(code)
+'''
+
+        def background_frontend():
+            payload = dict(hook_event_name='PostToolUse', cwd=str(project), tool_name='Write',
+                           tool_input=dict(file_path=str(target)))
+            done = subprocess.run([sys.executable, '-c', queued], input=json.dumps(payload), text=True,
+                                  capture_output=True, cwd=project,
+                                  env={**os.environ, 'AGENTDETOX_CONTRADICTION': 'record'})
+            if done.returncode or done.stderr:
+                raise RuntimeError(done.stderr)
+
+        measure('NLI record frontend, 1000 active memory files, fake queue, no inference', 250,
+                background_frontend, prepare_write)
     report = dict(platform=platform.platform(), python=platform.python_version(), results=results,
                   model='disabled; no model or subscription usage', warmup='one untimed call per case')
     if args.output:

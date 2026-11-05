@@ -137,19 +137,47 @@ def _is_quoted(text: str, start: int, end: int) -> bool:
     return bool(before) and before[-1] in _OPEN_QUOTES and bool(after) and after[0] in _CLOSE_QUOTES
 
 
+_GUARD_ACTION = (
+    r"(?:disable|turn off|skip|bypass)\s+(?:the\s+)?"
+    r"(?:sandbox|approvals?|approval prompts?|permission (?:checks?|prompts?)|safety checks?)"
+)
+_CONFIG_SUBJECT = (
+    r"(?:the\s+)?(?:hook configuration|settings\.json|config\.toml|hooks\.json|"
+    r"mcp\.json|MCP server list)"
+)
+_APPROVAL_REMINDER = re.compile(
+    r"(?:^|[;；])\s*(?:always\s+)?ask\s+the\s+user\s+when\s+(?:a|the)\s+task\s+would\s+"
+    rf"(?:change|modify|edit)\s+{_CONFIG_SUBJECT}"
+    rf"(?:(?:,\s*(?:or\s+)?|\s+or\s+){_CONFIG_SUBJECT})*[.!]?\s*$", re.I,
+)
+
+
 def is_prohibited_action(text: str, start: int, end: int) -> bool:
-    prefix = text[text.rfind("\n", 0, start) + 1:start]
+    line_start = text.rfind("\n", 0, start) + 1
+    line_end = text.find("\n", end)
+    line_end = line_end if line_end >= 0 else len(text)
+    reminder = _APPROVAL_REMINDER.search(text[line_start:line_end])
+    if reminder:
+        boundary = line_start + reminder.start()
+        if start >= boundary:
+            return True
+        # Only a complete approval reminder can delimit a safe following clause.
+        # Arbitrary later clauses must retain the conservative reversal check.
+        line_end = boundary
+        if end > line_end:
+            return False
+    prefix = text[line_start:start]
     if len(prefix) > 160:
         return False
     prefix = re.split(r"[.!?。！？;；:：]", prefix)[-1]
     if not re.fullmatch(
-        r"\s*(?:[-*>]\s*)?(?:(?:please\s+)?(?:do\s+not|don't|never)\s+(?:(?:run|execute)\s+)?"
+        r"\s*(?:[-*>]\s*)?(?:(?:please\s+)?(?:do\s+not|don't|never)\s+"
+        rf"(?:{_GUARD_ACTION}\s+or\s+)*(?:(?:run|execute)\s+)?"
         r"|(?:请)?(?:不要|切勿|请勿|不得|禁止|勿|别)(?:将|把)?)`?\s*", prefix, re.I,
     ):
         return False
     # A prohibition cannot exempt a second clause or an instruction reversing it.
-    line_end = text.find("\n", end)
-    remainder = text[start:line_end if line_end >= 0 else len(text)]
+    remainder = text[start:line_end]
     return not re.search(
         r"[,，;；]|\b(?:but|however|instead|then|unless|except|until|rather)\b|然后|但|而|却|改为|除非|否则",
         remainder, re.I,
