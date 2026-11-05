@@ -13,7 +13,13 @@ from pathlib import Path
 from . import __version__, allowlist, compat, daemon, events, settings, storage
 from .consistency import NLI, NLI_MODEL
 from .context import home_dir
-from .install import claude_code_plugin, claude_code_settings, default_settings_path, plugin_command
+from .install import (
+    claude_code_plugin,
+    claude_code_settings,
+    default_settings_path,
+    plugin_command,
+    read_claude_settings,
+)
 from .integrity import StoreError, is_self_hook, store_dir, usage
 
 
@@ -63,9 +69,9 @@ def _claude_code_hooks(project: Path) -> list[Check]:
             continue
         seen.add(path.resolve())
         try:
-            settings = json.loads(path.read_text(encoding="utf-8"))
-        except ValueError:
-            found.append(Check("fail", f"Claude Code: {path} is not valid JSON"))
+            settings = read_claude_settings(path)
+        except (OSError, ValueError) as e:
+            found.append(Check("fail", f"Claude Code: {e}"))
             continue
         commands = [h.get("command", "") for groups in settings.get("hooks", {}).values()
                     for g in groups for h in g.get("hooks", []) if is_self_hook(h.get("command", ""))]

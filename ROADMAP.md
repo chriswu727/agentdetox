@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated 2026-11-02. Current published release:
+Last updated 2026-11-04. Current published release:
 [0.4.0](https://github.com/chriswu727/agentdetox/releases/tag/v0.4.0). The
 [changelog](CHANGELOG.md) records releases; this document separates
 implemented capabilities from product hypotheses and future work.
@@ -16,10 +16,31 @@ match added text to a user message or tool result. They cannot reliably identify
 prove who authored copied text, or attribute a shell script's writes to its exact process.
 External changes are worth reviewing but are not automatically malicious.
 
-Current priority is accuracy of prevention, monitoring and cleanup. Hook latency remains a budget,
-while progress is judged by attack-family misses, benign interruptions, retained evidence and
-residual findings after recovery. Development uses reproducible offline cases and maintainer
-self-use; no external user recruitment is planned.
+The two product priorities are a reliable journey from installation through daily use and
+accurate prevention, monitoring and recovery. A working command is not evidence of accurate
+detection; an attack caught in a fixture is not evidence that installation works for a new user.
+Development uses reproducible cases and maintainer self-use; no external user recruitment is planned.
+
+## Release readiness
+
+On `main` (not yet in the 0.4.0 package), CI installs the built wheel in a fresh environment
+outside the repository and exercises preview, installation, upgrade, repeated installation,
+doctor, registered hook commands, review, stale-version refusal, exact recovery and uninstall.
+The journey includes paths with spaces, mixed hook groups and user-setting preservation. The
+same journey and the offline detection gallery gate publication in the release workflow.
+This does not validate real-client hook delivery, network outages or everyday Windows use.
+
+Track these outcomes independently:
+
+- Installation and maintenance: failed steps, actionable errors, preserved settings and backups.
+- Normal use: wrong blocks, unnecessary questions and hook P95 latency against existing budgets.
+- Prevention and monitoring: per-family misses, including acknowledged gaps, and retained evidence.
+- Recovery: exact restored bytes, refusal to overwrite newer work, quarantine copies and residual
+  findings. Whole-version restoration can still undo benign additions in the same change.
+
+Block a release on a failed journey, a new regression or a hook error. Keep acknowledged semantic
+misses visible in every accuracy report; a passing regression gate is not a claim of complete
+protection. Authored controls cannot establish a real-world false-positive rate.
 
 ## Accuracy work
 

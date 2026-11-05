@@ -90,8 +90,8 @@ severity without changing existing finding ids.
 
 ## Configuration semantics regressions, 2026-11-04
 
-Run `python -m pytest -q tests/test_config_semantics.py`. These 34 authored cases exercise the
-real hook handlers without a model or network. They cover user, project, local, MCP, global and
+Run `python -m pytest -q tests/test_config_semantics.py tests/test_safety_guidance.py`. These
+141 authored cases exercise scanners and real hook handlers without a model or network. They cover user, project, local, MCP, global and
 relocated Claude config, and keep normal activity separate from execution changes:
 
 - Inert metadata with command-like keys stays quiet before writes, after shell tools and at startup.
@@ -101,10 +101,28 @@ relocated Claude config, and keep normal activity separate from execution change
 - Changes to real hook commands, HTTP targets, prompt/agent hooks and MCP tool hooks still alert.
 - Real MCP commands, arguments, URLs, loaders and dynamic header helpers remain guarded;
   malicious command payloads and AgentDetox environment overrides are denied.
+- Permission and MCP approval list ordering and duplicates, and status line display changes,
+  stay quiet. Membership, argument ordering and runtime changes remain guarded.
+- Direct English and Chinese safety prohibitions stay quiet; later active instructions,
+  ambiguous reversals, hidden text, executable commands and structural chat tokens remain checked.
 
 This is regression evidence for supported Claude configuration, not a held-out accuracy estimate
 or validation of other agents. Unknown properties inside guarded sections stay reviewable; a
 quiet command scan does not establish that an arbitrary external program is safe.
+
+## Current report format on main
+
+The `quality` section includes all 29 authored attack cases, including the two acknowledged
+semantic misses. It lists prevention and monitoring misses by name, separately from wrong blocks,
+unnecessary questions and findings on 16 ordinary/explicit-consent controls. Four direct
+English/Chinese prohibition controls extend the earlier gallery. All 45 cases also check exact
+restoration; restoring known bytes does not certify their safety. These controls overlap regression
+fixtures and are not held out.
+
+`regression_gate_passed` means the existing case expectations, additional families, recovery
+checks and hook-error checks passed. It does not mean every attack was detected. JSON reports
+retain `passed` as a compatibility alias with the same meaning. CI and the release workflow run
+this gate separately from the clean-wheel lifecycle in `scripts/check_journey.py`.
 
 ## Existing public-data evaluation
 
@@ -122,7 +140,7 @@ This rerun checks regressions; the targeted fixes do not improve the existing ag
 
 - This is an authored regression set used while fixing the code, not a held-out test or an estimate
   of real-world accuracy. Prefix variants are correlated. Twelve controls cannot establish a low
-  population false-positive rate.
+  population false-positive rate; the expanded controls do not establish one either.
 - The two explicit misses are paraphrased source content and a plausible false fact without a
   trusted counterpart. They remain in reports. The exit status gates known regressions and hook
   errors; it does not require these acknowledged gaps to pass.

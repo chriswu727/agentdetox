@@ -54,6 +54,8 @@ jobs:
           python -m build
           python -m twine check --strict dist/*
           python scripts/check_dist.py dist/*
+      - name: Exercise the installed wheel lifecycle
+        run: python scripts/check_journey.py dist/*.whl
 
   windows:
     name: Windows (non-blocking)

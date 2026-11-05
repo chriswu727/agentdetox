@@ -35,20 +35,15 @@ jobs:
           ruff check src tests bench scripts lab
           mypy
           python -m pytest -q
+      - name: Check prevention, monitoring and recovery regressions
+        run: python bench/accuracy_eval.py
       - name: Build and check distributions
         run: |
           python -m build
           python -m twine check --strict dist/*
           python scripts/check_dist.py dist/*
-      - name: Smoke-test the wheel in a clean environment
-        run: |
-          python -m venv /tmp/agentdetox-wheel
-          /tmp/agentdetox-wheel/bin/python -m pip install --upgrade pip
-          /tmp/agentdetox-wheel/bin/python -m pip install dist/*.whl
-          /tmp/agentdetox-wheel/bin/python -m pip check
-          cd /tmp
-          /tmp/agentdetox-wheel/bin/agentdetox --version
-          /tmp/agentdetox-wheel/bin/agentdetox demo
+      - name: Exercise the installed wheel lifecycle
+        run: python scripts/check_journey.py dist/*.whl
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: python-package-distributions

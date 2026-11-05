@@ -225,11 +225,20 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if any(c.status == "fail" for c in checks) else 0
     if args.command == "uninstall":
         target = default_settings_path(args.agent_name, args.scope, args.project.expanduser().absolute())
-        removed, backup = uninstall_claude_code(target)
+        try:
+            removed, backup = uninstall_claude_code(target)
+        except (OSError, ValueError) as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
         print(f"removed AgentDetox hooks from {target} (backup: {backup})" if removed
               else f"no AgentDetox hooks found in {target}")
         if removed:
-            _trust_own_removal(target, args.project.expanduser().absolute())
+            try:
+                _trust_own_removal(target, args.project.expanduser().absolute())
+            except (StoreError, OSError, ValueError) as e:
+                print(f"error: hooks were removed, but recovery metadata could not be updated: {e}. "
+                      "Run `agentdetox doctor` to inspect the store.", file=sys.stderr)
+                return 2
         return 0
     if args.command == "agent":
         return _agent(args)
@@ -238,7 +247,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "install":
         try:
             return _install(args)
-        except StoreError as e:
+        except (StoreError, OSError, ValueError) as e:
             print(f"error: {e}", file=sys.stderr)
             return 2
     if not args.path.exists():
