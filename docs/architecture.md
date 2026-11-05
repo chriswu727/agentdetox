@@ -1,7 +1,8 @@
 # Architecture
 
 AgentDetox is a command-line program that agents run as hooks. Each hook call is a new process
-that reads one event as JSON on stdin and answers on stdout. State lives in `~/.agentdetox`; a
+that reads one event as JSON on stdin and answers on stdout. A small entry point routes hooks
+without importing the command UI. State lives in `~/.agentdetox`; a
 background model server is the only long-lived process, and only when contradiction checks are on.
 
 ## A hook call
@@ -26,7 +27,10 @@ adapters.py   renders the Decision in the agent's reply format
 `hooks.py` wires these together and logs every decision that was not a plain allow to
 SQLite. Before a write, a file that no longer matches the last version AgentDetox knows is
 first recorded as changed outside the agent, so the agent is never credited with that change.
-After a write, the engine records the observed version, attribution evidence and findings.
+After a write, the engine captures the file and ledger versions, computes attribution and findings
+without the store lock, then rechecks both versions before recording. Concurrent changes trigger
+a bounded retry; unchecked bytes never become a trusted checkpoint. Transcript indexes are local
+to one check and shared across added lines, with no timestamp-based integrity shortcut.
 Eligible recovery checkpoint updates and history additions commit in one transaction. At session start, `session.py` compares every watched file with
 its snapshot, records changes made outside the agent, and tells the agent about them. A file with
 flagged content keeps its old snapshot, so it is reported every session until reviewed; a settings
@@ -48,6 +52,10 @@ external authorship and before/after evidence, deduplicate versions already reco
 and preserve the recovery checkpoint. A config change that only adds a permission rule for the
 command being run is how Claude Code saves an approval; it is recorded without a notice. A brief
 `systemMessage` reaches the terminal as well as the agent context. The observer hashes scoped contents; it does not rely on mtime as an integrity proof.
+
+Optional contradiction record jobs carry the observed bytes to the worker. Related-file reads,
+candidate selection and inference happen there; findings attach to the matching recorded hash,
+even if the file was edited again before the job ran. Related context is read at processing time.
 
 ## Modules
 

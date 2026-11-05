@@ -39,7 +39,7 @@ nli = ["transformers>=4.40", "torch>=2.1"]
 dev = ["pytest>=7", "ruff>=0.15", "mypy>=1.18", "pip-audit>=2.7"]
 
 [project.scripts]
-agentdetox = "agentdetox.cli:main"
+agentdetox = "agentdetox.entrypoint:main"
 
 [tool.hatch.version]
 path = "src/agentdetox/__init__.py"

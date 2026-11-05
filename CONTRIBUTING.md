@@ -48,6 +48,13 @@ unnecessary questions, prevention and monitoring misses, exact restores and know
 `regression_gate_passed` field means no new failure of its contract; acknowledged semantic misses
 are included in the report and attack count. It is not a real-world accuracy estimate.
 
+Run `python -m bench.acceptance_eval` for the separately authored frozen cases and cleanup/config
+journeys. CI and releases require both galleries. Once a frozen case informs a fix, treat its later
+result as regression evidence, not held-out accuracy. Do not change expected labels to pass a gate.
+Before release, run `python -m bench.hook_latency --samples 100 --output bench/results/local.json`
+on the reference machine. The suite includes post-write and concurrent-hook coverage; machine-specific
+latency budgets are recorded separately from CI's deterministic concurrency and cache-reuse tests.
+
 To release:
 
 1. Run the lab (`lab/README.md`) against the release candidate.

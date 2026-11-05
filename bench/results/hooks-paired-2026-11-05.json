@@ -1,0 +1,26 @@
+{
+  "platform": "macOS-15.7.4-arm64-arm-64bit",
+  "python": "3.12.13",
+  "results": [
+    {
+      "case": "Bash pre + post, 1000 active memory files plus 1000 unrelated files",
+      "variant": "baseline",
+      "samples": 100,
+      "p50_ms": 462.4,
+      "p95_ms": 766.6,
+      "budget_ms": 350,
+      "within_budget": false
+    },
+    {
+      "case": "Bash pre + post, 1000 active memory files plus 1000 unrelated files",
+      "variant": "candidate",
+      "samples": 100,
+      "p50_ms": 436.2,
+      "p95_ms": 649.9,
+      "budget_ms": 350,
+      "within_budget": false
+    }
+  ],
+  "model": "disabled; no model or subscription usage",
+  "warmup": "one untimed call per case"
+}

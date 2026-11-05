@@ -25,8 +25,8 @@ A poisoned page can become tomorrow's memory. An install script can change `CLAU
 your agent is busy elsewhere. AgentDetox checks writes to persistent context, records changes
 with source evidence, and lets you review and restore earlier versions.
 
-**0.4.0 is published** on [PyPI](https://pypi.org/project/agentdetox/0.4.0/) and
-[GitHub](https://github.com/chriswu727/agentdetox/releases/tag/v0.4.0).
+**0.4.1 is published** on [PyPI](https://pypi.org/project/agentdetox/0.4.1/) and
+[GitHub](https://github.com/chriswu727/agentdetox/releases/tag/v0.4.1).
 The project is in **preview**: Claude Code is supported; Codex and Cursor hooks are experimental;
 OpenClaw has tamper detection only. Developed on macOS; Windows has CI coverage, without
 validation through daily use on a real machine.
@@ -121,7 +121,7 @@ grant permanent trust to a source. Recovery restores a **whole recorded version*
 undo benign additions. For a newly added config entry, removing it with the tool that added it
 is often preferable to restoring the whole settings file.
 
-**On `main`, not yet in the published 0.4.0 package:** `agentdetox clean C42` lists added lines.
+`agentdetox clean C42` lists added lines.
 Use `agentdetox clean C42 --lines 3,5-7` to preview removing only the lines you selected from
 memory, instructions or skills, while keeping other content and non-conflicting later edits.
 Run the exact apply command printed by that preview; a changed file invalidates it. Cleanup
@@ -140,13 +140,16 @@ afterwards. Detached background writes need later reconciliation. Hooks fail ope
 which remain visible in `doctor` and `status`. Code running as your user can alter the hooks or store.
 
 - **Offline regression gallery:** authored prevention, monitoring and byte-exact recovery cases,
-  with two explicit semantic misses. It is not a real-world accuracy estimate.
+  plus a separate 21-case acceptance set with three explicit semantic misses. These are not
+  real-world accuracy estimates.
   [Protocol and results](https://github.com/chriswu727/agentdetox/blob/main/bench/ACCURACY.md).
-- **Real Claude Code lab, 2026-11-02:** 16 sessions across eight scenarios, both arms; all scenario
-  assertions passed. Guardrail success and user-task completion are reported separately.
+- **Real Claude Code lab, 2026-11-05:** the latest results pass all ten AgentDetox-arm scenarios,
+  with no hook errors. Thirteen sessions were used, including three sensitive-path setup failures
+  retained in the reports. Guardrail success and user-task completion are reported separately.
   [Recorded results](https://github.com/chriswu727/agentdetox/blob/main/lab/results/latest.md).
-- **Reference latency, 2026-11-01:** 100 samples per case on one Mac, NLI off. Bash pre/post P95
-  **126.3 ms**; session start with 1,000 unchanged files **139.2 ms**.
+- **Reference latency, 2026-11-05:** 100 samples per case on one Mac, no NLI inference. All 12
+  budgets passed in the reference run; a busy-host rerun passed 10/12. Bash pre/post P95 **145.6 ms**; a 100-line post-write check with a 3.9 MB transcript
+  **95.3 ms**; four concurrent writes plus a Bash pre/post pair **491.0 ms**.
   [Method, raw data and budgets](https://github.com/chriswu727/agentdetox/blob/main/bench/HOOK_LATENCY.md).
 
 Source matching is evidence of copied text, not proof of malicious intent or human authorship.

@@ -1,0 +1,38 @@
+[
+  {
+    "case": "Post Write 1 added lines, 3889915 transcript bytes",
+    "samples_ms": [
+      431.36,
+      399.73,
+      397.74
+    ],
+    "median_ms": 399.73
+  },
+  {
+    "case": "Post Write 10 added lines, 3889915 transcript bytes",
+    "samples_ms": [
+      1275.23,
+      1311.32,
+      1303.29
+    ],
+    "median_ms": 1303.29
+  },
+  {
+    "case": "Post Write 50 added lines, 3889915 transcript bytes",
+    "samples_ms": [
+      5352.06,
+      5074.02,
+      5271.14
+    ],
+    "median_ms": 5271.14
+  },
+  {
+    "case": "Post Write 100 added lines, 3889915 transcript bytes",
+    "samples_ms": [
+      10425.11,
+      10148.26,
+      10521.16
+    ],
+    "median_ms": 10425.11
+  }
+]

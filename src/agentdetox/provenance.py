@@ -13,7 +13,8 @@ import difflib
 import json
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from itertools import islice
 from pathlib import Path
 
 from .findings import Finding
@@ -72,6 +73,9 @@ class Source:
 class Transcript:
     sources: list[Source]
     human: list[str]  # most recent last
+    # Content keys preserve attribution when sources are filtered and share work across
+    # repeated tool outputs. Nothing survives the lifetime of this transcript.
+    _memo: dict = field(default_factory=dict, init=False, repr=False, compare=False)
 
 
 @dataclass
@@ -156,7 +160,7 @@ def _tokens(text: str) -> list[str]:
 
 
 def _shingles(tokens: list[str], n: int = SHINGLE) -> set[tuple[str, ...]]:
-    return {tuple(tokens[i : i + n]) for i in range(len(tokens) - n + 1)}
+    return set(zip(*(islice(tokens, i, None) for i in range(n))))
 
 
 def asked_to_remember(human: list[str]) -> bool:
@@ -178,20 +182,84 @@ def asked_to_remember(human: list[str]) -> bool:
     return requested
 
 
+def _requested(transcript: Transcript) -> bool:
+    memo = transcript._memo
+    key = ("requested", transcript.human[-1] if transcript.human else "")
+    if key not in memo:
+        memo[key] = asked_to_remember(transcript.human)
+    return memo[key]
+
+
+def _human_shingles(transcript: Transcript, n: int) -> set[tuple[str, ...]]:
+    """Union of n-shingles across the user's recent messages; cached per n."""
+    memo = transcript._memo
+    key = ("human_shingles", tuple(transcript.human), n)
+    cached = memo.get(key)
+    if cached is not None:
+        return cached
+    result: set[tuple[str, ...]] = set()
+    for h in transcript.human:
+        tokens_key = ("text_tokens", h)
+        tokens = memo.get(tokens_key)
+        if tokens is None:
+            tokens = _tokens(h)
+            memo[tokens_key] = tokens
+        if len(tokens) >= n:
+            result |= _shingles(tokens, n)
+    memo[key] = result
+    return result
+
+
+def _source_tokens(src: Source, transcript: Transcript) -> list[str]:
+    memo = transcript._memo
+    key = ("text_tokens", src.text)
+    cached = memo.get(key)
+    if cached is None:
+        cached = _tokens(src.text)
+        memo[key] = cached
+    return cached
+
+
+def _source_shingles(src: Source, n: int, transcript: Transcript) -> set[tuple[str, ...]]:
+    memo = transcript._memo
+    key = ("src_shingles", src.text, n)
+    cached = memo.get(key)
+    if cached is None:
+        cached = _shingles(_source_tokens(src, transcript), n)
+        memo[key] = cached
+    return cached
+
+
+def _source_matches(src: Source, new: set[tuple[str, ...]], transcript: Transcript) -> set[tuple[str, ...]]:
+    memo = transcript._memo
+    full = memo.get(("src_shingles", src.text, SHINGLE))
+    if full is not None:
+        return new & full
+    key = ("matches", src.text, frozenset(new))
+    if key not in memo:
+        # A pre-write copy check needs only the proposed shingles, not a full source index.
+        tokens = _source_tokens(src, transcript)
+        starts = {shingle[0] for shingle in new}
+        memo[key] = new.intersection(tuple(tokens[i:i + SHINGLE]) for i in range(len(tokens) - SHINGLE + 1)
+                                     if tokens[i] in starts)
+    return memo[key]
+
+
 def copied_from_untrusted(new_text: str, transcript: Transcript,
-                          threshold: float | None = None) -> CopyFinding | None:
+                          threshold: float | None = None, *, sources: list[Source] | None = None) -> CopyFinding | None:
     """The tool output a write was mostly copied from, unless the user asked to remember it
     or supplied the text themselves."""
     threshold = COPY_THRESHOLD if threshold is None else threshold
     body = _FRONTMATTER_RE.sub("", new_text)
     tokens = _tokens(body)
     new = _shingles(tokens)
-    if not new or not transcript.sources or asked_to_remember(transcript.human):
+    sources = transcript.sources if sources is None else sources
+    if not new or not sources or _requested(transcript):
         return None
-    from_user = set().union(*(_shingles(_tokens(h)) for h in transcript.human)) if transcript.human else set()
+    from_user = _human_shingles(transcript, SHINGLE)
     best: CopyFinding | None = None
-    for src in transcript.sources:
-        shared = (new & _shingles(_tokens(src.text))) - from_user
+    for src in sources:
+        shared = _source_matches(src, new, transcript) - from_user
         fraction = len(shared) / len(new)
         if fraction >= threshold and (best is None or fraction > best.fraction):
             best = CopyFinding(src.tool, fraction, _excerpt(body, shared), src.origin)
@@ -205,18 +273,18 @@ def origin_of(text: str, transcript: Transcript | None) -> tuple[str, str, bool]
     request to remember does not hide the source: the ledger records what happened."""
     if transcript is None:
         return "agent", "", False
-    requested = asked_to_remember(transcript.human)
+    requested = _requested(transcript)
     tokens = _tokens(_FRONTMATTER_RE.sub("", text))
     if not tokens:
         return "agent", "", requested
     n = min(SHINGLE, len(tokens))  # short text is matched whole
     new = _shingles(tokens, n)
-    said = set().union(*(_shingles(_tokens(h), n) for h in transcript.human))
+    said = _human_shingles(transcript, n)
     if new <= said:
         return "you", "", requested
     best, source = 0.0, None
     for src in transcript.sources:
-        fraction = len((new & _shingles(_tokens(src.text), n)) - said) / len(new)
+        fraction = len((new & _source_shingles(src, n, transcript)) - said) / len(new)
         if fraction > best:
             best, source = fraction, src
     if source is not None and best >= COPY_THRESHOLD:
@@ -245,7 +313,7 @@ def _squash(text: str) -> str:
 
 
 def _excerpt(body: str, shared: set[tuple[str, ...]]) -> str:
-    words = " ".join(next(iter(shared))) if shared else ""
+    words = " ".join(min(shared)) if shared else ""
     return words[:120] or body.strip()[:120]
 
 

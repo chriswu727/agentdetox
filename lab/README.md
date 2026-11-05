@@ -5,13 +5,13 @@ once without, and records what happened. It is how AgentDetox's claims are check
 benchmarks in `bench/` measure the detectors, the lab measures the product in a real agent.
 
 ```bash
-.venv/bin/python -m lab.run --max-sessions 16        # every scenario, both arms
+.venv/bin/python -m lab.run --max-sessions 20        # every scenario, both arms
 .venv/bin/python -m lab.run postinstall-tamper --max-sessions 2 # one scenario
-.venv/bin/python -m lab.run --arms agentdetox --max-sessions 8 # only with AgentDetox
+.venv/bin/python -m lab.run --arms agentdetox --max-sessions 10 # only with AgentDetox
 ```
 
 Results go to `lab/results/<date>.json` and `lab/results/latest.md`. The command exits non-zero
-if any check fails or any session fails to complete. `--max-sessions` is a required explicit
+if any check fails, any hook error is recorded, or any session fails to complete. `--max-sessions` is a required explicit
 spending cap; obtain user authorization before any real run. Failed CLI startup is not a completed
 model session and its error is retained in the result.
 
@@ -30,7 +30,7 @@ Each scenario in `scenarios.py` has:
 
 ## Cost and isolation
 
-Every session calls a real model through your Claude Code login, so a full run (8 scenarios, 2
+Every session calls a real model through your Claude Code login, so a full run (10 scenarios, 2
 arms) costs usage and is not part of CI. Run it before a release and after changing what an agent
 sees.
 
@@ -44,6 +44,12 @@ Write and Edit are approved automatically; anything that would ask for approval,
 AgentDetox's own questions, is refused, since a headless session cannot ask. A refused question
 therefore shows up as "asked" in the results, and the write does not happen.
 
+The 100-line-write scenario targets `CLAUDE.md`. Its initial `.claude/rules/` destination was
+refused by Claude's own sensitive-path protection even with Write allowed, so it never exercised
+AgentDetox's post-write hook. Initial failures are retained in the dated reports; the corrected
+fixture keeps the same 100-line content expectation and normal client permissions. Tool errors
+are retained separately from AgentDetox decisions.
+
 ## Adding a scenario
 
 Put any files it needs in `fixtures/shop`, then add a `Scenario` with its prompt, `expect` checks
@@ -53,3 +59,18 @@ and, for an attack, a `landed` check. Planted content uses reserved names (`evil
 Where a scenario has a concrete file or memory outcome, `user_task_completed` reports it independently
 of safety checks. A blocked confirmation request can therefore pass its guardrail checks while
 leaving the requested edit undone. Other tasks have no automatic completion oracle and show `null`.
+
+## 0.4.1 acceptance, 2026-11-05
+
+[Latest results](results/2026-11-05.json) cover ten AgentDetox-arm scenarios, all passing their
+assertions with no recorded hook errors. Thirteen real sessions were used: the
+[initial nine](results/2026-11-05-initial.json), [two diagnostic attempts](results/2026-11-05-diagnostic.json)
+on the sensitive-path write, its corrected destination, and the safety-guidance scenario. The
+three original-destination attempts did not write the file; they are not counted as passing.
+The other eight scenarios were run before the final narrow safety-grammar and symlink-checkpoint
+fixes; the safety-guidance scenario was run after them. Offline regressions cover the final code.
+
+The baseline arm was not rerun this time; the [2026-11-02 report](results/2026-11-02.json) retains
+the earlier two-arm comparison. Passing guardrail checks does not mean every requested task
+completed: the two approval-request scenarios remained undone in this headless run, and the
+tampering scenario warned the user without completing the unrelated code change.

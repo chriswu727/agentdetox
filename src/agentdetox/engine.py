@@ -21,14 +21,13 @@ from .consistency import (
     NLI,
     Contradiction,
     Statement,
-    candidate_pairs,
     find_contradictions,
     statements,
     store_statements,
 )
 from .context import ContextFile, classify, discover, named_like_context, related_files, short_path
 from .findings import Finding, printable
-from .integrity import baseline_entries, object_text, snapshot, store_dir, store_lock
+from .integrity import StoreError, baseline_entries, object_text, snapshot, store_dir, store_lock
 from .persistence import guard_changes, guarded_sections
 from .provenance import (
     CopyFinding,
@@ -83,7 +82,7 @@ def check_write(write: Write, project: Path, run: set[str], transcript: str | No
         findings = allowlist.unsuppressed(scan_text(str(path), str(path), new, "config"))
         if _worst(findings) == "high":
             return [_planted(cf, findings, recent())]
-        if guarded_sections(path, old) != guarded_sections(path, new):
+        if (guarded_sections(path, old) if old.strip() else {}) != guarded_sections(path, new):
             changes = printable("; ".join(guard_changes(path, old, new))) or "changes the hooks, MCP servers or permissions"
             return [Signal(GUARDRAILS, f"AgentDetox: this write to {short_path(str(path))} {changes}. An agent "
                                        "changing its own hooks, MCP servers or permissions is how an injected "
@@ -164,30 +163,45 @@ def after_write(paths: list[Path], project: Path, record_contradictions: bool, t
         cf = classify(path, project=project)
         if cf is None or not path.is_file():
             continue
-        high = [f for f in allowlist.unsuppressed(scan_text(str(path), str(path), read_text(path), cf.kind))
-                if f.severity == "high"]
-        t = recent()
-        # A file that keeps a clear-cut finding the user did not write stays untrusted; the
-        # agent's edit to it is still recorded.
-        trusted = not high or bool(t and t.human and all(typed_by_user(f, t.human) for f in high))
-        with store_lock(), storage.connection(write=True):  # commit checkpoint and history together
-            before = previous_version(str(path))
-            old = object_text(before) if before else ""
-            data = path.read_bytes()
-            if trusted:
-                snapshot([cf], roots=[])
-            if hashlib.sha256(data).hexdigest() != before:
-                origin, source, requested = origin_of(_added_text(old, data.decode("utf-8", errors="replace")), t)
-                entry = ledger.record(path, origin, before, data, agent=agent, session=session, tool=tool, source=source,
-                              requested=requested, findings=allowlist.unsuppressed(scan_text(str(path), str(path),
-                                  data.decode("utf-8", errors="replace") if cf.kind == "config" else
-                                  _added_text(old, data.decode("utf-8", errors="replace")), cf.kind)), spans=attribute_lines(old, data.decode("utf-8", errors="replace"), t))
-                copied = _copied(cf, _added_text(old, data.decode("utf-8", errors="replace")), t)
-                if copied and entry:
-                    flag = copy_flag(copied)
-                    ledger.add_finding(entry.id, flag.id, "medium", flag.what + " (text-match inference)")
+        for _ in range(3):
+            with store_lock():
+                before = previous_version(str(path))
+                old = object_text(before) if before else ""
+                data = path.read_bytes()
+            text = data.decode("utf-8", errors="replace")
+            digest = hashlib.sha256(data).hexdigest()
+            full_findings = allowlist.unsuppressed(scan_text(str(path), str(path), text, cf.kind))
+            high = [f for f in full_findings if f.severity == "high"]
+            t = recent()
+            # A file that keeps a clear-cut finding the user did not write stays untrusted; the
+            # agent's edit to it is still recorded.
+            trusted = not high or bool(t and t.human and all(typed_by_user(f, t.human) for f in high))
+            if digest != before:
+                added = _added_text(old, text)
+                origin, source, requested = origin_of(added, t)
+                spans = attribute_lines(old, text, t)
+                findings = (full_findings if cf.kind == "config" else
+                            allowlist.unsuppressed(scan_text(str(path), str(path), added, cf.kind)))
+                copied = _copied(cf, added, t)
+            with store_lock(), storage.connection(write=True):
+                # Evidence is computed without the global lock; neither its base version nor
+                # the checked bytes may change before checkpoint and history commit together.
+                if (previous_version(str(path)) != before or not path.is_file()
+                        or hashlib.sha256(path.read_bytes()).hexdigest() != digest):
+                    continue
+                if trusted:
+                    snapshot([cf], roots=[], expected={str(cf.path): digest})
+                if digest != before:
+                    entry = ledger.record(path, origin, before, data, agent=agent, session=session, tool=tool,
+                                          source=source, requested=requested, findings=findings, spans=spans)
+                    if copied and entry:
+                        flag = copy_flag(copied)
+                        ledger.add_finding(entry.id, flag.id, "medium", flag.what + " (text-match inference)")
+                break
+        else:
+            raise StoreError(f"{path} changed repeatedly while recording; check it again before trusting it")
         if trusted and record_contradictions:
-            record_in_background(cf, old, project)
+            record_in_background(cf, old, project, content=data)
 
 
 def before_write(paths: list[Path], project: Path) -> None:
@@ -244,8 +258,8 @@ def _copied(cf: ContextFile, added: str, t: Transcript | None) -> CopyFinding | 
     if cf.kind not in ("memory", "instructions", "skill") or t is None:
         return None
     allowed = allowlist.entries()
-    t.sources = [s for s in t.sources if source_id(s.tool, s.origin) not in allowed]
-    return copied_from_untrusted(added, t)
+    sources = [s for s in t.sources if source_id(s.tool, s.origin) not in allowed]
+    return copied_from_untrusted(added, t, sources=sources)
 
 
 def _added_text(old: str, new: str) -> str:
@@ -297,24 +311,23 @@ def contradictions(cf: ContextFile, old_text: str, new_text: str, project: Path,
     return [c for c in find_contradictions(*found, nli or _nli) if contradiction_flag(c).id not in allowed]
 
 
-def record_in_background(cf: ContextFile, old: str, project: Path) -> None:
-    """Hand the slow NLI check to the model server, so recording costs the hook nothing.
-    Writes with nothing to compare (most of them) never reach it."""
-    if not _nli_installed():
+def record_in_background(cf: ContextFile, old: str, project: Path, *, content: bytes | None = None) -> None:
+    """Queue the observed version; candidate selection and inference run in the worker."""
+    if cf.kind not in ("memory", "instructions") or not _nli_installed():
         return
-    found = comparison(cf, old, read_text(cf.path), project)
-    if found is None or not candidate_pairs(*found):
+    content = cf.path.read_bytes() if content is None else content
+    if not content.strip() or content.decode("utf-8", errors="replace") == old:
         return
-    daemon.submit({"path": str(cf.path), "project": str(project), "old": old})
+    daemon.submit({"path": str(cf.path), "project": str(project), "old": old, "content_hex": content.hex()})
 
 
-def record_contradictions(path: Path, project: Path, old: str, nli=None) -> int:
+def record_contradictions(path: Path, project: Path, old: str, nli=None, *, content: bytes | None = None) -> int:
     """Log contradictions between a written file and what was there before (run by the
     model server)."""
     cf = classify(path, project=project)
-    if cf is None or not path.is_file():
+    if cf is None or (content is None and not path.is_file()):
         return 0
-    content = path.read_bytes()
+    content = path.read_bytes() if content is None else content
     digest = hashlib.sha256(content).hexdigest()
     conflicts = contradictions(cf, old, content.decode("utf-8", errors="replace"), project, nli)
     for c in conflicts:

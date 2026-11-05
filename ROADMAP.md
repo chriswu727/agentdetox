@@ -1,7 +1,7 @@
 # Roadmap
 
 Last updated 2026-11-05. Current published release:
-[0.4.0](https://github.com/chriswu727/agentdetox/releases/tag/v0.4.0). The
+[0.4.1](https://github.com/chriswu727/agentdetox/releases/tag/v0.4.1). The
 [changelog](CHANGELOG.md) records releases; this document separates
 implemented capabilities from product hypotheses and future work.
 
@@ -23,7 +23,7 @@ Development uses reproducible cases and maintainer self-use; no external user re
 
 ## Release readiness
 
-On `main` (not yet in the 0.4.0 package), CI installs the built wheel in a fresh environment
+Since 0.4.1, CI installs the built wheel in a fresh environment
 outside the repository and exercises preview, installation, upgrade, repeated installation,
 doctor, registered hook commands, review, stale-version refusal, exact recovery and uninstall.
 The journey includes paths with spaces, mixed hook groups and user-setting preservation. The
@@ -54,7 +54,7 @@ protection. Authored controls cannot establish a real-world false-positive rate.
   Keep the tuning set separate from future held-out tests; retain known misses in every report.
 - Evaluate paraphrased, delayed and mixed-source writes. Source similarity is evidence for review,
   not proof that content is malicious or that a specific person authored it.
-- Implemented on `main`: explicit selected-line cleanup for memory, instructions and skills,
+- Shipped in 0.4.1: explicit selected-line cleanup for memory, instructions and skills,
   including later non-conflicting edits. Automatic selection and structural config cleanup are
   not implemented; checking remaining rules does not establish factual correctness.
 - A plausible false fact needs trusted evidence to verify it. Do not promote uncertainty into an

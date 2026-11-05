@@ -122,3 +122,12 @@ outside guarded sections stays quiet. This costs two scoped file reads per shell
 projects' auto memory is excluded. Detached background writes and writes later reverted within the
 interval remain outside the evidence. Denied or abandoned tools leave start states that expire
 at the next capture after 24 hours.
+
+## ADR 17: Compute evidence outside the store lock
+
+Post-write provenance scales with transcript size and added lines. Holding the global lock while
+computing it can make unrelated hooks time out and lose observation. Capture the base and current
+bytes briefly, compute evidence without the lock, and validate both versions before committing.
+Retry up to three times, then report a visible failure rather than trust unchecked content.
+The optional contradiction worker receives captured bytes instead of reopening a potentially
+newer target; related context is evaluated when the job runs, not frozen at write time.

@@ -15,6 +15,7 @@ from .allowlist import finding_flag
 from .consistency import NLI, NLI_MODEL
 from .context import KINDS, PROFILES, discover, display_path, short_path, watched_roots
 from .corpus import load_corpus
+from .entrypoint import _utf8_output
 from .findings import ID_LENGTH, SEVERITY_ORDER, at_least, finding_id, printable
 from .hooks import main_hook
 from .install import (
@@ -29,14 +30,6 @@ from .install import (
 )
 from .integrity import StoreError, gc, reset_baseline, snapshot, snapshot_text, store_dir, verify
 from .persistence import guarded_sections
-
-
-def _utf8_output() -> None:
-    # Memory is often Chinese or other non-Latin text. Windows encodes piped output (an
-    # agent running `agentdetox status`) as cp1252 and would crash on it; agents read UTF-8.
-    for stream in (sys.stdout, sys.stderr):
-        if (getattr(stream, "encoding", None) or "").lower().replace("-", "") != "utf8" and hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8", errors="replace")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -401,7 +394,7 @@ def _daemon_command(action: str) -> int:
         print(f"stopped (pid {info['pid']})" if stopped else f"pid {info['pid']} did not stop within 10 s")
         return 0 if stopped else 1
     if info is None:
-        print("not running; it starts on the next memory write that has something to compare" if daemon.SERVER
+        print("not running; starts on the next changed memory write; loads the model only for candidates" if daemon.SERVER
               else "not available on Windows yet: each contradiction check loads the model in a background worker")
         return 0
     print(f"running: pid {info['pid']}, started {info['started'].replace('T', ' ')}, model "

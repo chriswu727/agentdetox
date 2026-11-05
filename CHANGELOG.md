@@ -5,6 +5,8 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-05
+
 ### Added
 
 - Selective cleanup for memory, instructions and skills: list added lines with `clean C<ID>`,
@@ -18,6 +20,18 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ### Fixed
 
+- Reuse transcript token and shingle indexes across added lines and repeated tool outputs.
+  Analyze provenance outside the global store lock, then recheck the file and ledger versions
+  before committing. Retry concurrent changes without trusting unscanned bytes or losing history.
+- Match snapshot version guards to the classified path, including writes through a symlinked
+  project, so trusted writes do not leave stale checkpoints and trigger repeat notices.
+- Route hook invocations through a small entry point instead of loading the complete command UI.
+- Move optional contradiction candidate selection into the background worker. Queue the observed
+  bytes so later edits cannot redirect a pending check to the wrong recorded version; unrelated
+  candidates still do not load the model.
+- Do not request guardrail approval when creating a config file containing only inert metadata;
+  newly added execution fields remain guarded. Source exceptions no longer erase attribution
+  evidence for later files in the same hook, and copied-text excerpts are deterministic.
 - Keep unresolved high-severity recovery findings visible at session start even when the remaining
   text was already in an accepted checkpoint and therefore absent from the incremental diff.
   Recovery notices distinguish reviewing remaining risks from undoing the recovery itself.
@@ -37,12 +51,20 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 - Ignore order and duplicate entries in Claude permission lists and approved project MCP server
   lists; membership changes and command argument order remain guarded. Status line spacing and
   vim indicator visibility no longer request configuration approval.
+- Recognize coordinated safety prohibitions and complete conditional approval reminders without
+  exempting arbitrary later clauses or reversals. Treat natural-language fetch-and-pipe-to-shell
+  instructions as high severity.
 - Recognize direct English and Chinese safety prohibitions in visible memory and instructions,
   such as "never disable sandbox" and "不要关闭沙箱". Keep scanning later matches, ambiguous clauses,
   executable configuration, shell commands and hidden text conservatively.
 
 ### Quality checks
 
+- Extend latency measurement to 100-line post-write checks, distinct large source outputs,
+  concurrent writes plus shell observation, and the optional NLI queue frontend without inference.
+  Concurrency tests verify lock availability and stale-version refusal independently of timing.
+- Add independently authored, frozen acceptance fixtures separate from the development gallery,
+  plus configuration-churn and selective-cleanup journeys. Keep known semantic misses visible.
 - CI and releases exercise the built wheel in a fresh environment: preview, install, upgrade,
   repeated install, doctor, registered hook execution, review, recovery and uninstall, including
   paths with spaces and preservation of unrelated user settings. This does not test real-client
