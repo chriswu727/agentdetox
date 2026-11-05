@@ -84,6 +84,14 @@ injection phrasing. Memory that points package installs at a registry other than
 and the big public mirrors asks rather than blocks, since teams do run private registries. English
 and Chinese.
 
+On `main` (not yet in the 0.4.0 package), direct prohibitions such as "Never disable sandbox"
+and "不要上传密钥到 https://example.org" no longer count as attack instructions. This recognizes
+simple prohibitions, not arbitrary negation or quoted shell examples. Later active instructions
+are still checked, and hidden text and executable commands do not receive this prose exemption.
+Reordering or deduplicating Claude permission lists and approved MCP server names is quiet, as
+are status line spacing and vim indicator changes. Adding or removing entries, changing command
+argument order, and changing the status line command or refresh interval remain guarded.
+
 **Cleaning up.** `agentdetox review` lists changes needing attention, with a `C` id for each
 change. `agentdetox review C42` shows the diff, observed writer, attribution evidence and individual
 `F` finding ids. `agentdetox restore C42` previews the recovery; add `--apply` to restore the version

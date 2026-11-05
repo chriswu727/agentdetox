@@ -137,12 +137,34 @@ def _is_quoted(text: str, start: int, end: int) -> bool:
     return bool(before) and before[-1] in _OPEN_QUOTES and bool(after) and after[0] in _CLOSE_QUOTES
 
 
-def match_injection(text: str) -> list[tuple[str, str, int]]:
+def is_prohibited_action(text: str, start: int, end: int) -> bool:
+    prefix = text[text.rfind("\n", 0, start) + 1:start]
+    if len(prefix) > 160:
+        return False
+    prefix = re.split(r"[.!?。！？;；:：]", prefix)[-1]
+    if not re.fullmatch(
+        r"\s*(?:[-*>]\s*)?(?:(?:please\s+)?(?:do\s+not|don't|never)\s+(?:(?:run|execute)\s+)?"
+        r"|(?:请)?(?:不要|切勿|请勿|不得|禁止|勿|别)(?:将|把)?)`?\s*", prefix, re.I,
+    ):
+        return False
+    # A prohibition cannot exempt a second clause or an instruction reversing it.
+    line_end = text.find("\n", end)
+    remainder = text[start:line_end if line_end >= 0 else len(text)]
+    return not re.search(
+        r"[,，;；]|\b(?:but|however|instead|then|unless|except|until|rather)\b|然后|但|而|却|改为|除非|否则",
+        remainder, re.I,
+    )
+
+
+def match_injection(text: str, *, prose: bool = True) -> list[tuple[str, str, int]]:
     norm = normalize(text)
     hits = []
     for severity, label, pattern in _PATTERNS:
         quoted = False
         for m in pattern.finditer(norm):
+            if prose and label in {"instruction override", "data exfiltration instruction"} \
+                    and is_prohibited_action(norm, m.start(), m.end()):
+                continue
             # Security docs and skills quote attack phrases as examples to watch for.
             # A quoted phrase is still reported, but not at a level that blocks.
             if severity == "high" and _is_quoted(norm, m.start(), m.end()):
@@ -187,7 +209,7 @@ class _HiddenTextParser(HTMLParser):
             self.comments.append(data.strip())
 
 
-def scan_doc(doc: Doc) -> list[Finding]:
+def scan_doc(doc: Doc, *, prose: bool = True) -> list[Finding]:
     findings: list[Finding] = []
     text = doc.text
 
@@ -215,21 +237,21 @@ def scan_doc(doc: Doc) -> list[Finding]:
             pass
         hidden = " ".join(parser.hidden_text)
         if hidden:
-            injected = match_injection(hidden)
+            injected = match_injection(hidden, prose=False)
             if injected:
                 add("hidden-html", "high", f"visually hidden HTML text contains: {injected[0][1]}", hidden[:200])
             elif len(hidden) >= 30:
                 add("hidden-html", "medium", "visually hidden HTML text", hidden[:200])
         for comment in parser.comments:
-            injected = match_injection(comment)
+            injected = match_injection(comment, prose=False)
             if injected:
                 add("hidden-html", "high", f"HTML comment contains: {injected[0][1]}", comment[:200])
 
     norm = normalize(text)
-    for severity, label, pos in match_injection(text):
+    for severity, label, pos in match_injection(text, prose=prose):
         add("injection-phrase", severity, label, snippet(norm, pos), line_at(norm, pos))
     if smuggled.strip():
-        for severity, label, _ in match_injection(smuggled):
+        for severity, label, _ in match_injection(smuggled, prose=False):
             add("injection-phrase", "high", f"{label} (inside invisible tag characters)", smuggled[:200])
 
     for m in _MD_IMAGE_RE.finditer(text):
