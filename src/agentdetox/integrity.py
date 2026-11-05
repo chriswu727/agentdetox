@@ -27,7 +27,7 @@ from .agentscan import read_text, scan_text
 from .compat import hook_executable, quote_executable, release, try_lock
 from .context import ContextFile, is_hook_script
 from .findings import Finding
-from .persistence import RUNS_CODE, WHOLE_FILE, guarded_sections, leaves
+from .persistence import RUNS_CODE, WHOLE_FILE, guarded_sections, is_claude_config, leaves
 
 # Matches our hook command however the executable path was quoted
 # ("/x/agentdetox" hook, '/a b/agentdetox' hook, "C:\x\agentdetox.EXE" hook, python -m agentdetox hook).
@@ -93,7 +93,42 @@ def _without_own(key: str, section: str) -> str:
     return json.dumps(data, sort_keys=True, ensure_ascii=False)
 
 
-def runs_code_added(key: str, before: str | None, after: str | None) -> list[str]:
+def _execution_section(path: Path | None, key: str, section: str) -> str:
+    section = _without_own(key, section)
+    if path is None or not is_claude_config(path):
+        return section
+    data = json.loads(section)
+    if not isinstance(data, dict):
+        return section
+    name = key.rsplit(".", 1)[-1]
+    if name == "mcpServers":
+        runtime = {"type", "command", "args", "url", "env", "headers", "headersHelper", "oauth", "cwd"}
+        data = {name: {k: v for k, v in server.items() if k in runtime}
+                if isinstance(server, dict) else server for name, server in data.items()}
+    elif name == "hooks":
+        runtime = {"type", "if", "timeout", "once", "command", "args", "async", "asyncRewake", "shell", "onFailure",
+                   "url", "headers", "allowedEnvVars", "server", "tool", "input", "prompt", "model"}
+        projected = {}
+        for event, groups in data.items():
+            if not isinstance(groups, list):
+                projected[event] = groups
+                continue
+            kept = []
+            for group in groups:
+                if not isinstance(group, dict):
+                    kept.append(group)
+                    continue
+                value = {k: v for k, v in group.items() if k in runtime or k == "matcher"}
+                if isinstance(group.get("hooks"), list):
+                    value["hooks"] = [{k: v for k, v in handler.items() if k in runtime}
+                                      if isinstance(handler, dict) else handler for handler in group["hooks"]]
+                kept.append(value)
+            projected[event] = kept
+        data = projected
+    return json.dumps(data, sort_keys=True)
+
+
+def runs_code_added(key: str, before: str | None, after: str | None, path: Path | None = None) -> list[str]:
     """What a change to a guarded config section added that runs on this machine: a hook,
     helper command, MCP server, environment variable or plugin, other than AgentDetox's own."""
     name = key.rsplit(".", 1)[-1]
@@ -102,8 +137,8 @@ def runs_code_added(key: str, before: str | None, after: str | None) -> list[str
     try:
         if name == "enableAllProjectMcpServers" and json.loads(after) is not True:
             return []
-        old = leaves({key: _without_own(key, before)}, ordered=True) if before else set()
-        new = leaves({key: _without_own(key, after)}, ordered=True)
+        old = leaves({key: _execution_section(path, key, before)}, ordered=True) if before else set()
+        new = leaves({key: _execution_section(path, key, after)}, ordered=True)
     except ValueError:
         return []
     # Of a status line, only its command runs; padding and the like do not.
@@ -419,11 +454,11 @@ def _runs_finding(doc_id: str, path: Path, key: str, before: str | None, after: 
     if key == WHOLE_FILE and after is not None and is_hook_script(path):
         return Finding(doc_id, str(path), "config-change", "high",
                        f"hook script {'added' if before is None else 'changed'}: {path.name}")
-    runs = runs_code_added(key, before, after)
+    runs = runs_code_added(key, before, after, path)
     if not runs:
         return None
-    old = json.loads(_without_own(key, before)) if before else None
-    new = json.loads(_without_own(key, after or "null"))
+    old = json.loads(_execution_section(path, key, before)) if before else None
+    new = json.loads(_execution_section(path, key, after or "null"))
     names: list[str] = []
     if isinstance(new, dict) and name != "statusLine":
         old = old if isinstance(old, dict) else {}
