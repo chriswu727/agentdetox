@@ -14,6 +14,12 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
   nested examples and metadata no longer count as commands or environment overrides. Cosmetic
   hook spinner text stays quiet, and MCP metadata changes stay reviewable without a false
   code-execution alert. Scan executable MCP `headersHelper` commands as well.
+- Ignore order and duplicate entries in Claude permission lists and approved project MCP server
+  lists; membership changes and command argument order remain guarded. Status line spacing and
+  vim indicator visibility no longer request configuration approval.
+- Recognize direct English and Chinese safety prohibitions in visible memory and instructions,
+  such as "never disable sandbox" and "不要关闭沙箱". Keep scanning later matches, ambiguous clauses,
+  executable configuration, shell commands and hidden text conservatively.
 
 ### Documentation
 

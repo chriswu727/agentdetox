@@ -182,3 +182,83 @@ def test_mixed_changes_only_name_components_whose_execution_changed(context, mon
     notice = startup(project)
     assert ('MCP server changed (mcpServers): active' if container == 'mcp' else 'hook changed (hooks): PreToolUse') in notice
     assert ('display-only' if container == 'mcp' else 'PostToolUse') not in notice
+
+
+@pytest.mark.parametrize('location', ['user', 'project', 'local', 'global', 'custom'])
+@pytest.mark.parametrize('field', ['allow', 'ask', 'deny', 'additionalDirectories', 'enabledMcpjsonServers'])
+def test_set_valued_configuration_lists_ignore_order_and_duplicates(context, monkeypatch, location, field):
+    _, project = context
+    path = config_path(context, location, monkeypatch)
+    before = {'enabledMcpjsonServers': ['docs', 'local'], 'additionalDirectories': ['../docs', '../tools']}.get(
+        field, ['Read(*)', 'Bash(npm test)'])
+    data = {field: before} if field == 'enabledMcpjsonServers' else {'permissions': {field: before}}
+    if location == 'global':
+        data = {'projects': {str(project): data}}
+    path.write_text(json.dumps(data))
+    assert startup(project) == ''
+    normalized = guarded_sections(path, path.read_text())
+    before[:] = [before[1], before[0], before[1]]
+    assert guarded_sections(path, json.dumps(data)) == normalized
+    assert planned_write(path, project, data) == 'allow'
+    observation.start('claude-code', 'test', 'reorder', project)
+    path.write_text(json.dumps(data))
+    assert observation.finish('claude-code', 'test', 'reorder', project) == ''
+    assert startup(project) == ''
+    assert ledger.entries(str(path)) == []
+
+
+@pytest.mark.parametrize('field,value', [('padding', 4), ('hideVimModeIndicator', True)])
+def test_status_line_display_changes_do_not_request_approval(context, monkeypatch, field, value):
+    _, project = context
+    path = config_path(context, 'project', monkeypatch)
+    data = {'statusLine': {'type': 'command', 'command': 'node line.js'}}
+    path.write_text(json.dumps(data))
+    assert startup(project) == ''
+    data['statusLine'][field] = value
+    assert planned_write(path, project, data) == 'allow'
+    observation.start('claude-code', 'test', 'status-display', project)
+    path.write_text(json.dumps(data))
+    assert observation.finish('claude-code', 'test', 'status-display', project) == ''
+    assert startup(project) == ''
+    assert ledger.entries(str(path)) == []
+
+
+@pytest.mark.parametrize('field', ['allow', 'ask', 'deny', 'additionalDirectories', 'enabledMcpjsonServers'])
+def test_set_valued_lists_still_guard_membership_changes(context, monkeypatch, field):
+    _, project = context
+    path = config_path(context, 'project', monkeypatch)
+    values = ['existing']
+    data = {field: values} if field == 'enabledMcpjsonServers' else {'permissions': {field: values}}
+    path.write_text(json.dumps(data))
+    assert startup(project) == ''
+    values.append('new')
+    assert planned_write(path, project, data) == 'ask'
+    path.write_text(json.dumps(data))
+    notice = startup(project)
+    if field == 'enabledMcpjsonServers':
+        assert 'runs on this machine' in notice
+    assert ledger.entries(str(path))
+
+
+@pytest.mark.parametrize('field,value', [('command', 'node other.js'), ('refreshInterval', 1)])
+def test_status_line_runtime_changes_still_request_approval(context, monkeypatch, field, value):
+    _, project = context
+    path = config_path(context, 'project', monkeypatch)
+    data = {'statusLine': {'type': 'command', 'command': 'node line.js', 'padding': 0}}
+    path.write_text(json.dumps(data))
+    assert startup(project) == ''
+    data['statusLine'].update({field: value, 'padding': 4})
+    assert planned_write(path, project, data) == 'ask'
+
+
+def test_mcp_argument_order_stays_security_relevant(context, monkeypatch):
+    _, project = context
+    path = config_path(context, 'mcp', monkeypatch)
+    args = ['-c', ':', 'sh /tmp/payload.sh']
+    data = {'mcpServers': {'local': {'command': 'sh', 'args': args}}}
+    path.write_text(json.dumps(data))
+    assert startup(project) == ''
+    args[1:] = list(reversed(args[1:]))
+    assert planned_write(path, project, data) == 'ask'
+    path.write_text(json.dumps(data))
+    assert 'runs on this machine' in startup(project)

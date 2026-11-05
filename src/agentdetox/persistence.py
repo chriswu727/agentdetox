@@ -13,7 +13,7 @@ import tomllib
 from pathlib import Path
 
 from .context import claude_dir
-from .hidden import normalize
+from .hidden import is_prohibited_action, normalize
 
 _FETCH_EXEC = (
     r"(curl|wget|iwr|invoke-webrequest)\b[^\n|]{0,200}\|\s*(sudo\s+)?(ba|z|da)?sh\b"
@@ -101,13 +101,15 @@ _HELPER_KEYS = {"apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "otelHe
 _COMMAND_KEYS = {"command", "args", "url", "notify"} | _HELPER_KEYS
 
 
-def text_findings(text: str) -> list[tuple[str, str, int]]:
+def text_findings(text: str, *, prose: bool = False) -> list[tuple[str, str, int]]:
     norm = normalize(text)
     hits = []
     for severity, label, pattern in TEXT_RULES:
-        m = pattern.search(norm)
-        if m:
+        for m in pattern.finditer(norm):
+            if prose and is_prohibited_action(norm, m.start(), m.end()):
+                continue
             hits.append((severity, label, m.start()))
+            break
     return hits
 
 
@@ -136,6 +138,19 @@ def is_claude_config(path: Path) -> bool:
 
 def _claude_settings(data: dict) -> dict:
     config = {k: v for k, v in data.items() if k in _GUARDED_KEYS}
+    status = config.get("statusLine")
+    if isinstance(status, dict):
+        config["statusLine"] = {k: v for k, v in status.items() if k not in {"padding", "hideVimModeIndicator"}}
+    enabled = config.get("enabledMcpjsonServers")
+    if isinstance(enabled, list) and all(isinstance(v, str) for v in enabled):
+        config["enabledMcpjsonServers"] = sorted(set(enabled))
+    permissions = config.get("permissions")
+    if isinstance(permissions, dict):
+        config["permissions"] = dict(permissions)
+        for key in ("allow", "ask", "deny", "additionalDirectories"):
+            values = permissions.get(key)
+            if isinstance(values, list) and all(isinstance(v, str) for v in values):
+                config["permissions"][key] = sorted(set(values))
     hooks = config.get("hooks")
     if isinstance(hooks, dict):
         config["hooks"] = dict(hooks)

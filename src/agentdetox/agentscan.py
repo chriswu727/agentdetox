@@ -20,9 +20,10 @@ def scan_text(doc_id: str, source: str, text: str, kind: str) -> list[Finding]:
     """Findings for one piece of context text. `kind` is a ContextFile kind."""
     if kind == "config":
         return _scan_config(doc_id, source, text)
-    findings = scan_doc(Doc(doc_id, text, source))
+    prose = kind in {"memory", "instructions"}
+    findings = scan_doc(Doc(doc_id, text, source), prose=prose)
     norm = normalize(text)
-    for severity, label, pos in text_findings(text):
+    for severity, label, pos in text_findings(text, prose=prose):
         findings.append(Finding(doc_id, source, "persistence", severity, label, snippet(norm, pos),
                                 anchor=line_at(norm, pos)))
     return findings

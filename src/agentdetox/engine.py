@@ -135,7 +135,7 @@ def check_command(command: str, project: Path, cwd: Path | None = None) -> list[
         context += [str(f) for f in folders
                     if any(Path(p).is_relative_to(os.path.realpath(f)) for p in inside)]
     if context:
-        findings = allowlist.unsuppressed(scan_text("shell", "shell", command, "memory"))
+        findings = allowlist.unsuppressed(scan_text("shell", "shell", command, "shell"))
         if _worst(findings) == "high":
             return [Signal(PLANTED, "AgentDetox: shell command writes to agent context and "
                                     + printable("; ".join(sorted({f.message for f in findings}))) + ".",
