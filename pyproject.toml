@@ -34,7 +34,7 @@ Issues = "https://github.com/chriswu727/agentdetox/issues"
 Changelog = "https://github.com/chriswu727/agentdetox/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-st = ["sentence-transformers>=2.2"]
+st = ["sentence-transformers>=6.2.0"]
 nli = ["transformers>=4.40", "torch>=2.1"]
 dev = ["pytest>=7", "ruff>=0.15", "mypy>=1.18", "pip-audit>=2.7"]
 
