@@ -88,6 +88,24 @@ active instruction, negative/quoted/recollected save requests granting a blanket
 same-anchor deduplication discarding a later higher severity. Findings now retain the strongest
 severity without changing existing finding ids.
 
+## Configuration semantics regressions, 2026-11-04
+
+Run `python -m pytest -q tests/test_config_semantics.py`. These 34 authored cases exercise the
+real hook handlers without a model or network. They cover user, project, local, MCP, global and
+relocated Claude config, and keep normal activity separate from execution changes:
+
+- Inert metadata with command-like keys stays quiet before writes, after shell tools and at startup.
+- Changing a hook's spinner text does not require approval or claim a new executable was added.
+- Examples inside real hook, status-line and MCP metadata are not interpreted as shell commands.
+- Hook and MCP metadata changes remain reviewable without a high-severity execution claim.
+- Changes to real hook commands, HTTP targets, prompt/agent hooks and MCP tool hooks still alert.
+- Real MCP commands, arguments, URLs, loaders and dynamic header helpers remain guarded;
+  malicious command payloads and AgentDetox environment overrides are denied.
+
+This is regression evidence for supported Claude configuration, not a held-out accuracy estimate
+or validation of other agents. Unknown properties inside guarded sections stay reviewable; a
+quiet command scan does not establish that an arbitrary external program is safe.
+
 ## Existing public-data evaluation
 
 The existing provenance test split was rerun with NLI off: 1,431 synthetic-transcript cases,

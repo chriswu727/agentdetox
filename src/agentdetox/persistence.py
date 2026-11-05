@@ -12,6 +12,7 @@ import re
 import tomllib
 from pathlib import Path
 
+from .context import claude_dir
 from .hidden import normalize
 
 _FETCH_EXEC = (
@@ -126,13 +127,40 @@ RUNS_CODE = {"hooks", "statusLine", "mcpServers", "mcp", "mcp_servers", "notify"
              "enableAllProjectMcpServers", "enabledMcpjsonServers", "enabledPlugins", "extraKnownMarketplaces"}
 
 
+def is_claude_config(path: Path) -> bool:
+    return path.name in {".claude.json", ".mcp.json"} or (
+        path.name in {"settings.json", "settings.local.json"}
+        and (path.parent.name == ".claude" or path.parent == claude_dir())
+    )
+
+
+def _claude_settings(data: dict) -> dict:
+    config = {k: v for k, v in data.items() if k in _GUARDED_KEYS}
+    hooks = config.get("hooks")
+    if isinstance(hooks, dict):
+        config["hooks"] = dict(hooks)
+        for event, groups in hooks.items():
+            if not isinstance(groups, list):
+                continue
+            cleaned = []
+            for group in groups:
+                if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+                    cleaned.append(group)
+                    continue
+                handlers = [{k: v for k, v in handler.items() if k != "statusMessage"}
+                            if isinstance(handler, dict) else handler for handler in group["hooks"]]
+                cleaned.append({**group, "hooks": handlers})
+            config["hooks"][event] = cleaned
+    return config
+
+
 def _claude_config(data: dict) -> dict:
     """Runtime caches share key names with settings but are not executable configuration."""
-    config = {k: v for k, v in data.items() if k in _GUARDED_KEYS}
+    config = _claude_settings(data)
     projects = data.get("projects")
     if isinstance(projects, dict):
         config["projects"] = {
-            project: {k: v for k, v in values.items() if k in _GUARDED_KEYS}
+            project: _claude_settings(values)
             for project, values in projects.items() if isinstance(values, dict)
         }
     return config
@@ -142,7 +170,9 @@ def _parse_config(path: Path, text: str):
     try:
         if path.suffix == ".json":
             data = json.loads(text)
-            return _claude_config(data) if path.name == ".claude.json" and isinstance(data, dict) else data
+            if isinstance(data, dict) and is_claude_config(path):
+                return _claude_config(data) if path.name == ".claude.json" else _claude_settings(data)
+            return data
         if path.suffix == ".toml":
             return tomllib.loads(text)
     except (ValueError, tomllib.TOMLDecodeError):
@@ -156,6 +186,8 @@ def config_commands(path: Path, text: str) -> list[tuple[str, str]]:
     data = _parse_config(path, text)
     if data is None:
         return [] if path.suffix in (".json", ".toml") else [(WHOLE_FILE, text)]
+    if is_claude_config(path) and isinstance(data, dict):
+        return _claude_commands(data)
     out: list[tuple[str, str]] = []
 
     def walk(node, where: str, under_command: bool) -> None:
@@ -172,10 +204,62 @@ def config_commands(path: Path, text: str) -> list[tuple[str, str]]:
     return out
 
 
+def _claude_scopes(data: dict):
+    yield "", data
+    projects = data.get("projects")
+    if isinstance(projects, dict):
+        for project, settings in projects.items():
+            yield f"projects.{project}.", settings
+
+
+def _claude_servers(data: dict):
+    servers = data.get("mcpServers")
+    if isinstance(servers, dict):
+        for name, server in servers.items():
+            if isinstance(server, dict):
+                yield f"mcpServers.{name}.", server
+
+
+def _claude_commands(data: dict) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+
+    def command(node, prefix: str, keys: set[str]) -> None:
+        if not isinstance(node, dict):
+            return
+        for key in sorted(keys):
+            value = node.get(key)
+            if isinstance(value, str):
+                out.append((prefix + key, value))
+            elif key == "args" and isinstance(value, list):
+                out.extend((f"{prefix}args[{i}]", arg) for i, arg in enumerate(value) if isinstance(arg, str))
+
+    for prefix, settings in _claude_scopes(data):
+        command(settings, prefix, _HELPER_KEYS)
+        command(settings.get("statusLine"), prefix + "statusLine.", {"command"})
+        for server_path, server in _claude_servers(settings):
+            command(server, prefix + server_path, {"command", "args", "url", "headersHelper"})
+        hooks = settings.get("hooks")
+        if isinstance(hooks, dict):
+            for event, groups in hooks.items():
+                for i, group in enumerate(groups if isinstance(groups, list) else []):
+                    command(group, f"{prefix}hooks.{event}[{i}].", {"command", "args", "url"})
+                    if isinstance(group, dict) and isinstance(group.get("hooks"), list):
+                        for j, handler in enumerate(group["hooks"]):
+                            command(handler, f"{prefix}hooks.{event}[{i}].hooks[{j}].", {"command", "args", "url"})
+    return out
+
+
 def own_env_keys(path: Path, text: str) -> list[str]:
     """AGENTDETOX_* variables a config file sets for the commands the agent runs, AgentDetox's
     hooks among them: a way to point it at an empty store or switch its checks off."""
     data = _parse_config(path, text)
+    if is_claude_config(path) and isinstance(data, dict):
+        environments = []
+        for _, settings in _claude_scopes(data):
+            environments.append(settings.get("env"))
+            environments.extend(server.get("env") for _, server in _claude_servers(settings))
+        return [key for env in environments if isinstance(env, dict) for key in env
+                if key.upper().startswith("AGENTDETOX_")]
     out: list[str] = []
 
     def walk(node) -> None:

@@ -10,6 +10,10 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 - Treat Claude Code's runtime feature caches as data rather than executable settings. A cached
   `statusLine` display string no longer produces a high-severity command alert; real settings
   and per-project MCP configuration remain guarded.
+- Scope Claude settings, hooks and MCP command checks to their actual configuration fields;
+  nested examples and metadata no longer count as commands or environment overrides. Cosmetic
+  hook spinner text stays quiet, and MCP metadata changes stay reviewable without a false
+  code-execution alert. Scan executable MCP `headersHelper` commands as well.
 
 ### Documentation
 

@@ -34,6 +34,13 @@ addition that runs code is told once and the snapshot moves on, since repeating 
 it running. Config files are compared by their security-relevant sections only, because agents
 rewrite their own config (counters, caches) at every start.
 
+Claude JSON configuration is interpreted by field position. Runtime caches and unrelated metadata
+are outside the guarded root/project settings; command checks read helper commands, status-line
+commands, hook handlers and MCP launch fields rather than recursively matching any `command` key.
+Hook spinner text is cosmetic. Metadata inside a guarded hook or MCP section remains reviewable,
+but only changes to execution fields justify a notice that its runnable configuration changed.
+Other agents retain their existing config interpretation; this is not a general JSON schema validator.
+
 Shell tools with stable tool-use ids additionally pass through `observation.py`. A transaction stores
 pre-tool content references for the current project, its Claude auto memory and shared user-level
 Claude context. Success and failure hooks compare those files and discover additions. Records keep
