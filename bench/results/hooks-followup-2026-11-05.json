@@ -1,0 +1,24 @@
+{
+  "platform": "macOS-15.7.4-arm64-arm-64bit",
+  "python": "3.12.13",
+  "results": [
+    {
+      "case": "SessionStart, 1000 unchanged files",
+      "samples": 100,
+      "p50_ms": 135.1,
+      "p95_ms": 148.1,
+      "budget_ms": 250,
+      "within_budget": true
+    },
+    {
+      "case": "NLI record frontend, 1000 active memory files, fake queue, no inference",
+      "samples": 100,
+      "p50_ms": 76.2,
+      "p95_ms": 79.1,
+      "budget_ms": 250,
+      "within_budget": true
+    }
+  ],
+  "model": "disabled; no model or subscription usage",
+  "warmup": "one untimed call per case"
+}

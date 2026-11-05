@@ -148,7 +148,7 @@ which remain visible in `doctor` and `status`. Code running as your user can alt
   retained in the reports. Guardrail success and user-task completion are reported separately.
   [Recorded results](https://github.com/chriswu727/agentdetox/blob/main/lab/results/latest.md).
 - **Reference latency, 2026-11-05:** 100 samples per case on one Mac, no NLI inference. All 12
-  budgets passed in the reference run; a busy-host rerun passed 10/12. Bash pre/post P95 **145.6 ms**; a 100-line post-write check with a 3.9 MB transcript
+  budgets passed in the initial reference run; later contention failures and focused follow-ups are retained. Bash pre/post P95 **145.6 ms**; a 100-line post-write check with a 3.9 MB transcript
   **95.3 ms**; four concurrent writes plus a Bash pre/post pair **491.0 ms**.
   [Method, raw data and budgets](https://github.com/chriswu727/agentdetox/blob/main/bench/HOOK_LATENCY.md).
 

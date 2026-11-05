@@ -115,3 +115,15 @@ version ran first. Subprocesses loaded either the pre-change source at
 The baseline measured P50/P95 462.4/766.6 ms; the candidate measured 436.2/649.9 ms. Both exceeded
 the reference budget, supporting host contention as the main cause rather than a regression in
 this change. This diagnostic does not turn either failed budget into a pass.
+
+A [subsequent full rerun](results/hooks-release-rerun-2026-11-05.json) passed 11/12 budgets.
+The previous two failures cleared (large-memory Bash P95 307.6 ms; NLI frontend 90.7 ms),
+but unchanged-file SessionStart reached 348.8 ms against 250 ms while the macOS filesystem
+event service was busy. The full rerun remains a failed suite, not a 12/12 pass.
+
+After that activity subsided, [focused follow-up measurements](results/hooks-followup-2026-11-05.json)
+ran 100 samples each for unchanged-file SessionStart and the NLI queue frontend, with the same
+1,000-file fixtures and budgets, skipping the other timed cases. They measured P95 148.1 ms
+and 79.1 ms respectively, both passing. This also covers the final newline-normalization fix in
+the NLI frontend. Every scenario has a passing 100-sample measurement, while the failed full
+reruns show why these shared-machine numbers cannot promise tail latency under contention.
