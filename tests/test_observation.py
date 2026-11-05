@@ -119,6 +119,17 @@ def test_permission_changes_are_findings_but_config_counters_are_quiet(scope):
     assert 'high' in detail and 'hooks were disabled' in detail
 
 
+def test_shell_observation_ignores_claude_feature_cache_text(scope):
+    home, project, _ = scope
+    config = home / '.claude.json'
+    config.write_text('{}')
+    observation.start('claude-code', 's', 'cache', project)
+    config.write_text(json.dumps({'cachedGrowthBookFeatures': {'tengu_toasty_breeze': {
+        'statusLine': 'Lower priority until {reset}'}}}))
+    assert observation.finish('claude-code', 's', 'cache', project) == ''
+    assert ledger.entries(str(config)) == []
+
+
 def test_overlapping_commands_keep_separate_start_states_and_deduplicate(scope):
     _, project, _ = scope
     for identifier in ('first', 'second'):
