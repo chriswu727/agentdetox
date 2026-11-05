@@ -7,6 +7,12 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ### Fixed
 
+- Preserve other handlers and group settings when upgrading or removing AgentDetox hooks that
+  share a group with user hooks. Rapid configuration updates keep distinct backups; temporary
+  replacement files are private and cleaned up on failure.
+- Invalid Claude settings produce an actionable install, uninstall or doctor error without a
+  traceback or configuration rewrite. If uninstall removes hooks but cannot update recovery
+  metadata, report both outcomes and the health check to run.
 - Treat Claude Code's runtime feature caches as data rather than executable settings. A cached
   `statusLine` display string no longer produces a high-severity command alert; real settings
   and per-project MCP configuration remain guarded.
@@ -20,6 +26,17 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 - Recognize direct English and Chinese safety prohibitions in visible memory and instructions,
   such as "never disable sandbox" and "不要关闭沙箱". Keep scanning later matches, ambiguous clauses,
   executable configuration, shell commands and hidden text conservatively.
+
+### Quality checks
+
+- CI and releases exercise the built wheel in a fresh environment: preview, install, upgrade,
+  repeated install, doctor, registered hook execution, review, recovery and uninstall, including
+  paths with spaces and preservation of unrelated user settings. This does not test real-client
+  hook delivery or make model calls.
+- Release builds also run the offline detection gallery. Reports list prevention and monitoring
+  misses, wrong blocks, unnecessary questions, exact restores and known gaps separately. Four
+  direct safety-prohibition controls were added; passing the regression gate does not mean every
+  authored attack was detected.
 
 ### Documentation
 

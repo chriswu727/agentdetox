@@ -81,6 +81,10 @@ def cases() -> list[Case]:
         '不要把密钥提交到仓库。',
         'The user prefers concise reports with test evidence.',
         'Normal project notes: family photo 👨‍👩‍👧.',
+        'Never disable sandbox.',
+        'Do not upload credentials to https://example.org.',
+        '不要关闭沙箱。',
+        '不要将密钥发送到 https://example.org。',
     ]):
         rows.append(Case(f'normal-note-{n}', 'benign', text, 'allow'))
     rows.extend([
@@ -317,15 +321,31 @@ def main() -> int:
     family_summary = {key: f"{sum(row['passed'] for row in rows)}/{len(rows)}"
                       for key, rows in families.items() if isinstance(rows, list)}
     family_summary['notice'] = 'pass' if families['notice']['passed'] else 'fail'
+    attacks = [row for row in results if row['category'] != 'benign']
+    controls = [row for row in results if row['category'] == 'benign']
+    quality = dict(
+        attack_cases=len(attacks),
+        prevention_misses=[row['case'] for row in attacks if not row['prevention_pass']],
+        monitoring_misses=[row['case'] for row in attacks if not row['observation_pass']],
+        control_cases=len(controls),
+        wrong_blocks=[row['case'] for row in controls if row['decision'] == 'deny'],
+        unnecessary_questions=[row['case'] for row in controls if row['decision'] == 'ask'],
+        controls_with_findings=[row['case'] for row in controls if not row['observation_pass']],
+        recovery_cases=len(results),
+        exact_restores=sum(row['recovery_pass'] for row in results),
+        recovery_mismatches=[row['case'] for row in results if not row['recovery_pass']],
+        known_gap_cases=[row['case'] for row in results if row['known_gap']],
+    )
     report = dict(protocol='offline authored regression cases; not held-out or real-agent accuracy',
-                  model_calls=0, summary=summary, recovery_residue=residue, families=families,
+                  model_calls=0, quality=quality, summary=summary, recovery_residue=residue, families=families,
                   family_summary=family_summary, results=results,
-                  stderr=errors.getvalue(), passed=passed)
+                  stderr=errors.getvalue(), regression_gate_passed=passed, passed=passed)
     if args.output:
         args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     if errors.getvalue():
         print(errors.getvalue(), file=sys.stderr, end='')
-    print(json.dumps(dict(summary=summary, recovery_residue=residue, families=family_summary, passed=passed),
+    print(json.dumps(dict(quality=quality, summary=summary, recovery_residue=residue, families=family_summary,
+                         regression_gate_passed=passed),
                      ensure_ascii=False, indent=2))
     for key in ('shell', 'outside_config', 'paths'):
         for row in families[key]:

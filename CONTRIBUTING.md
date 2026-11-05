@@ -37,8 +37,16 @@ real agent session. `agentdetox demo` is the quick smoke test of the whole hook 
 CI (`.github/workflows/ci.yml`) runs on every pull request and push to `main`: Ubuntu with Python
 3.11 and 3.12, and macOS with 3.12, each installing the package, running `agentdetox demo`,
 auditing dependencies, lint, types, the tests, and building and checking the distributions
-(`scripts/check_dist.py`). A Windows job runs the demo and the tests without blocking, since
+(`scripts/check_dist.py`). Each also runs `scripts/check_journey.py dist/*.whl`: a fresh wheel
+installation outside the checkout, registration and maintenance, real hook subprocesses, review,
+recovery and uninstall. The script may download normal package dependencies; it makes no model
+calls and does not validate real-client hook delivery. A Windows job runs the demo and the tests without blocking, since
 Windows support is still young.
+
+Usability and detection are separate release gates. The offline gallery reports wrong blocks,
+unnecessary questions, prevention and monitoring misses, exact restores and known gaps. Its
+`regression_gate_passed` field means no new failure of its contract; acknowledged semantic misses
+are included in the report and attack count. It is not a real-world accuracy estimate.
 
 To release:
 
@@ -48,7 +56,7 @@ To release:
 3. Date the version's `CHANGELOG.md` heading (`## [X.Y.Z] - YYYY-MM-DD`) and merge.
 4. Publish a GitHub release tagged `vX.Y.Z` for that version. The release workflow checks that the tag, the three
    versions and the dated changelog agree (`scripts/check_release.py`), runs the checks and tests,
-   smoke-tests the built wheel in a clean environment, attaches the distributions to the release,
+   runs the offline detection gallery and the built-wheel lifecycle, attaches the distributions to the release,
    and publishes to PyPI through trusted publishing. Nothing is uploaded if any step fails.
 
 PyPI accepts the upload only from this repository's `release.yml`, running in the `pypi`
