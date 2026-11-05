@@ -65,7 +65,7 @@ def test_changed_bytes_are_rescanned_before_checkpoint(context, monkeypatch):
         nonlocal calls
         calls += 1
         if calls == 1:
-            path.write_text(poison)
+            path.write_bytes(poison.encode())
         return original(*args)
 
     monkeypatch.setattr(engine, 'attribute_lines', analyze)
@@ -146,7 +146,7 @@ def test_checkpoint_reread_does_not_trust_an_unchecked_version(context, monkeypa
         return original(*args, **kwargs)
 
     monkeypatch.setattr(engine, 'snapshot', changed_before_snapshot)
-    path.write_text(checked)
+    path.write_bytes(checked.encode())
     engine.after_write([path], project, False)
     [entry] = ledger.entries(str(path))
     assert entry.after == hashlib.sha256(checked.encode()).hexdigest()

@@ -234,7 +234,8 @@ def test_an_allowed_contradiction_is_not_asked_again(env, fake, capsys):
     assert cid in {finding_id(f) for f in found}      # `agent scan --consistency` names it the same way
 
 
-def test_record_frontend_never_reads_related_files_or_selects_candidates(env, monkeypatch):
+@pytest.mark.parametrize('newline', ['\n', '\r\n', '\r'])
+def test_record_frontend_never_reads_related_files_or_selects_candidates(env, monkeypatch, newline):
     _, project, mem = env
     from agentdetox.context import classify
 
@@ -247,6 +248,7 @@ def test_record_frontend_never_reads_related_files_or_selects_candidates(env, mo
     jobs = []
     monkeypatch.setattr(engine.daemon, 'submit', jobs.append)
     path = mem / 'deploy.md'
+    path.write_bytes(path.read_text().replace('\n', newline).encode('utf-8'))
     content = path.read_bytes()
     engine.record_in_background(classify(path, project=project), '', project, content=content)
     assert bytes.fromhex(jobs[0]['content_hex']) == content

@@ -316,7 +316,9 @@ def record_in_background(cf: ContextFile, old: str, project: Path, *, content: b
     if cf.kind not in ("memory", "instructions") or not _nli_installed():
         return
     content = cf.path.read_bytes() if content is None else content
-    if not content.strip() or content.decode("utf-8", errors="replace") == old:
+    # Stored text uses universal newlines; queued bytes retain their exact version hash.
+    text = content.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+    if not content.strip() or text == old.replace("\r\n", "\n").replace("\r", "\n"):
         return
     daemon.submit({"path": str(cf.path), "project": str(project), "old": old, "content_hex": content.hex()})
 

@@ -28,7 +28,8 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 - Route hook invocations through a small entry point instead of loading the complete command UI.
 - Move optional contradiction candidate selection into the background worker. Queue the observed
   bytes so later edits cannot redirect a pending check to the wrong recorded version; unrelated
-  candidates still do not load the model.
+  candidates still do not load the model. Compare normalized line endings before queuing
+  unchanged text, while retaining exact captured bytes for version matching.
 - Do not request guardrail approval when creating a config file containing only inert metadata;
   newly added execution fields remain guarded. Source exceptions no longer erase attribution
   evidence for later files in the same hook, and copied-text excerpts are deterministic.
