@@ -20,6 +20,7 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 - Keep unresolved high-severity recovery findings visible at session start even when the remaining
   text was already in an accepted checkpoint and therefore absent from the incremental diff.
+  Recovery notices distinguish reviewing remaining risks from undoing the recovery itself.
 - Preserve other handlers and group settings when upgrading or removing AgentDetox hooks that
   share a group with user hooks. Rapid configuration updates keep distinct backups; temporary
   replacement files are private and cleaned up on failure.

@@ -253,8 +253,9 @@ def detail(change_id: str) -> str:
     except StoreError:
         lines.append('STALE: the file no longer matches this change. Accept and whole-version restore refuse newer work; '
                      'selective cleanup requires unchanged, unambiguous selected lines.')
+    recovery_label = 'Preview undo of this recovery' if data.get('origin') == 'restored' else 'Preview recovery'
     lines += [f'Accept only this version: agentdetox review accept C{row["id"]}',
-              f'Preview recovery: agentdetox restore C{row["id"]}',
+              f'{recovery_label}: agentdetox restore C{row["id"]}',
               f'Inspect added lines for selective cleanup: agentdetox clean C{row["id"]}',
               'Dismiss one finding: agentdetox review dismiss F<ID>. This grants no permanent exception.']
     if data.get('cleanup'):

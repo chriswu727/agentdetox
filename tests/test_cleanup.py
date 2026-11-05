@@ -66,6 +66,7 @@ def test_cleanup_preserves_benign_same_change_and_later_work(context, capsys):
     assert review.page(all_changes=True)['rows'][0]['writer'] == 'selected lines removed by AgentDetox'
     assert latest.cleanup['lines'] == [3]
     assert 'Selective cleanup of ' + change in review.detail(f'C{latest.id}')
+    assert 'Preview undo of this recovery' in review.detail(f'C{latest.id}')
     event = next(row for row in events.read() if row['event'] == 'cleanup_applied')
     assert event['change'] == change and event['lines'] == [3]
     assert status.describe(event)[0] == 'cleaned'
@@ -279,7 +280,9 @@ def test_acceptance_of_old_version_does_not_approve_cleanup_residue(context):
     review.clean(change, '3', apply=True, expected_hash=preview['current_hash'])
     assert review.accepted_versions()[str(path)] == accepted
     assert accepted != hashlib.sha256(path.read_bytes()).hexdigest()
-    assert 'instruction override' in session.notice(project, 'off')
+    notice = session.notice(project, 'off')
+    assert 'instruction override' in notice
+    assert 'would undo that recovery' in notice and 'Preview recovery:' not in notice
     assert 'instruction override' in session.notice(project, 'off')
     path.write_bytes(path.read_bytes() + b'Later benign note.\n')
     assert 'instruction override' in session.notice(project, 'off')
