@@ -63,6 +63,12 @@ def main(argv: list[str] | None = None) -> int:
     p_restore = sub.add_parser("restore", help="preview recovery of a recorded change")
     p_restore.add_argument("id")
     p_restore.add_argument("--apply", action="store_true", help="apply the previewed recovery")
+    p_clean = sub.add_parser("clean", help="preview removal of selected added lines, preserving later edits")
+    p_clean.add_argument("id")
+    p_clean.add_argument("--lines", help="line numbers in the recorded version, e.g. 3,5-7; omit to list added lines")
+    p_clean.add_argument("--expected-hash", help="current-file hash printed by the cleanup preview")
+    p_clean.add_argument("--apply", action="store_true", help="apply the preview; requires --lines and --expected-hash")
+    p_clean.add_argument("--format", choices=["text", "json"], default="text")
     p_export = sub.add_parser("export", help="export change history as JSONL")
     p_export.add_argument("--format", choices=["jsonl"], default="jsonl")
     p_health = sub.add_parser("health", help="acknowledge a previously investigated hook failure")
@@ -177,7 +183,7 @@ def main(argv: list[str] | None = None) -> int:
     p_blame.add_argument("path", type=Path)
 
     args = parser.parse_args(argv)
-    if args.command in ("review", "restore", "export", "health", "history"):
+    if args.command in ("review", "restore", "clean", "export", "health", "history"):
         try:
             return _review_command(args)
         except (ValueError, OSError, StoreError) as e:
@@ -652,6 +658,9 @@ def _review_command(args) -> int:
               "Add --apply to remove these records. History before the retained boundary will no longer be attributed.")
     elif args.command == "restore":
         print(review.restore(args.id, args.apply))
+    elif args.command == "clean":
+        result = review.clean(args.id, args.lines, apply=args.apply, expected_hash=args.expected_hash)
+        print(json.dumps(result, ensure_ascii=False, indent=2) if args.format == 'json' else review.render_cleanup(result))
     elif args.command == "export":
         for entry in ledger.entries():
             print(json.dumps(asdict(entry), ensure_ascii=False))

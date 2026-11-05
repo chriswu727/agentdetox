@@ -69,6 +69,7 @@ command being run is how Claude Code saves an approval; it is recorded without a
 | `integrity.py` | Snapshot store: baseline, content-addressed copies, verify, restore, quarantine, locking |
 | `storage.py` | SQLite schema, transactional legacy migration, indexed metadata and references |
 | `review.py` | Diff, exact-version accept, finding dismissal, recovery journal and retention |
+| `cleanup.py` | Explicit added-line selection and conflict-checked mapping onto current text |
 | `ledger.py` | Each change with its origin, the versions before and after, and `blame` |
 | `allowlist.py`, `events.py`, `settings.py` | Allowed ids, the event log, the settings file |
 | `install.py`, `doctor.py`, `status.py`, `demo.py`, `cli.py` | Installing hooks, health, the commands |

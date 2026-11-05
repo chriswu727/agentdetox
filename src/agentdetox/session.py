@@ -61,6 +61,11 @@ def _check(project: Path, mode: str) -> str:
         trusted = [cf for cf in files if str(cf.path) not in flagged]
     else:
         changes, all_findings = verify(files, roots)
+        # A recovery can leave flagged text already present in the checkpoint, invisible to a diff scan.
+        recovery_paths = review.pending_recovery_paths()
+        seen = {(f.doc_id, finding_id(f)) for f in all_findings}
+        all_findings += [f for f in scan_context([cf for cf in files if str(cf.path) in recovery_paths])
+                         if (f.doc_id, finding_id(f)) not in seen]
         accepted = review.accepted_versions()
         handled = review.handled_findings()
         findings = [f for f in allowlist.unsuppressed(all_findings) if f.severity == "high"

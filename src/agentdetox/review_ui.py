@@ -50,7 +50,7 @@ def _change(change_id: str) -> None:
     try:
         print(review.detail(change_id))
         while True:
-            choice = _read('a accept this version, d dismiss a finding, r preview recovery, b back: ')
+            choice = _read('a accept this version, d dismiss a finding, r restore, c clean selected lines, b back: ')
             if choice in ('b', 'q'):
                 return
             if choice == 'a':
@@ -70,7 +70,18 @@ def _change(change_id: str) -> None:
                 if _read(f'Restore the version before {change_id}? [y/N]: ') == 'y':
                     print(review.restore(change_id, apply=True))
                     return
+            elif choice == 'c':
+                print(review.render_cleanup(review.clean(change_id)))
+                selected = _read('Added line numbers (e.g. 3,5-7), or b back: ')
+                if selected in ('b', 'q'):
+                    continue
+                preview = review.clean(change_id, selected)
+                print(review.render_cleanup(preview))
+                if _read('Remove only these lines? [y/N]: ') == 'y':
+                    print(review.render_cleanup(review.clean(change_id, selected, apply=True,
+                                                             expected_hash=preview['current_hash'])))
+                    return
             else:
-                print('Choose a, d, r or b.')
+                print('Choose a, d, r, c or b.')
     except (ValueError, OSError, StoreError) as error:
         print(f'Action was not completed: {error}', file=sys.stderr)

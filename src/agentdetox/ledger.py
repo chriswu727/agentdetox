@@ -54,9 +54,12 @@ class Entry:
     spans: list[dict] = field(default_factory=list)
     review_state: str = "recorded"
     before_mode: int | None = None
+    cleanup: dict = field(default_factory=dict)
 
     def describe(self) -> str:
-        if self.origin == "copied":
+        if self.method == 'selective-removal':
+            what = 'selected lines removed by AgentDetox'
+        elif self.origin == "copied":
             what = f"copied by the agent from {self.source}" if self.source else "copied by the agent"
         else:
             what = {"you": "matches your message (text inference)", "agent": "written through the agent; content origin unknown",

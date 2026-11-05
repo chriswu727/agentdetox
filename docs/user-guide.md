@@ -128,6 +128,8 @@ agentdetox review C42                     # diff, evidence, and findings
 agentdetox review accept C42              # accept only this exact file version
 agentdetox review dismiss F7              # dismiss one finding; no permanent exception
 agentdetox restore C42                    # preview; add --apply to restore
+agentdetox clean C42                      # main only: list added lines for selective removal
+agentdetox clean C42 --lines 3,5-7         # main only: preview selected-line removal
 agentdetox review --since 7d               # recent context changes, including quiet activity
 agentdetox log                            # all recorded changes
 agentdetox blame ~/.claude/CLAUDE.md      # per-line attribution evidence
@@ -143,6 +145,32 @@ page. A project filter includes files under that project and its Claude auto-mem
 shared user-level rules remain in the unfiltered view. Historical records require no migration.
 Interactive review defaults to the current project; `--global` includes shared user rules and
 configuration. It asks before accepting or applying recovery.
+
+### Selective cleanup (on main, not yet released)
+
+Whole-version recovery can undo useful work. `agentdetox clean C42` instead lists lines added
+or replaced by that recorded change. Choose the unwanted lines with `--lines 3,5-7`; numbers
+refer to **C42's after-version**, even when later edits have shifted the current file's lines.
+The preview shows the exact current-to-cleaned diff. Apply with the full command it prints,
+including `--expected-hash` and `--apply`. Any file change after preview requires another preview.
+`--format json` provides the selection, mapped current lines, diff, file hash and backup path.
+In `review --interactive`, choose **c**, enter the line numbers, inspect the preview and confirm.
+
+Only the selected lines are removed. Other lines, including same-change additions and
+non-conflicting later edits, retain their bytes and line endings. Replaced old text is not
+reinstated; use whole-version restore when that is the intent. Removing every line leaves an
+empty file. Cleanup refuses selected lines that were modified or removed later, and repeated
+matches when later edits make their identity ambiguous. It supports UTF-8 memory, instructions
+and skills up to 1 MB and 10,000 lines; executable config, deleted files and symlinks require
+another recovery method. Selection is explicit: copied content is not automatically malicious.
+
+Applying uses the recovery journal, preserves current file permissions and quarantines the
+entire current version. The new history entry identifies the source change and selected lines;
+restoring that entry can undo the cleanup. The result is rescanned. Only pending rule findings
+on the source change that were present before cleanup and absent afterward are resolved;
+remaining rules and provenance or contradiction findings stay reviewable. Cleanup does not
+advance the trusted checkpoint or grant source exceptions. A result without rule findings is
+not proof of factual correctness or complete removal of poisoning.
 It requires a terminal; scripts use explicit id-based commands. Review JSON is a page object with
 `rows`, totals, state/operation counts and pagination metadata.
 
@@ -226,6 +254,8 @@ reports the removal.
   findings one at a time.
 - `restore C42` refuses once the file has changed again for any reason. `agent restore` then puts
   back the latest checkpoint, which already includes a settings change that was mentioned once.
+  On `main`, selective `clean` can remove unchanged added lines while preserving later edits;
+  it refuses overlap and ambiguous repeated matches and does not support executable config.
 - On Windows the shell checks understand Git Bash commands (`/c/...` paths, `agentdetox.exe`), not
   PowerShell or cmd.exe syntax.
 

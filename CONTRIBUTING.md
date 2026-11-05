@@ -39,7 +39,7 @@ CI (`.github/workflows/ci.yml`) runs on every pull request and push to `main`: U
 auditing dependencies, lint, types, the tests, and building and checking the distributions
 (`scripts/check_dist.py`). Each also runs `scripts/check_journey.py dist/*.whl`: a fresh wheel
 installation outside the checkout, registration and maintenance, real hook subprocesses, review,
-recovery and uninstall. The script may download normal package dependencies; it makes no model
+whole-version recovery, selective cleanup preserving later edits, and uninstall. The script may download normal package dependencies; it makes no model
 calls and does not validate real-client hook delivery. A Windows job runs the demo and the tests without blocking, since
 Windows support is still young.
 

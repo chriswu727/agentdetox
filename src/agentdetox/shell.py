@@ -272,7 +272,7 @@ def _changes_trust(args: list[str]) -> bool:
     sub = words[0] if words else ""
     rest = args[args.index(sub) + 1:] if sub else []
     applies = any(a.startswith('--') and '--apply'.startswith(a) for a in rest)
-    return bool((sub in ("history", "restore", "install") and applies) or sub == "health"
+    return bool((sub in ("history", "restore", "clean", "install") and applies) or sub == "health"
                 or (sub == "review" and (any(a in ("accept", "dismiss") for a in rest)
                     or any(a.startswith('--') and '--interactive'.startswith(a) for a in rest))) or sub == "uninstall"
                 or (sub == "allow" and any(a not in ("--list", "-h", "--help") for a in rest))
