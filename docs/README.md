@@ -11,7 +11,7 @@ limits; detailed references are maintained in English. Keep both READMEs aligned
 |---|---|
 | [Project home](../README.md) | Overview, quick start, current support and evidence |
 | [User guide](user-guide.md) | Installation, behavior, review commands, settings, upgrades, recovery and removal |
-| [Coverage and limits](user-guide.md#what-it-does-not-catch) | Shell boundaries, background writes, attribution and whole-version recovery |
+| [Coverage and limits](user-guide.md#what-it-does-not-catch) | Shell boundaries, background writes, attribution and recovery limits |
 | [Agent integrations](user-guide.md#other-agents) | Supported Claude Code integration and experimental alternatives |
 | [Privacy](../PRIVACY.md) | Local data, sensitive file copies, downloads, retention and deletion |
 | [Security](../SECURITY.md) | Threat model and private vulnerability reporting |

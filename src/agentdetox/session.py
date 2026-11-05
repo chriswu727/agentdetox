@@ -61,6 +61,11 @@ def _check(project: Path, mode: str) -> str:
         trusted = [cf for cf in files if str(cf.path) not in flagged]
     else:
         changes, all_findings = verify(files, roots)
+        # A recovery can leave flagged text already present in the checkpoint, invisible to a diff scan.
+        recovery_paths = review.pending_recovery_paths()
+        seen = {(f.doc_id, finding_id(f)) for f in all_findings}
+        all_findings += [f for f in scan_context([cf for cf in files if str(cf.path) in recovery_paths])
+                         if (f.doc_id, finding_id(f)) not in seen]
         accepted = review.accepted_versions()
         handled = review.handled_findings()
         findings = [f for f in allowlist.unsuppressed(all_findings) if f.severity == "high"
@@ -151,8 +156,13 @@ def _check(project: Path, mode: str) -> str:
     for path in list(dict.fromkeys(f.doc_id for f in findings))[:LISTED]:
         latest = ledger.entries(path, limit=1)
         if latest:
-            lines.append(f"Review the diff: `agentdetox review C{latest[0].id}`. "
-                         f"Preview recovery: `agentdetox restore C{latest[0].id}`; add --apply only after review.")
+            if latest[0].origin == 'restored':
+                lines.append(f"Review remaining findings: `agentdetox review C{latest[0].id}`. "
+                             "This is a recovery record; restoring it would undo that recovery and may reintroduce "
+                             "removed content. Inspect earlier changes with `agentdetox review` before further cleanup.")
+            else:
+                lines.append(f"Review the diff: `agentdetox review C{latest[0].id}`. "
+                             f"Preview recovery: `agentdetox restore C{latest[0].id}`; add --apply only after review.")
     if findings or conflicts:
         lines.append("Use review accept C<ID> for this exact version, or review dismiss F<ID> for one finding. "
                      "Neither grants a permanent source exception.")

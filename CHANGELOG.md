@@ -5,8 +5,22 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ## [Unreleased]
 
+### Added
+
+- Selective cleanup for memory, instructions and skills: list added lines with `clean C<ID>`,
+  preview an explicit `--lines` selection, then apply only against the previewed file hash.
+  Preserve other content and non-conflicting later edits; refuse changed, missing or ambiguous
+  selected lines. Terminal review offers the same preview and confirmation flow.
+- Cleanup preserves current permissions, quarantines the whole current file and records an
+  undoable recovery with the selected lines. Rescan the result, resolve only removed rule
+  findings and retain other evidence. Do not infer that copied text is malicious, advance a
+  trusted checkpoint, restore overwritten text or perform line surgery on executable config.
+
 ### Fixed
 
+- Keep unresolved high-severity recovery findings visible at session start even when the remaining
+  text was already in an accepted checkpoint and therefore absent from the incremental diff.
+  Recovery notices distinguish reviewing remaining risks from undoing the recovery itself.
 - Preserve other handlers and group settings when upgrading or removing AgentDetox hooks that
   share a group with user hooks. Rapid configuration updates keep distinct backups; temporary
   replacement files are private and cleaned up on failure.

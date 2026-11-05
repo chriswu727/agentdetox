@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated 2026-11-04. Current published release:
+Last updated 2026-11-05. Current published release:
 [0.4.0](https://github.com/chriswu727/agentdetox/releases/tag/v0.4.0). The
 [changelog](CHANGELOG.md) records releases; this document separates
 implemented capabilities from product hypotheses and future work.
@@ -36,7 +36,9 @@ Track these outcomes independently:
 - Normal use: wrong blocks, unnecessary questions and hook P95 latency against existing budgets.
 - Prevention and monitoring: per-family misses, including acknowledged gaps, and retained evidence.
 - Recovery: exact restored bytes, refusal to overwrite newer work, quarantine copies and residual
-  findings. Whole-version restoration can still undo benign additions in the same change.
+  findings. Whole-version restoration can still undo benign additions in the same change. On
+  `main`, explicit selected-line cleanup preserves unselected content and non-conflicting later
+  edits, with a preview hash, conflict refusal, quarantine and residual scanning.
 
 Block a release on a failed journey, a new regression or a hook error. Keep acknowledged semantic
 misses visible in every accuracy report; a passing regression gate is not a claim of complete
@@ -52,8 +54,9 @@ protection. Authored controls cannot establish a real-world false-positive rate.
   Keep the tuning set separate from future held-out tests; retain known misses in every report.
 - Evaluate paraphrased, delayed and mixed-source writes. Source similarity is evidence for review,
   not proof that content is malicious or that a specific person authored it.
-- Evaluate removal of contaminated spans while preserving benign edits. Current recovery restores
-  a whole recorded version; checking its rules does not establish factual correctness.
+- Implemented on `main`: explicit selected-line cleanup for memory, instructions and skills,
+  including later non-conflicting edits. Automatic selection and structural config cleanup are
+  not implemented; checking remaining rules does not establish factual correctness.
 - A plausible false fact needs trusted evidence to verify it. Do not promote uncertainty into an
   automatic block or describe the current local NLI model as a reliable factual judge.
 

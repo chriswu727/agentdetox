@@ -147,8 +147,9 @@ This rerun checks regressions; the targeted fixes do not improve the existing ag
 - Remember intent remains a bounded lexical heuristic. Mixed requests with different scopes,
   indirect phrasing and conditions need further evaluation; this is not a semantic consent parser.
 - Rollback is whole-version recovery. It can undo benign additions made in the same change; the
-  preview and stale-version guard remain essential. Precise removal of poisoned spans while
-  preserving later benign edits is not implemented.
+  preview and stale-version guard remain essential. On `main`, `clean` removes explicitly selected
+  added lines while preserving other content and non-conflicting later edits. Cleanup has dedicated
+  regression tests and a built-wheel journey; it does not automatically identify poisoned spans.
 - Recovery rescanning covers deterministic rules, not factual verification or contradiction/model
   checks. An empty scan is not a clean bill of health. In 0.4.0, the legacy checkpoint restore
   command uses the same journalled recovery

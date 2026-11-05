@@ -13,10 +13,10 @@ import uuid
 from collections import Counter
 from pathlib import Path
 
-from . import allowlist, events, ledger, storage
+from . import allowlist, cleanup, events, ledger, storage
 from .agentscan import scan_text
-from .context import classify, claude_memory_dir, display_path, short_path
-from .findings import printable
+from .context import classify, claude_memory_dir, display_path, is_hook_script, short_path
+from .findings import finding_id, printable
 from .integrity import (
     StoreError,
     baseline_entries,
@@ -170,7 +170,9 @@ def _summary(db, change_id: int) -> dict:
     change = db.execute('SELECT * FROM changes WHERE id=?', (change_id,)).fetchone()
     data = json.loads(change['data'])
     origin = data.get('origin', '')
-    if origin == 'copied' and data.get('source'):
+    if data.get('method') == 'selective-removal':
+        writer = 'selected lines removed by AgentDetox'
+    elif origin == 'copied' and data.get('source'):
         writer = f"copied by the agent from {data['source']}"
     elif origin == 'external' and data.get('method') == 'before-after':
         writer = 'during a shell command, writer unknown'
@@ -249,10 +251,17 @@ def detail(change_id: str) -> str:
     try:
         _check_current(row)
     except StoreError:
-        lines.append('STALE: the file no longer matches this change. Actions will refuse to overwrite newer work.')
+        lines.append('STALE: the file no longer matches this change. Accept and whole-version restore refuse newer work; '
+                     'selective cleanup requires unchanged, unambiguous selected lines.')
+    recovery_label = 'Preview undo of this recovery' if data.get('origin') == 'restored' else 'Preview recovery'
     lines += [f'Accept only this version: agentdetox review accept C{row["id"]}',
-              f'Preview recovery: agentdetox restore C{row["id"]}',
+              f'{recovery_label}: agentdetox restore C{row["id"]}',
+              f'Inspect added lines for selective cleanup: agentdetox clean C{row["id"]}',
               'Dismiss one finding: agentdetox review dismiss F<ID>. This grants no permanent exception.']
+    if data.get('cleanup'):
+        action = data['cleanup']
+        lines.append(f"Selective cleanup of C{action['change']}, recorded lines "
+                     + ','.join(map(str, action['lines'])) + '. Unselected content was preserved.')
     return '\n'.join(lines)
 
 
@@ -288,6 +297,15 @@ def accepted_versions() -> dict[str, str | None]:
         return {r['path']: r['accepted_hash'] for r in db.execute('SELECT path, accepted_hash FROM files WHERE accepted_change IS NOT NULL')} if db else {}
 
 
+def pending_recovery_paths() -> set[str]:
+    with storage.connection() as db:
+        if db is None:
+            return set()
+        rows = db.execute("""SELECT DISTINCT c.path FROM changes c JOIN findings f ON f.change_id=c.id
+            WHERE json_extract(c.data, '$.origin')='restored' AND f.status='pending' AND f.severity='high'""")
+        return {row['path'] for row in rows}
+
+
 def restore(change_id: str, apply: bool = False) -> str:
     with store_lock():
         row = get(change_id)
@@ -300,6 +318,74 @@ def restore(change_id: str, apply: bool = False) -> str:
             mode = baseline_entries().get(str(path), {}).get('mode', 0o600)
         backup = _recover(path, row['before_hash'], row['after_hash'], mode, residual, row['id'])
         return f'Restored {short_path(str(path))}. Backup: {backup or "file was absent"}.' + warning
+
+
+def clean(change_id: str, lines: str | None = None, *, apply: bool = False,
+          expected_hash: str | None = None) -> dict:
+    with store_lock():
+        row = get(change_id)
+        path = Path(row['path'])
+        kinds = {cf.kind for root in path.parents if (cf := classify(path, project=root)) is not None}
+        if not kinds or 'config' in kinds or is_hook_script(path):
+            raise ValueError('Selective cleanup supports memory, instructions and skills, not executable config; '
+                             'use restore or edit configuration with its own tool')
+        kind = next(k for k in ('memory', 'instructions', 'skill') if k in kinds)
+        if row['after_hash'] is None:
+            raise ValueError('A deleted-file change has no added lines to clean; use restore')
+        digest = _digest(path)
+        if digest is None:
+            raise StoreError('The file no longer exists; no cleanup was applied')
+        current = path.read_bytes()
+        if hashlib.sha256(current).hexdigest() != digest:
+            raise StoreError('File changed while preparing cleanup; preview it again')
+        if apply and (not lines or not expected_hash):
+            raise ValueError('Preview with --lines first, then use the printed --expected-hash and --apply command')
+        if expected_hash is not None and expected_hash != digest:
+            raise StoreError('File changed after the cleanup preview; preview it again before applying')
+        plan = cleanup.plan(_object_bytes(row['before_hash']), _object_bytes(row['after_hash']), current, lines)
+        target = plan.content.decode('utf-8')
+        residual, warning = _residual_text(path, target, kind)
+        result = dict(change=f'C{row["id"]}', path=str(path), current_hash=digest,
+                      added=[{'line': n, 'text': _cleanup_line(text)}
+                             for n, text in plan.added.items()],
+                      selected=plan.selected, current_lines=plan.current_lines,
+                      diff='\n'.join(printable(line) for line in difflib.unified_diff(
+                          [_cleanup_line(line) for line in cleanup.text_lines(current)],
+                          [_cleanup_line(line) for line in cleanup.text_lines(plan.content)],
+                          fromfile='current', tofile='after cleanup', lineterm='')),
+                      warning=warning, applied=False, backup=None)
+        if not apply:
+            return result
+        original_flags = {finding_id(f) for f in scan_text(str(path), str(path), current.decode('utf-8'), kind)}
+        remaining_flags = {finding_id(f) for f in scan_text(str(path), str(path), target, kind)}
+        backup = _recover(path, store_object(plan.content), digest, stat.S_IMODE(path.stat().st_mode), residual, None,
+                          cleanup_data={'change': row['id'], 'lines': plan.selected,
+                                        'resolved_flags': sorted(original_flags - remaining_flags)})
+        result.update(applied=True, backup=str(backup) if backup else None)
+        return result
+
+
+def _cleanup_line(line: bytes) -> str:
+    return line.decode('utf-8').removesuffix('\r\n').removesuffix('\n')
+
+
+def render_cleanup(data: dict) -> str:
+    lines = [f"Selective cleanup of {data['change']} · {short_path(data['path'])}"]
+    if data['applied']:
+        lines += [f"Removed selected lines. Backup: {data['backup']}.",
+                  'Unselected content was preserved. Review any remaining findings with `agentdetox review`.']
+    elif not data['selected']:
+        lines += ['Added or replaced lines in this recorded version (not current-file line numbers):']
+        lines += [f"{item['line']:>5}  {printable(item['text'])}" for item in data['added']]
+        lines += [f"Choose only unwanted lines: agentdetox clean {data['change']} --lines 3,5-7"
+                  if data['added'] else 'This change has no added lines to clean.']
+    else:
+        chosen = ','.join(map(str, data['selected']))
+        lines += [data['diff'],
+                  f"Apply this preview: agentdetox clean {data['change']} --lines {chosen} "
+                  f"--expected-hash {data['current_hash']} --apply"]
+    lines.append('Cleanup removes selected lines; it does not restore replaced text or certify safety.')
+    return '\n'.join(lines) + data['warning']
 
 
 def restore_trusted(path: Path) -> str:
@@ -327,8 +413,13 @@ def restore_trusted(path: Path) -> str:
 def _residual(path: Path, target_hash: str | None) -> tuple[list, str]:
     """Rule findings that the version being restored still has, and the warning saying so."""
     target = _object_text(target_hash)
-    cf = classify(path, project=path.parent)
-    kind = cf.kind if cf else 'config' if path.suffix in ('.json', '.toml') else 'memory'
+    return _residual_text(path, target)
+
+
+def _residual_text(path: Path, target: str, kind: str | None = None) -> tuple[list, str]:
+    if kind is None:
+        cf = classify(path, project=path.parent)
+        kind = cf.kind if cf else 'config' if path.suffix in ('.json', '.toml') else 'memory'
     residual = [f for f in allowlist.unsuppressed(scan_text(str(path), str(path), target, kind))
                 if f.severity in ('medium', 'high')]
     warning = ('\nWARNING: the recovery version still has rule findings: ' +
@@ -337,7 +428,7 @@ def _residual(path: Path, target_hash: str | None) -> tuple[list, str]:
 
 
 def _recover(path: Path, target_hash: str | None, current_hash: str | None, mode: int, residual: list,
-             change_id: int | None) -> Path | None:
+             change_id: int | None, *, cleanup_data: dict | None = None) -> Path | None:
     """Replace `path`, now `current_hash`, with the stored `target_hash` version: journalled,
     refused if the file changes meanwhile, the current version kept in quarantine, and the
     result recorded in the same transaction. Call with the store lock held."""
@@ -371,16 +462,29 @@ def _recover(path: Path, target_hash: str | None, current_hash: str | None, mode
             data = path.read_bytes() if path.exists() else None
             if (hashlib.sha256(data).hexdigest() if data is not None else None) != target_hash:
                 raise StoreError('File changed during recovery; inspect it and the backup')
-            entry = ledger.record(path, 'restored', current_hash, data, findings=residual)
+            fields = {'method': 'selective-removal', 'cleanup': cleanup_data, 'before_mode': mode} if cleanup_data else {}
+            entry = ledger.record(path, 'restored', current_hash, data, findings=residual, **fields)
             if entry is None:
                 raise StoreError('Could not record recovery')
             if change_id is not None:
                 db.execute("UPDATE changes SET review_state='restored' WHERE id=?", (change_id,))
                 db.execute("UPDATE findings SET status='restored' WHERE change_id=?", (change_id,))
+            if cleanup_data:
+                for flag in cleanup_data['resolved_flags']:
+                    db.execute("UPDATE findings SET status='restored' WHERE change_id=? AND flag_id=? AND status='pending'",
+                               (cleanup_data['change'], flag))
+                pending = db.execute("SELECT 1 FROM findings WHERE change_id=? AND status='pending'",
+                                     (cleanup_data['change'],)).fetchone()
+                if not pending:
+                    db.execute("UPDATE changes SET review_state='restored' WHERE id=? AND review_state='pending'",
+                               (cleanup_data['change'],))
+                storage.append_event(db, {'ts': entry.ts, 'event': 'cleanup_applied', 'path': str(path),
+                                          'change': f"C{cleanup_data['change']}", 'lines': cleanup_data['lines'],
+                                          'recovery': f'C{entry.id}'})
             checkpoint = db.execute('SELECT checkpoint FROM files WHERE path=?', (str(path),)).fetchone()
             if target_hash is None:
                 db.execute('UPDATE files SET checkpoint=NULL WHERE path=?', (str(path),))
-            elif checkpoint and checkpoint[0] and not any(f.severity == 'high' for f in residual):
+            elif not cleanup_data and checkpoint and checkpoint[0] and not any(f.severity == 'high' for f in residual):
                 value = json.loads(checkpoint[0])
                 assert data is not None
                 value['sha256'] = store_object(data)
@@ -428,15 +532,19 @@ def prune(older_than: str, apply: bool = False) -> dict:
 
 
 def _object_text(digest: str | None) -> str:
+    return _object_bytes(digest).decode('utf-8', errors='replace')
+
+
+def _object_bytes(digest: str | None) -> bytes:
     if digest is None:
-        return ''
+        return b''
     path = store_dir() / 'objects' / digest
     if not path.is_file():
         raise StoreError(f'Missing content object {digest}; cannot show a reliable diff')
     data = path.read_bytes()
     if hashlib.sha256(data).hexdigest() != digest:
         raise StoreError(f'Corrupt content object {digest}; cannot show a reliable diff')
-    return data.decode('utf-8', errors='replace')
+    return data
 
 
 def acknowledge_recovery(operation_id: str) -> None:

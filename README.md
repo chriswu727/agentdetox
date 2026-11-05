@@ -120,6 +120,13 @@ agentdetox restore C42 --apply           # back up the current file and restore
 grant permanent trust to a source. Recovery restores a **whole recorded version**, which can also
 undo benign additions. For a newly added config entry, removing it with the tool that added it
 is often preferable to restoring the whole settings file.
+
+**On `main`, not yet in the published 0.4.0 package:** `agentdetox clean C42` lists added lines.
+Use `agentdetox clean C42 --lines 3,5-7` to preview removing only the lines you selected from
+memory, instructions or skills, while keeping other content and non-conflicting later edits.
+Run the exact apply command printed by that preview; a changed file invalidates it. Cleanup
+backs up the current file and rescans the result. It does not automatically select copied text,
+restore overwritten text or judge factual correctness. The terminal review also offers this action.
 [Review, settings and recovery details →](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#day-to-day)
 
 <a id="what-it-does-not-catch"></a>
