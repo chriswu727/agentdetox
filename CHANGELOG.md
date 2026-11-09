@@ -5,6 +5,11 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ## [Unreleased]
 
+### Documentation
+
+- Link the interactive walkthrough and clarify selective cleanup alongside whole-version recovery.
+  Update the user guide to reflect that selective cleanup is available in 0.4.1.
+
 ## [0.4.1] - 2026-11-05
 
 ### Added

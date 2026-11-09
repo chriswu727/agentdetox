@@ -4,7 +4,7 @@
 
 # AgentDetox
 
-### Check what your agent saves. See what changed. Recover what was there.
+### Protect your agent's memory: block known-risk writes, detect suspicious changes, and clean up unwanted instructions.
 
 Protection for the memory, instructions, skills and config your coding agent trusts across sessions.
 
@@ -13,7 +13,7 @@ Protection for the memory, instructions, skills and config your coding agent tru
 [![Python](https://img.shields.io/pypi/pyversions/agentdetox)](https://pypi.org/project/agentdetox/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/chriswu727/agentdetox/blob/main/LICENSE)
 
-[Quick start](#quick-start) · [How it works](#how-it-works) · [Evidence](#evidence-and-limits) · [Documentation](https://github.com/chriswu727/agentdetox/blob/main/docs/README.md)
+[Quick start](#quick-start) · [How it works](#how-it-works) · [Evidence](#evidence-and-limits) · [Documentation](https://github.com/chriswu727/agentdetox/blob/main/docs/README.md) · [Interactive demo](https://yichenwu.dev/projects/agentdetox)
 
 **English (primary)** · [简体中文](https://github.com/chriswu727/agentdetox/blob/main/README.zh-CN.md)
 
@@ -23,7 +23,8 @@ Protection for the memory, instructions, skills and config your coding agent tru
 
 A poisoned page can become tomorrow's memory. An install script can change `CLAUDE.md` while
 your agent is busy elsewhere. AgentDetox checks writes to persistent context, records changes
-with source evidence, and lets you review and restore earlier versions.
+with source evidence, and lets you remove selected added lines or restore an earlier version,
+with a backup either way.
 
 **0.4.1 is published** on [PyPI](https://pypi.org/project/agentdetox/0.4.1/) and
 [GitHub](https://github.com/chriswu727/agentdetox/releases/tag/v0.4.1).
@@ -100,7 +101,8 @@ before recording recovery checkpoints. [Installation, upgrades and removal →](
 3. **At session start:** reconcile changes made outside the agent. Flagged content is reported
    until reviewed. Newly added runnable settings are mentioned once and stay in review.
 4. **When you review:** inspect the diff and evidence, accept that exact version, dismiss a finding,
-   or restore the version before a change. Recovery checks for newer edits and backs up the current file.
+   remove selected added lines, or restore the version before a change. Recovery checks for newer
+   edits and backs up the current file.
 
 Watched Claude context includes `CLAUDE.md`, parent instructions, auto memory, rules, skills,
 subagents, commands, output styles, hook scripts, settings and MCP config.
