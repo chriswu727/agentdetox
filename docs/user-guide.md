@@ -128,8 +128,8 @@ agentdetox review C42                     # diff, evidence, and findings
 agentdetox review accept C42              # accept only this exact file version
 agentdetox review dismiss F7              # dismiss one finding; no permanent exception
 agentdetox restore C42                    # preview; add --apply to restore
-agentdetox clean C42                      # main only: list added lines for selective removal
-agentdetox clean C42 --lines 3,5-7         # main only: preview selected-line removal
+agentdetox clean C42                      # list added lines for selective removal
+agentdetox clean C42 --lines 3,5-7         # preview selected-line removal
 agentdetox review --since 7d               # recent context changes, including quiet activity
 agentdetox log                            # all recorded changes
 agentdetox blame ~/.claude/CLAUDE.md      # per-line attribution evidence
