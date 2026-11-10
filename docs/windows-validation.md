@@ -1,5 +1,23 @@
 # Native Windows development validation, 2026-11-09
 
+## Phase 1 CI follow-up
+
+The [CI run for runtime 6339eef](https://github.com/chriswu727/agentdetox/actions/runs/42769544127)
+passed both Linux jobs and macOS, but Windows reported `StoreLocked` in the existing
+`test_concurrent_writers_do_not_lose_entries`: one failure, 983 passes and 39 skips.
+The eight-process test, lock timeout, snapshot implementation and store implementation were
+unchanged from `de3aefc`. This failed invocation remains evidence; no timeout or assertion was
+relaxed. A subsequent full CI run is required before merge.
+
+A native reproduction attempt used an isolated source archive under the auxiliary Windows
+host's temporary folder. It could not start: the existing `C:\src\agentdetox\.venv` Python
+trampoline reported a missing child interpreter, and `uv python find` rejected a managed-runtime
+mount point. No native test result was obtained and the existing checkout was not changed.
+The earlier completed native measurements below remain historical results, not proof that the
+current SSH environment is ready. The temporary diagnostic archive contains repository code only.
+
+## Earlier native run
+
 This is a native Windows run, not WSL and not a reinterpretation of the November 5 macOS
 results. The checkout was freshly cloned to `C:\src\agentdetox`; fetch confirmed main at
 `f2165e6` before the changes on `windows-development`. No existing checkout or Mac `uv.lock`

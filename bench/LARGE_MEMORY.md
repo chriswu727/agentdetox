@@ -29,6 +29,20 @@ capabilities. The existing hook budgets and frozen accuracy galleries remain sep
 
 ## Product acceptance, before claiming scale support
 
+The first Mac baseline on runtime `6339eef` is retained in the
+[1k report](results/scale-1000-2026-11-09.json) and
+[10k report](results/scale-10000-2026-11-09.json). Both regression gates pass; their 50 and 500
+seeded unsupported-fact cases remain known misses. The 100k tier has not been measured.
+
+| Files | Total bytes | Full rule scan | Process peak RSS |
+|---|---:|---:|---:|
+| 1,000 | 1,088,690 | 0.80 s | 22.5 MB |
+| 10,000 | 41,880,640 | 29.67 s | 25.2 MB |
+
+These are small-file, repeated-template fixtures on a shared development host, with no NLI or
+cleanup. The reports record exact sizes, corpus hashes and family results. They establish a
+reproducible starting point; production support still requires the following work.
+
 - Test 1k, 10k and 100k files with byte distributions, long individual files, many statements,
   duplicate notes, many unrelated projects, and English/Chinese controls. Record disk usage,
   peak RSS, CPU time, throughput and cancellation latency, not just elapsed time.

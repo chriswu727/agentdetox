@@ -1,5 +1,25 @@
 # Hook latency
 
+## Phase 1 Mac gate, 2026-11-09
+
+The [complete report](results/hooks-phase1-2026-11-09.json) measures runtime `6339eef`,
+100 samples per case and the original budgets: **12/12 pass**. It includes interpreter startup,
+durable shell observation, large transcripts and concurrent writes. No tests, builds or other
+benchmarks were launched alongside this run; this is still a shared development Mac.
+
+| Case | P95 ms | Budget ms |
+|---|---:|---:|
+| Ordinary Bash pre/post pair | 107.9 | 200 |
+| Bash pair, 1000 active + 1000 unrelated files | 213.1 | 350 |
+| Startup, 1000 unchanged files | 123.2 | 250 |
+| Four 100-line writes plus Bash pair | 256.0 | 1000 |
+| NLI queue frontend, 1000 files, fake submit | 81.4 | 250 |
+
+The fake-submit case excludes durable queue filesystem I/O and model inference. These measurements
+do not include the real Claude client's complete startup or the plugin's `uvx` fallback. They are
+not a paired causal comparison against an earlier build. Windows latency failures below remain
+unresolved; a Mac pass does not establish Windows performance.
+
 ## Windows filesystem and import follow-up, 2026-11-09
 
 The [alternating comparison](results/hooks-windows-io-paired-2026-11-09.json) uses

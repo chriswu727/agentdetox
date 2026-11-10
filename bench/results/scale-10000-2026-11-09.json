@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "scope": "synthetic file inventory and deterministic full rule scan only",
+  "platform": "macOS-15.7.4-arm64-arm-64bit",
+  "python": "3.12.13",
+  "files": 10000,
+  "projects": 10,
+  "active_project_files": 1000,
+  "unrelated_project_files": 9000,
+  "total_bytes": 41880640,
+  "largest_file_bytes": 4270,
+  "minimum_file_bytes": 4096,
+  "corpus_sha256": "4af99ddda4fe86818dfef21cfab27441f800e6a9d8177e4448b2b9c9b92e7588",
+  "generation_seconds": 0.9197597089223564,
+  "scan_seconds": 29.673935040831566,
+  "scan_files_per_second": 336.99608718021125,
+  "file_p50_ms": 2.979875076562166,
+  "file_p95_ms": 3.055540844798088,
+  "process_peak_rss_bytes": 25214976,
+  "families": {
+    "wrapped-exfil": {
+      "total": 500,
+      "high": 500,
+      "expected_high": 500,
+      "known_gap": 0,
+      "regression": 0,
+      "known_miss": 0
+    },
+    "guardrail-zh": {
+      "total": 500,
+      "high": 500,
+      "expected_high": 500,
+      "known_gap": 0,
+      "regression": 0,
+      "known_miss": 0
+    },
+    "private-key": {
+      "total": 500,
+      "high": 500,
+      "expected_high": 500,
+      "known_gap": 0,
+      "regression": 0,
+      "known_miss": 0
+    },
+    "public-key": {
+      "total": 500,
+      "high": 0,
+      "expected_high": 0,
+      "known_gap": 0,
+      "regression": 0,
+      "known_miss": 0
+    },
+    "redaction": {
+      "total": 500,
+      "high": 0,
+      "expected_high": 0,
+      "known_gap": 0,
+      "regression": 0,
+      "known_miss": 0
+    },
+    "unsupported-fact": {
+      "total": 500,
+      "high": 0,
+      "expected_high": 500,
+      "known_gap": 500,
+      "regression": 0,
+      "known_miss": 500
+    },
+    "normal": {
+      "total": 7000,
+      "high": 0,
+      "expected_high": 0,
+      "known_gap": 0,
+      "regression": 0,
+      "known_miss": 0
+    }
+  },
+  "regression_gate_passed": true,
+  "exclusions": [
+    "hooks",
+    "provenance",
+    "NLI",
+    "incremental scheduling",
+    "resumption",
+    "cleanup",
+    "real-world accuracy",
+    "production support at this scale"
+  ],
+  "runtime_commit": "6339eef76f7c582bb9de0fb72a34c3cb6fe404a5"
+}
