@@ -22,6 +22,9 @@ was overwritten. No model dependencies or weights were installed.
 
 - `scripts/check.py`: ruff and mypy pass; **875 passed, 31 skipped** on native Windows.
   Existing OS-specific/NLI skips remain; no new skip or relaxed assertion was added.
+  A first CI run then exposed the other platform's `msvcrt` type-stub restriction on Linux/macOS;
+  both optional lock modules now use runtime imports. Native, `--platform linux` and
+  `--platform darwin` mypy checks pass; the failed CI run remains in GitHub history.
 - `agentdetox demo`, dependency audit, release-version consistency, and both Claude manifest
   validations pass. Claude's plugin-directory advisory reports a missing optional catalog icon;
   manifest validation itself succeeds.
@@ -93,3 +96,14 @@ cmd.exe write syntax is not supported. Windows NLI still uses background workers
 resident Unix-socket service; no real NLI inference was validated. Existing semantic gaps remain.
 Absolute macOS latency budgets are not Windows guarantees; native measurements are recorded
 separately in [HOOK_LATENCY.md](../bench/HOOK_LATENCY.md).
+The initial native suite passes 5/12 budgets and fails 7/12, with all concurrency evidence
+assertions passing. An alternating 100-sample-per-version startup comparison also exceeds the
+100 ms budget on both old main and the candidate (P95 193.0 / 188.4 ms). Performance work remains;
+these results do not turn the migration into a completed Windows performance acceptance.
+
+## Delivery state
+
+[PR #46](https://github.com/chriswu727/agentdetox/pull/46) is a draft while real-client
+acceptance and the latency limits above remain unresolved. No release was made. The host's
+existing real settings, login and AgentDetox history were not replaced with Mac data, and all
+hook registration/uninstallation checks so far used isolated homes and stores.

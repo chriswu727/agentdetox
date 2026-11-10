@@ -1,5 +1,50 @@
 # Hook latency
 
+## Native Windows development measurement, 2026-11-09
+
+The [first native Windows suite](results/hooks-windows-2026-11-09.json) used Windows 11
+build 26200, Ryzen 9 9900X3D, CPython 3.12.16, 100 samples per case and the same budgets.
+**5/12 passed; 7/12 exceeded budget.** No budget was increased. These are development-host
+measurements, with other applications and some migration checks active during the run;
+they are not Windows performance guarantees. The fixture uses Windows native newlines,
+so its repeated transcript is 3,889,974 bytes rather than the macOS fixture's 3,889,915.
+
+| Case | P50 ms | P95 ms | Budget ms | Result |
+|---|---:|---:|---:|---|
+| Ordinary Bash pre | 207.5 | 237.6 | 100 | fail |
+| Ordinary Bash pre + post | 377.5 | 447.6 | 200 | fail |
+| Protected Edit pre, 50k history | 174.0 | 193.1 | 120 | fail |
+| Protected Write pre, repeated large transcript | 181.2 | 188.2 | 200 | pass |
+| Protected Write post, 100 lines, repeated transcript | 218.5 | 229.6 | 500 | pass |
+| Protected Write pre, 29 distinct large sources | 225.0 | 249.5 | 200 | fail |
+| Protected Write post, 100 lines, 29 sources | 303.7 | 339.8 | 500 | pass |
+| Four concurrent Write posts plus Bash pre/post | 511.6 | 550.6 | 1000 | pass |
+| SessionStart, 1000 unchanged files | 384.3 | 418.9 | 250 | fail |
+| SessionStart, 100 changed / 1000 files | 1275.3 | 1673.1 | 1000 | fail |
+| Bash pair, 1000 active + 1000 unrelated memory files | 752.8 | 801.7 | 350 | fail |
+| NLI queue frontend, no inference | 213.5 | 234.8 | 250 | pass |
+
+The concurrency case completed all evidence/health assertions: four recorded writes, no
+`hook_error` or `shell_unobserved`. The NLI case uses a fake queue; no model was installed or run.
+The suite overlapped development of the platform import/type fix; it is an initial migration
+measurement, not an exact-final-commit release gate.
+
+An [alternating startup comparison](results/hooks-windows-paired-2026-11-09.json) then used
+the same interpreter and isolated empty project/store, importing either pristine `f2165e6`
+source or candidate `a99c185` through `PYTHONPATH`. Import locations were checked, one untimed
+call preceded 100 samples per version, and order alternated each iteration. Ordinary Bash pre
+P50/P95 was **173.5/193.0 ms baseline**, **174.1/188.4 ms candidate**. Both exceed 100 ms; this
+supports no corresponding startup regression from the migration, but does not clear the failed
+budget or establish the cause of every slow case. All individual timings are retained.
+
+An import-time diagnostic attributed about 135 ms to importing the hook module and its
+dependencies on this host. Twenty empty interpreter launches had P50/P95 30.8/35.2 ms.
+This points to startup/import work as a useful next investigation; it is not a validated
+engine optimization or evidence that Windows antivirus should be disabled. Large-file-set I/O
+also needs separate profiling. Real-client latency and `uvx` download/startup remain unmeasured.
+
+## Earlier macOS reference measurements
+
 Latest recorded suite: [0.4.1 release candidate, 2026-11-05](#041-release-candidate-2026-11-05). These are dated reference measurements, not timings of
 every later commit or of a full Claude plugin launch. They exclude `uvx` startup and downloads.
 
