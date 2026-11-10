@@ -190,8 +190,12 @@ def journey(wheel: Path, completed: list[str]) -> None:
         assert note.read_bytes() == inspected, 'Library cleanup preview changed the file'
         edited = inspected + '预览之后的修改。\n'.encode()
         note.write_bytes(edited)
-        stale = cli('clean', target, '--lines', '2', '--expected-hash', preview['current_hash'], '--apply', expected=2)
-        assert 'after the cleanup preview' in stale.stderr, 'Library cleanup accepted a stale preview'
+        stale_args = ('clean', target, '--lines', '2', '--expected-hash', preview['current_hash'])
+        stale = cli(*stale_args, expected=2)
+        assert 'after the cleanup preview' in stale.stderr, f'Unexpected stale-preview result: {stale.stderr}'
+        refused = cli(*stale_args, '--apply', expected=2)
+        reason = 'not supported on this system' if os.name == 'nt' else 'after the cleanup preview'
+        assert reason in refused.stderr, f'Unexpected cleanup refusal: {refused.stderr}'
         assert 'changed since' in cli('clean', target, '--lines', '2', expected=2).stderr, \
             'Library cleanup previewed a version that was never inspected'
         assert note.read_bytes() == edited, 'A refused library cleanup changed the file'
