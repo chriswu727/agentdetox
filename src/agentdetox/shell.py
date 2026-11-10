@@ -105,6 +105,18 @@ def literal_printf(command: str) -> tuple[str, str, str] | None:
     return match['target'].strip("'"), body, executable
 
 
+def literal_heredoc(command: str) -> tuple[str, str, str] | None:
+    match = re.match(
+        r"\A[ \t]*cat[ \t]+(?P<redirect>>{1,2})[ \t]*(?P<target>'[^'\n]+'|[A-Za-z0-9_./~-]+)"
+        r"[ \t]+<<(?P<quote>['\"])(?P<end>[A-Za-z_][A-Za-z0-9_]*)(?P=quote)[ \t]*\n"
+        r"(?P<body>[\s\S]*?)\n(?P=end)(?=\n|$)", command,
+    )
+    if not match:
+        return None
+    executable = 'cat ' + match['redirect'] + ' ' + match['target'] + command[match.end():]
+    return match['target'].strip("'"), match['body'] + '\n', executable
+
+
 def _segments(tokens: list[str]) -> list[tuple[list[str], list[str]]]:
     """Each simple command, with the files its output redirections write."""
     out: list[tuple[list[str], list[str]]] = []

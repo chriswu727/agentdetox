@@ -136,7 +136,7 @@ def check_command(command: str, project: Path, cwd: Path | None = None) -> list[
     if context:
         analyzed = command
         findings = []
-        literal = shell.literal_printf(command)
+        literal = shell.literal_printf(command) or shell.literal_heredoc(command)
         if literal:
             target, body, executable = literal
             cf = classify(shell.resolve(target, cwd), project=project)
