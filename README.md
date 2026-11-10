@@ -32,6 +32,8 @@ The project is in **preview**: Claude Code is supported; Codex and Cursor hooks 
 OpenClaw has tamper detection only. Development supports native Windows with Python 3.12 and
 Git Bash, alongside macOS/Linux. Windows offline validation covers the installed-wheel lifecycle;
 real-client and sustained daily-use validation remain separate. See [Windows evidence](docs/windows-validation.md).
+Native Windows latency measurements still exceed several existing budgets; the
+[performance record](bench/HOOK_LATENCY.md) retains failures and paired optimization results.
 
 <p align="center">
 <picture>

@@ -1,5 +1,38 @@
 # Hook latency
 
+## Windows filesystem and import follow-up, 2026-11-09
+
+The [alternating comparison](results/hooks-windows-io-paired-2026-11-09.json) uses
+`647c081` as the pre-optimization baseline, the same CPython 3.12.16 interpreter, separate
+temporary stores, shared synthetic files, 100 samples per version/case, and one untimed
+warmup. Every Bash event has a tool-use id, so it includes durable shell observation.
+The order alternates each sample. Imported source locations and unchanged source hashes
+are checked; the report retains every timing and the candidate source hash/diff hash.
+No tests, builds, or other benchmarks were launched alongside this measurement, although
+this remains a shared development host rather than a controlled reference machine.
+
+| Case | Baseline P50/P95 ms | Candidate P50/P95 ms | P95 budget ms |
+|---|---:|---:|---:|
+| Ordinary Bash pre, one context file | 190.3 / 199.2 | 178.3 / 187.1 | 100: both fail |
+| Bash pair, 1000 active + 1000 unrelated memory files | 743.6 / 778.8 | 616.3 / 645.8 | 350: both fail |
+
+The measured P95 reductions are about 6% and 17%, respectively. Neither failure is a pass.
+This comparison does not isolate the contribution of each change: directory creation now
+checks whether the directory exists first, still repairing permissions on every call, and
+ordinary hooks defer NLI transport imports. Checkpoint verification also hashes and scans
+one captured byte sequence, skipping text decoding for unchanged files. It does not use
+file size or timestamps as evidence that content is unchanged, cache trust across hooks,
+relax commit-time version checks, or add a resident service.
+
+Reproduce against a chosen baseline with:
+
+```powershell
+.\.venv\Scripts\python.exe -X utf8 -m bench.hook_revision_compare --baseline 647c081 --samples 100 --output bench/results/local-paired.json
+```
+
+The earlier Windows startup-only comparison below uses a different fixture and is not a
+direct numerical baseline for this run. All earlier failures remain retained.
+
 ## Native Windows development measurement, 2026-11-09
 
 The [first native Windows suite](results/hooks-windows-2026-11-09.json) used Windows 11

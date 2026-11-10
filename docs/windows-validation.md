@@ -75,6 +75,28 @@ bytes while requiring every other byte to remain unchanged. Both failures remain
 A newly added archive regression test caught same-timestamp collisions on Windows. Unique ids
 now supplement UTC timestamps; earlier failed lab attempts cannot be overwritten by reruns.
 
+## Performance follow-up
+
+The first bounded optimization avoids repeatedly attempting to create existing store
+directories, while still repairing their permissions; delays optional NLI transport imports;
+and hashes/scans one captured read during checkpoint verification. Unchanged files are not
+decoded or reopened by that comparison. Full content reads and commit-time version checks
+remain in place; no daemon, metadata-only trust cache, budget change, or detector change was added.
+
+Native checks after the runtime changes: ruff and mypy pass; **882 tests pass, 31 existing
+skips**. Seven new cases cover deferred imports with actual hook decisions, same-size and
+same-timestamp tampering with LF/CRLF/CR, and a file changing after the first verification read.
+The last case fails against `647c081` for an existing checkpoint and passes with this fix:
+the old second read can match the checkpoint after the first read already observed an attack.
+Initial new hook tests omitted the temporary user-home override; review caught that isolation
+error, the override was added, and all 14 entry-point/read-verification tests passed again.
+Those initial runs are excluded from claims about isolated user-home validation.
+
+The [paired performance report](../bench/results/hooks-windows-io-paired-2026-11-09.json)
+records ordinary Bash pre P95 199.2 → 187.1 ms and the 1000-active-file Bash pair
+778.8 → 645.8 ms. Both remain above their unchanged budgets. See
+[measurement details](../bench/HOOK_LATENCY.md) for the comparison method and limits.
+
 ## Real Claude usage and remaining limits
 
 The prior authorization was 20 real acceptance sessions, with 13 already used on November 5
@@ -82,9 +104,11 @@ according to the retained lab reports and their accounting in `lab/README.md`. T
 work has used **0 acceptance sessions**, leaving **7**. CLI version/help/auth/manifest commands
 make no model calls. Independent Claude review has also used 0 sessions.
 
-Real Windows acceptance and independent Claude review are pending a login usable by the
-standalone CLI. A desktop login was confirmed, but does not by itself make the lab's independent
-CLI authenticated. Once available, run the five selected scenarios with an explicit cap:
+Real Windows acceptance is pending a login usable by the standalone CLI. Desktop Claude Code
+is logged in and existing project sessions work; that does not authenticate independently launched
+CLI processes. Independent desktop review has not started: selecting this new repository prompted
+for workspace trust, which is separate from login. No review request or model call was sent.
+Once the lab CLI is available, run the five selected scenarios with an explicit cap:
 
 ```powershell
 .\.venv\Scripts\python.exe -X utf8 -m lab.run remember edit-instructions safety-guidance postinstall-tamper long-context-write --arms agentdetox --jobs 1 --max-sessions 5 --keep

@@ -30,6 +30,8 @@ Claude Code 是受支持的集成，Codex 和 Cursor 钩子属于实验功能，
 开发环境支持原生 Windows（Python 3.12 + Git Bash）以及 macOS/Linux。
 Windows 已完成安装包生命周期的本机离线验证；真实客户端验收和长期日常使用验证分别记录，
 详见 [Windows 验证记录](docs/windows-validation.md)。
+原生 Windows 的延迟实测仍有多项超出既定预算；[性能记录](bench/HOOK_LATENCY.md)
+保留失败数据和优化前后的交替对照结果。
 
 <p align="center">
 <picture>

@@ -13,6 +13,9 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
   wheel lifecycle through Git Bash, including space/Unicode paths and mixed line endings.
 - Make lab executable discovery, hook quoting, UTF-8 decoding and nested file outcome paths
   portable. Archive every run without overwriting failures and retain timeout outcomes.
+- Reduce repeated Windows filesystem work by checking existing storage directories before
+  creating them, while still repairing permissions. Hash unchanged files without decoding
+  or reopening them, and load the NLI transport only when used.
 
 ### Fixed
 
@@ -21,6 +24,8 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
   endings. Frozen case content and expected labels are unchanged.
 - Type-check platform lock imports on Windows and exercise deep-path recovery without
   depending on the host's system-wide long-path policy.
+- Hash and scan the same captured bytes when comparing context with its checkpoint. A file
+  changing between separate text/hash reads can no longer hide the version just observed.
 
 ### Documentation
 
