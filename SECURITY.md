@@ -52,6 +52,15 @@ Out of scope; see the [full limitations](docs/user-guide.md#what-it-does-not-cat
 - **Hooks fail open.** If AgentDetox itself errors, the agent's action proceeds, and `doctor` and
   `status` show the failure. A security tool that broke every tool call would be uninstalled.
 - **Nothing is deleted.** A restore moves the current file to `~/.agentdetox/quarantine`.
+- **Recovery cannot be pointed elsewhere by swapping a folder** (development `main`, macOS and
+  Linux). `restore` and `clean` open the folder holding the file without following links the
+  user could repoint, and read, back up and replace through that open folder; a path through
+  such a link is refused. This does not stop a program running as the user from changing the
+  same file in that folder at the last moment, and Windows only checks the path before and after.
+- **A library scan reads, it does not trust.** `agentdetox library` inspects one folder the
+  user names. The name given is resolved once, when the folder is first scanned, and that
+  resolved folder is the library; no link found inside it is followed (links are counted). A
+  scan records no checkpoint and never reports a file as clean.
 - **The store is private.** `~/.agentdetox` is created 0700 and its files 0600.
 - **No imports from the project.** Background processes and the `python -m` hook fallback start
   Python with `-I`, so a repository cannot plant an `agentdetox` package for the hook to import.

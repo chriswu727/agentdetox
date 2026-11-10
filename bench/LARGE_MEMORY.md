@@ -27,6 +27,34 @@ hooks, source attribution, the dense NLI candidate matrix, a background scan sch
 checkpoint changes, resumability or large-store recovery. Passing it cannot establish those
 capabilities. The existing hook budgets and frozen accuracy galleries remain separate gates.
 
+## End-to-end library harness
+
+On development `main`, `agentdetox library` implements the file inventory described below.
+A second harness drives it through the library module, in one process and a temporary store:
+
+```bash
+.venv/bin/python -m bench.library_eval --files 1000 --output /tmp/library-1000.json
+.venv/bin/python -m bench.library_eval --files 10000 --minimum-bytes 4096 --output /tmp/library-10000.json
+.venv/bin/python -m bench.library_eval --files 100000 --minimum-bytes 4096 --output /tmp/library-100000.json
+```
+
+It reuses the generator above and adds files that must not be inspected (over 1 MB, not
+UTF-8, another extension, symbolic links). It then runs, in order: a first full scan; an
+unchanged incremental scan; an incremental scan after 1% of files were appended to; a scan
+with unreadable and deleted files; a full scan cancelled half-way; and its resumption. Each
+phase records elapsed and CPU seconds, rule scans actually run, coverage counts and peak RSS;
+the report adds a hash of the corpus as first written (relative paths and content, independent
+of location and time), the inventory size per file, the bytes of content copied into the store
+(which must be zero), per-family outcomes and the retained unsupported-fact misses. Its checks are contracts,
+not budgets: the unchanged run executes no rule scan, the changed run rescans exactly the
+changed files, unreadable files are failed and deleted ones missing, and the cancelled run is
+continued to full coverage rather than restarted.
+
+It does **not** measure hooks while a scan runs, the detached worker, process kills (covered
+by tests, not timed), cleanup, real libraries or any false-positive rate, and it runs on one
+filesystem. No result of this harness is recorded here yet: measurements are to be taken in
+isolation and added with their raw reports. The 100k tier has not been run.
+
 ## Product acceptance, before claiming scale support
 
 The first Mac baseline on runtime `6339eef` is retained in the

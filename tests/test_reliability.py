@@ -82,30 +82,30 @@ def test_invalid_recovery_copy_never_moves_current_file(context, damage):
 def test_backup_and_replace_failures_leave_original(context, monkeypatch):
     from pathlib import Path
 
-    from agentdetox import integrity
+    from agentdetox import safefs
 
     _, _, path = context
     path.write_text('current')
-    original = integrity.write_private
+    original = safefs.write_new
 
-    def fail_backup(target, data):
-        if target.name == 'content':
+    def fail_backup(target, data, *args, **kwargs):
+        if Path(target).name == 'content':
             raise OSError('disk full')
-        return original(target, data)
+        return original(target, data, *args, **kwargs)
 
     with monkeypatch.context() as m:
-        m.setattr(integrity, 'write_private', fail_backup)
+        m.setattr(safefs, 'write_new', fail_backup)
         with pytest.raises(OSError):
             restore(path)
     assert path.read_text() == 'current'
-    original_replace = Path.replace
+    original_replace = os.replace
 
-    def fail_replace(self, target):
-        if self.name.startswith('.agentdetox-restore-'):
+    def fail_replace(source, target, **kwargs):
+        if Path(source).name.startswith('.agentdetox-restore-'):
             raise OSError('replace failed')
-        return original_replace(self, target)
+        return original_replace(source, target, **kwargs)
 
-    monkeypatch.setattr(Path, 'replace', fail_replace)
+    monkeypatch.setattr(os, 'replace', fail_replace)
     with pytest.raises(OSError):
         restore(path)
     assert path.read_text() == 'current'

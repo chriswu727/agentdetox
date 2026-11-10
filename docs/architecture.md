@@ -65,7 +65,7 @@ failure retains it with bounded retries. Missing models leave waiting work rathe
 success. A restart adopts legacy jobs and drains the saved queue. Delivery is at least once:
 diagnostic contradiction events can repeat after a crash, while ledger findings are upserted.
 `doctor`/`status` expose failed, waiting and stalled work. Explicit retry restarts a worker that
-left an I/O-blocked job queued. This protects queued checks; it is not yet a large-library scan scheduler.
+left an I/O-blocked job queued. This queue carries contradiction checks only; library inspection keeps its own run state (below).
 
 ## Modules
 
@@ -86,6 +86,8 @@ left an I/O-blocked job queued. This protects queued checks; it is not yet a lar
 | `daemon.py` | The model server (Unix socket), or a job queue where there is none (Windows) |
 | `background.py` | Durable job files, attempts, retention and background health |
 | `integrity.py` | Snapshot store: baseline, content-addressed copies, verify, restore, quarantine, locking |
+| `safefs.py` | File access through an opened folder, so a swapped parent cannot redirect recovery, cleanup or library reads |
+| `library.py` | Inspection of a chosen folder of memory files: durable runs, inventory, review, exact-version cleanup |
 | `storage.py` | SQLite schema, transactional legacy migration, indexed metadata and references |
 | `review.py` | Diff, exact-version accept, finding dismissal, recovery journal and retention |
 | `cleanup.py` | Explicit added-line selection and conflict-checked mapping onto current text |
@@ -108,10 +110,67 @@ in doctor with its intended hashes and backup path. File updates and database co
 one OS transaction; the journal exposes that gap rather than hiding it. External processes do not
 honor the store lock, so recovery rechecks the observed hash before replacing a file.
 
+On POSIX, recovery and cleanup open the folder holding the target once, component by component
+and without following a link the user could repoint, and do every later read, the temporary
+file, the rename and the delete through that open folder. The quarantine copy is written the
+same way below the store, and the folder it was written to must still be the one its path names
+before the target is touched. A target folder that is moved or replaced meanwhile is detected
+after the rename and reported as a failed operation; the write stays in the folder that was
+opened. There is no compare-and-swap: another program of the same user can change the file in
+that folder between the last hash check and the rename. Windows has no directory descriptors
+in Python, so the same checks are made on the path before and after each step.
+
 Checkpoints, observed versions and explicit user acceptance are separate fields. An automatic
 checkpoint is recoverable state, not proof of user intent. Finding dismissal is specific to a
 change and never grants permanent source trust. History retention is opt-in and preserves pending
 findings, accepted versions, the latest per-file record and content needed for recovery.
+
+## Library inspection
+
+`agentdetox library` inspects one folder the user names. Its state is `library.sqlite3`, apart
+from `state.sqlite3`: every write to the latter takes `store.lock`, which hooks wait on, and a
+scan commits thousands of batches. A scan never takes that lock, records no checkpoint and
+stores no file content. No hook, and no part of session start, loads the module or opens the
+file; `agentdetox status` reads a few counts from it.
+
+```
+library scan DIR
+   │  prepare   under library.lock: the root (path and filesystem identity), the run row
+   ▼            (mode, detector), the root folder queued for listing
+enumerate      folders with todo=1 are listed through the opened root, no link followed;
+   │           entries are saved in chunks, a folder is "listed" only with its last entry
+   ▼
+inspect        files with todo=1: open beneath the root, read at most 1 MB, check the file
+   │           did not change or get replaced meanwhile, hash; rules run only when the hash
+   ▼           or detector differs from the recorded conclusion; results commit per batch
+reconcile      entries absent from a folder listed to its end in this run become missing;
+               files below an unlisted folder keep their rows and are shown stale
+```
+
+The frontier (folders to list) and the queue (files to verify) are rows, so a killed process
+loses the batch in hand and redoing it is idempotent; per-folder counters are saved only with
+the folder's last entry, so relisting counts nothing twice. One process holds `library.lock`;
+the system releases it when the process dies. A detached worker (`--background`) is the same
+code started with `python -I -m agentdetox library _worker <run>`. Cancellation is a flag on
+the run row, read between files and listing chunks. The root's path must keep naming the
+folder that was opened: this is checked before every batch is recorded and before a run
+completes. Relative paths read back from the inventory are validated before use.
+
+A conclusion is bound to the SHA-256 of the bytes one read captured and to a detector id:
+the release, the limits, and the source text of the rule modules, of `library.py` and of
+`safefs.py` (text only, so timestamps and a checkout's line endings do not change it).
+Findings store the flag id, rule, severity, message, an excerpt and a line hint: at most 50
+per file. Cleanup of a library file (`clean M<ID>`) reads and plans without the store lock,
+then takes it, rechecks the file, the inventory row and the root, and runs the same
+journalled recovery as `clean C<ID>` through a folder pinned beneath the root. A pin used for
+selective cleanup carries the 1 MB limit, and every read through it (the preview, the check
+under the lock, and each check inside the recovery) refuses a larger file before loading it;
+whole-version restore uses a pin without a limit. After a cleanup the row holds the cleaned
+bytes' hash and findings, no inspecting run, and `cleanup_run`: the latest run, for which the
+conclusion counts as current. The row also stops waiting, and a scan batch records a file only
+if the row still holds the version seen when the batch picked it up, so a batch that read the
+earlier bytes cannot write over a finished cleanup. A later scan verifies the cleaned bytes by
+hash like any other.
 
 ## Distribution
 

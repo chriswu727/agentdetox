@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -70,7 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     p_restore.add_argument("id")
     p_restore.add_argument("--apply", action="store_true", help="apply the previewed recovery")
     p_clean = sub.add_parser("clean", help="preview removal of selected added lines, preserving later edits")
-    p_clean.add_argument("id")
+    p_clean.add_argument("id", help="a recorded change (C42) or an inspected library file (M42)")
     p_clean.add_argument("--lines", help="line numbers in the recorded version, e.g. 3,5-7; omit to list added lines")
     p_clean.add_argument("--expected-hash", help="current-file hash printed by the cleanup preview")
     p_clean.add_argument("--apply", action="store_true", help="apply the preview; requires --lines and --expected-hash")
@@ -103,6 +104,29 @@ def main(argv: list[str] | None = None) -> int:
     p_scan.add_argument("--min-clique", type=int, default=3)
     p_scan.add_argument("--fail-on", choices=["low", "medium", "high", "none"], default="high",
                         help="exit 1 if any finding is at least this severe (default: high)")
+
+    p_library = sub.add_parser("library", help="inspect a folder of memory files you choose: inventory, scan, review")
+    lsub = p_library.add_subparsers(dest="library_command", required=True, metavar="action")
+    l_scan = lsub.add_parser("scan", help="list the folder and inspect files that changed since they were inspected")
+    l_scan.add_argument("target", help="the folder, or the id of a library scanned before (L1)")
+    l_scan.add_argument("--full", action="store_true", help="inspect every file again, not only changed ones")
+    l_scan.add_argument("--restart", action="store_true",
+                        help="abandon an unfinished run and start a new one; nothing it verified counts")
+    l_scan.add_argument("--background", action="store_true", help="scan in a detached worker and return")
+    l_scan.add_argument("--format", choices=["text", "json"], default="text")
+    l_status = lsub.add_parser("status", help="coverage and progress of each library, or of one")
+    l_status.add_argument("target", nargs="?")
+    l_status.add_argument("--format", choices=["text", "json"], default="text")
+    l_review = lsub.add_parser("review", help="list a library's files by state, or show one file (M42)")
+    l_review.add_argument("target", nargs="?", help="a folder, a library id (L1) or a file id (M42)")
+    l_review.add_argument("--state", choices=library_states(), default="suspicious")
+    l_review.add_argument("--page", type=int, default=1)
+    l_review.add_argument("--page-size", type=int, default=20)
+    l_review.add_argument("--format", choices=["text", "json"], default="text")
+    l_cancel = lsub.add_parser("cancel", help="stop an unfinished scan after the file in hand; it can be continued")
+    l_cancel.add_argument("target")
+    l_worker = lsub.add_parser("_worker")  # no help: started by scan --background
+    l_worker.add_argument("run", type=int)
 
     p_trace = sub.add_parser("trace", help="find which passages likely caused a wrong answer")
     corpus_args(p_trace)
@@ -192,6 +216,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command in ("review", "restore", "clean", "export", "health", "history"):
         try:
             return _review_command(args)
+        except (ValueError, OSError, StoreError) as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+    if args.command == "library":
+        try:
+            return _library(args)
         except (ValueError, OSError, StoreError) as e:
             print(f"error: {e}", file=sys.stderr)
             return 2
@@ -658,6 +688,117 @@ def _print_trace(rows, fmt: str) -> None:
 
 
 
+def library_states() -> tuple[str, ...]:
+    # The states are the inventory's; the module is loaded only for library commands.
+    return ("suspicious", "low", "stale", "queued", "uninspected", "failed", "missing", "inspected")
+
+
+@contextlib.contextmanager
+def _stop_requested():
+    """A function saying whether Ctrl-C or a termination signal arrived, so that a scan
+    stops after the file in hand and saves what it verified."""
+    import signal
+    import threading
+
+    flag = threading.Event()
+    previous = {}
+    for name in ("SIGINT", "SIGTERM"):
+        with contextlib.suppress(ValueError, OSError, AttributeError):
+            previous[getattr(signal, name)] = signal.signal(getattr(signal, name), lambda *_: flag.set())
+    try:
+        yield flag.is_set
+    finally:
+        for number, handler in previous.items():
+            with contextlib.suppress(ValueError, OSError):
+                signal.signal(number, handler)
+
+
+def _scan_progress():
+    import time
+
+    last = [time.monotonic()]
+
+    def report(**info) -> None:
+        now = time.monotonic()
+        if now - last[0] < 2.0:
+            return
+        last[0] = now
+        text = (f"listing folders: {info['folders']:,} done" if info["phase"] == "enumerate" else
+                f"verifying files: {info['done']:,} of {info['total']:,}")
+        print(f"agentdetox library: {text}", file=sys.stderr, flush=True)
+
+    return report
+
+
+def _library(args) -> int:
+    from . import library
+
+    command = args.library_command
+    if command == "_worker":
+        with library.runner_lock(wait=library.LOCK_PATIENCE) as held:
+            if not held:
+                print("agentdetox library: another scan holds the library lock; this worker did not start",
+                      file=sys.stderr)
+                return 2
+            with _stop_requested() as stop:
+                state = library.run(args.run, stop=stop)
+        print(f"agentdetox library: run {args.run} {state}", file=sys.stderr)
+        return 0
+    if command == "cancel":
+        print(library.cancel(args.target))
+        return 0
+    if command == "status":
+        rows = library.status(args.target)
+        print(json.dumps(rows, ensure_ascii=False, indent=2) if args.format == "json" else library.render_status(rows))
+        return 0
+    if command == "review":
+        target = args.target
+        if target is None:
+            known = library.status()
+            if len(known) != 1:
+                raise ValueError("Name the library to review: a folder, L<ID>, or a file M<ID> "
+                                 "(`agentdetox library status` lists them)")
+            target = known[0]["id"]
+        if target[:1] in ("M", "m") and target[1:].isdigit():
+            data = library.detail(target)
+            print(json.dumps(data, ensure_ascii=False, indent=2) if args.format == "json" else library.render_detail(data))
+        else:
+            data = library.page(target, args.state, args.page, args.page_size)
+            print(json.dumps(data, ensure_ascii=False, indent=2) if args.format == "json" else library.render_page(data))
+        return 0
+    state = "prepared"
+    with library.runner_lock(wait=library.LOCK_PATIENCE) as held:
+        if not held:
+            raise StoreError("A library scan is already running. `agentdetox library status` shows its progress; "
+                             "`agentdetox library cancel <folder>` stops it")
+        run = library.prepare(args.target, full=args.full, restart=args.restart)
+        what = (f"Continuing run {run['run']} ({run['mode']})" if run["resumed"] else
+                f"Run {run['run']} ({run['mode']})") + f" of library {run['root']} · {short_path(run['path'])}"
+        if not args.background:
+            print(what, file=sys.stderr, flush=True)
+            with _stop_requested() as stop:
+                state = library.run(run["run"], progress=_scan_progress(), stop=stop)
+    if args.background:
+        started, detail = library.start_background(run["run"])
+        if not started:
+            print(f"error: {detail}. Run {run['run']} is saved: after fixing the cause, continue it with "
+                  f"`agentdetox library scan {run['root']}`.", file=sys.stderr)
+            return 1
+        if args.format == "json":
+            print(json.dumps({**run, "background": True, "worker": detail}, ensure_ascii=False, indent=2))
+        else:
+            print(f"{what} is scanning in the background ({detail}).\n"
+                  f"Progress: agentdetox library status {run['root']}\nStop: agentdetox library cancel {run['root']}")
+        return 0
+    rows = library.status(run["root"])
+    print(json.dumps(rows, ensure_ascii=False, indent=2) if args.format == "json" else library.render_status(rows))
+    if state == "cancelled":
+        print(f"Stopped before the end. What was verified is kept; continue with `agentdetox library scan "
+              f"{run['root']}`.", file=sys.stderr)
+        return 3
+    return 0
+
+
 def _review_command(args) -> int:
     if args.command == 'review' and args.interactive:
         if args.action or args.id or args.format == 'json':
@@ -675,7 +816,12 @@ def _review_command(args) -> int:
     elif args.command == "restore":
         print(review.restore(args.id, args.apply))
     elif args.command == "clean":
-        result = review.clean(args.id, args.lines, apply=args.apply, expected_hash=args.expected_hash)
+        if args.id[:1] in ("M", "m"):
+            from . import library
+
+            result = library.clean(args.id, args.lines, apply=args.apply, expected_hash=args.expected_hash)
+        else:
+            result = review.clean(args.id, args.lines, apply=args.apply, expected_hash=args.expected_hash)
         print(json.dumps(result, ensure_ascii=False, indent=2) if args.format == 'json' else review.render_cleanup(result))
     elif args.command == "export":
         for entry in ledger.entries():

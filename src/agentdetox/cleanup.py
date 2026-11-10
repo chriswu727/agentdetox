@@ -52,14 +52,23 @@ def selection(value: str, limit: int) -> list[int]:
 
 def plan(before: bytes, after: bytes, current: bytes, lines: str | None = None) -> Plan:
     old, recorded, now = (text_lines(data) for data in (before, after, current))
-    added = {j + 1: recorded[j]
-             for tag, _, _, start, end in difflib.SequenceMatcher(None, old, recorded, autojunk=False).get_opcodes()
-             if tag in ('insert', 'replace') for j in range(start, end)}
+    # Comparing line by line is quadratic in repeated lines. The two cases that need no
+    # comparison (nothing before; the file still is the recorded version) are answered
+    # directly, which is every cleanup of a library file.
+    if not old:
+        added = {j + 1: line for j, line in enumerate(recorded)}
+    else:
+        added = {j + 1: recorded[j]
+                 for tag, _, _, start, end in difflib.SequenceMatcher(None, old, recorded, autojunk=False).get_opcodes()
+                 if tag in ('insert', 'replace') for j in range(start, end)}
     selected = selection(lines, len(recorded)) if lines is not None else []
     if any(n not in added for n in selected):
         raise ValueError('Select only lines added or replaced by this change; existing lines cannot be removed')
-    mapping = {i + 1: j + 1 for block in difflib.SequenceMatcher(None, recorded, now, autojunk=False).get_matching_blocks()
-               for i, j in zip(range(block.a, block.a + block.size), range(block.b, block.b + block.size))}
+    if current == after:
+        mapping = {n: n for n in range(1, len(recorded) + 1)}
+    else:
+        mapping = {i + 1: j + 1 for block in difflib.SequenceMatcher(None, recorded, now, autojunk=False).get_matching_blocks()
+                   for i, j in zip(range(block.a, block.a + block.size), range(block.b, block.b + block.size))}
     if any(n not in mapping for n in selected):
         raise StoreError('Selected lines were edited or removed later; inspect the current file and latest change')
     if current != after:

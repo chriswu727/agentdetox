@@ -278,8 +278,9 @@ def _agentdetox_args(words: list[str]) -> list[str] | None:
 
 def changes_agentdetox(tokens: list[str], depth: int = 0) -> bool:
     """An agentdetox call that changes what it trusts: allowing an id, changing a
-    setting, (un)installing, snapshot or restore. Reading commands, and `install`
-    without --apply, which only shows the change, stay free."""
+    setting, (un)installing, snapshot or restore, or stopping or discarding a library
+    inspection. Reading commands, and `install` without --apply, which only shows the
+    change, stay free."""
     for words, _ in _segments(tokens):
         body = _unwrap(words)
         if not body:
@@ -307,7 +308,9 @@ def _changes_trust(args: list[str]) -> bool:
                     or any(a.startswith('--') and '--interactive'.startswith(a) for a in rest))) or sub == "uninstall"
                 or (sub == "allow" and any(a not in ("--list", "-h", "--help") for a in rest))
                 or (sub == "config" and len(words) >= 3)
-                or (sub == "agent" and words[1:2] in (["snapshot"], ["restore"])))
+                or (sub == "agent" and words[1:2] in (["snapshot"], ["restore"]))
+                or (sub == "library" and (words[1:2] == ["cancel"] or any(
+                    a.startswith('--') and '--restart'.startswith(a) for a in rest))))
 
 
 def _commands(tokens: list[str]) -> list[tuple[list[str], list[str], str | None, str | None, int]]:

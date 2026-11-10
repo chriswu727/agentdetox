@@ -165,9 +165,10 @@ which remain visible in `doctor` and `status`. Code running as your user can alt
 
 Source matching is evidence of copied text, not proof of malicious intent or human authorship.
 An empty rescan does not certify a file as safe.
-Large-library inspection and recovery are being developed against a separate
-[scale protocol](https://github.com/chriswu727/agentdetox/blob/main/bench/LARGE_MEMORY.md);
-the proposed 1k/10k/100k tiers are not current production-support guarantees.
+On development `main`, `agentdetox library` inspects an existing folder of memory files and
+cleans reviewed lines; it is measured against a separate
+[scale protocol](https://github.com/chriswu727/agentdetox/blob/main/bench/LARGE_MEMORY.md),
+whose 1k/10k/100k tiers are not current production-support guarantees.
 [Full limitations](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#what-it-does-not-catch) ·
 [Threat model](https://github.com/chriswu727/agentdetox/blob/main/SECURITY.md)
 
@@ -185,6 +186,10 @@ store, including `objects/`, and review retention before deleting history.
   [Integration matrix](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#other-agents).
 - **Contradiction checks:** optional local NLI, recorded in the background by default because of
   false positives. [Setup and limits](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#contradiction-detection-experimental).
+- **Existing memory libraries (development `main`):** `agentdetox library scan <folder>` inventories
+  a folder you choose, inspects its text files with the per-file rules, resumes after interruption
+  and never calls a file clean; `clean M<ID>` removes reviewed lines with a backup.
+  [Library guide](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#inspecting-a-library-of-memory-files).
 - **RAG knowledge bases:** `agentdetox scan` for hidden instructions and suspicious passage clusters;
   `trace` ranks leads behind a wrong answer. [Scanner guide](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#also-scanning-a-rag-knowledge-base).
 

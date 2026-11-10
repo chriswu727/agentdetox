@@ -533,50 +533,97 @@ def _restore(path: Path) -> Path | None:
     return restore_object(path, entry["sha256"], entry.get("mode", 0o600))
 
 
-def restore_object(path: Path, digest: str, mode: int = 0o600, expected: str | None | bool = False,
-                   quarantine_dir: Path | None = None) -> Path | None:
-    if path.is_symlink():
-        raise StoreError(f"Cannot restore a symbolic link: {path}")
-    if expected is not False:
-        actual = _sha(path.read_bytes()) if path.exists() else None
-        if actual != expected:
-            raise StoreError(f"{path} changed since review; recovery was not applied")
-    obj = store_dir() / "objects" / digest
+def quarantine_copy(operation: str, data: bytes, source: Path | str) -> Path:
+    """Keep `data`, the current content of `source`, in the quarantine folder named
+    `operation`, and read it back. Written through opened folders where the system allows,
+    so replacing a quarantine folder with a link cannot send the copy elsewhere. An
+    existing copy is never overwritten."""
+    from . import safefs
+
+    if Path(operation).name != operation or operation in ("", ".", ".."):
+        raise StoreError(f"Invalid quarantine folder name: {operation}")
+    store = private_dir(store_dir())
+    folder = store / "quarantine" / operation
+    manifest = json.dumps({"content": str(source)}).encode()
+    if sys.platform == "win32" or not safefs.PINNED:
+        private_dir(folder)
+        safefs.write_new(folder / "content", data)
+        if safefs.read_all(folder / "content", None, len(data)) != data:
+            raise StoreError(f"Could not verify quarantine copy for {source}")
+        safefs.write_new(folder / "manifest.json", manifest)
+        return folder / "content"
+    fd = safefs.open_path(Path(os.path.realpath(store)), system_links=False)
+    if fd is None:
+        raise StoreError(f"{store} disappeared; no quarantine copy was made")
     try:
-        data = obj.read_bytes()
-    except OSError as e:
-        raise StoreError(f"Cannot read recovery copy for {path}: {e}") from e
-    if _sha(data) != digest:
-        raise StoreError(f"Recovery copy for {path} failed its integrity check")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, name = tempfile.mkstemp(prefix=".agentdetox-restore-", dir=path.parent)
-    tmp = Path(name)
-    quarantined = None
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
-        os.chmod(tmp, mode & 0o777)
-        if path.exists():
-            current = path.read_bytes()
-            qdir = private_dir(quarantine_dir or store_dir() / "quarantine" / uuid.uuid4().hex)
-            quarantined = qdir / "content"
-            write_private(quarantined, current)
-            with quarantined.open("r+b") as f:
-                os.fsync(f.fileno())
-            if quarantined.read_bytes() != current:
-                raise StoreError(f"Could not verify quarantine copy for {path}")
-            write_private(qdir / "manifest.json", json.dumps({"content": str(path)}).encode())
-            if path.is_symlink() or path.read_bytes() != current:
-                raise StoreError(f"{path} changed during restore; review it again")
-        if path.is_symlink():
-            raise StoreError(f"{path} became a symbolic link during recovery")
-        if expected is not False and (_sha(path.read_bytes()) if path.exists() else None) != expected:
-            raise StoreError(f"{path} changed during recovery; original was left in place")
-        tmp.replace(path)
+        for name in ("quarantine", operation):
+            with contextlib.suppress(FileExistsError):
+                os.mkdir(name, 0o700, dir_fd=fd)
+            following = safefs.open_dir(name, fd)
+            os.close(fd)
+            fd = following
+            os.fchmod(fd, 0o700)
+        safefs.write_new("content", data, fd)
+        if safefs.read_all("content", fd, len(data)) != data:
+            raise StoreError(f"Could not verify quarantine copy for {source}")
+        safefs.write_new("manifest.json", manifest, fd)
+        # The journal names the copy by path: that path must still be the folder written to.
+        named = safefs.open_path(Path(os.path.realpath(store)) / "quarantine" / operation, system_links=False)
+        try:
+            if named is None or not os.path.samestat(os.fstat(named), os.fstat(fd)):
+                raise StoreError(f"The quarantine folder for {source} was moved or replaced while its backup "
+                                 "was written; the original was left in place")
+        finally:
+            if named is not None:
+                os.close(named)
     finally:
-        tmp.unlink(missing_ok=True)
+        os.close(fd)
+    return folder / "content"
+
+
+def restore_object(path: Path, digest: str, mode: int = 0o600, expected: str | None | bool = False,
+                   quarantine_dir: Path | None = None, pin=None) -> Path | None:
+    """Replace `path` with the stored `digest`, keeping what was there in quarantine. All
+    of it goes through one pinned folder (see safefs); `pin` is the caller's, when it has
+    already read the file through one."""
+    from . import safefs
+
+    if quarantine_dir is not None and quarantine_dir.parent != store_dir() / "quarantine":
+        raise StoreError(f"{quarantine_dir} is not a quarantine folder of this store")
+    with contextlib.ExitStack() as stack:
+        if pin is None:
+            pin = stack.enter_context(safefs.pinned(path))
+        if pin.is_link():
+            raise StoreError(f"Cannot restore a symbolic link: {path}")
+        if expected is not False:
+            before = pin.read()
+            if (_sha(before) if before is not None else None) != expected:
+                raise StoreError(f"{path} changed since review; recovery was not applied")
+        obj = store_dir() / "objects" / digest
+        try:
+            # A pin with a read limit takes a replacement no larger than what it may read back.
+            data = safefs.read_all(obj, None, pin.limit)
+        except OSError as e:
+            raise StoreError(f"Cannot read recovery copy for {path}: {e}") from e
+        if _sha(data) != digest:
+            raise StoreError(f"Recovery copy for {path} failed its integrity check")
+        temp = pin.stage(data, mode)
+        quarantined = None
+        try:
+            current = pin.read()
+            if current is not None:
+                quarantined = quarantine_copy(quarantine_dir.name if quarantine_dir else uuid.uuid4().hex, current, path)
+            if pin.is_link():
+                raise StoreError(f"{path} became a symbolic link during recovery")
+            if pin.read() != current:
+                raise StoreError(f"{path} changed during restore; review it again")
+            if expected is not False and (_sha(current) if current is not None else None) != expected:
+                raise StoreError(f"{path} changed during recovery; original was left in place")
+            pin.commit(temp)
+        except BaseException:
+            pin.discard(temp)
+            raise
+        pin.verify()
     return quarantined
 
 

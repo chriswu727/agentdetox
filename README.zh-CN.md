@@ -146,8 +146,8 @@ AgentDetox 提供检查和恢复，**不构成安全边界，也不验证事实�
   四路并发写入加 Bash 前后检查 **491.0 ms**。[方法、原始数据和预算](bench/HOOK_LATENCY.md)。
 
 来源匹配只能提供文本复制证据，不能证明恶意意图或作者身份。恢复后扫描没有发现，也不能证明文件安全。
-大型记忆库的检查和清理正在按照独立的[规模验收标准](bench/LARGE_MEMORY.md)推进；
-规划中的 1 千、1 万、10 万文件档位并非当前生产支持承诺。
+开发分支 `main` 上的 `agentdetox library` 可检查已有的记忆文件夹并清理经审核的行，
+按照独立的[规模验收标准](bench/LARGE_MEMORY.md)测量；其中 1 千、1 万、10 万文件档位并非当前生产支持承诺。
 [完整限制（英文）](docs/user-guide.md#what-it-does-not-catch) · [威胁模型（英文）](SECURITY.md)
 
 ### 本地处理，历史记录仍需保护
@@ -160,6 +160,9 @@ AgentDetox 提供检查和恢复，**不构成安全边界，也不验证事实�
 
 - **其他智能体：**Codex、Cursor 的实验性钩子，以及 OpenClaw 篡改检测。[集成矩阵（英文）](docs/user-guide.md#other-agents)。
 - **矛盾检测：**可选本地 NLI，因仍有误报，默认在后台记录。[配置与限制（英文）](docs/user-guide.md#contradiction-detection-experimental)。
+- **已有记忆库（开发分支 `main`）：**`agentdetox library scan <文件夹>` 为你指定的文件夹建立清单，
+  用逐文件规则检查其中的文本文件，中断后可继续，且从不把文件报告为“干净”；`clean M<ID>` 删除经审核的行并保留备份。
+  [记忆库指南（英文）](docs/user-guide.md#inspecting-a-library-of-memory-files)。
 - **RAG 知识库：**`agentdetox scan` 检查隐藏指令和可疑段落簇；`trace` 为错误答案提供排查线索排序。[扫描器指南（英文）](docs/user-guide.md#also-scanning-a-rag-knowledge-base)。
 
 ## 文档与开发

@@ -157,3 +157,42 @@ slash and surrounding punctuation but does not assume different schemes or hosts
 Ambiguous references may still prompt.
 The same scoped result is used in source attribution metadata. Paraphrases and semantic intent
 remain outside this rule's guarantees.
+
+## ADR 19: Recover through an opened folder, and refuse replaceable links
+
+A path names whatever its folders point at when it is used. `restore` and `clean` checked the
+file's hash and then wrote by path, so a parent folder swapped for a link to a folder holding
+a file with the same bytes received the write (reproduced). On POSIX the folder holding the
+target is now opened once, one component at a time with no-follow opens, and the read, the
+temporary file, the rename and the delete all go through it; the quarantine copy is written
+the same way and its folder verified before the target is touched. A link in the path is
+followed only when the current user cannot repoint it (owned by root, in a root-owned folder
+others cannot write, as `/tmp` on macOS or `/home` on some Linux systems); when running as
+root no link is followed. Trade-off: files recorded under a path that passes through the
+user's own link (a linked project folder, a linked `~/.claude`) can no longer be restored or
+cleaned through AgentDetox, where they could before. Recording the resolved location with
+each change would allow them safely and is the alternative if this proves too strict. The
+operating system offers no compare-and-swap for a file: a same-user program can still change
+the file inside the opened folder between the last check and the rename, and Windows gets
+path checks before and after instead of an opened folder.
+
+## ADR 20: Library inspection is an inventory bound to bytes, apart from the hook store
+
+Inspecting an existing folder of memory is separate from watching changes. Its state is its
+own SQLite file so that a long scan never holds the lock hooks wait on, and it stores
+metadata only: no content copies at scan time, at most 50 findings per file. A conclusion is
+bound to the hash of the bytes read and to a detector id, which is derived from the source of
+the rules and of the inspection code rather than maintained by hand; every run reads and hashes every
+candidate, because size and modification time do not prove content. Nothing is ever called
+clean: a file is inspected at those bytes, or visibly queued, not inspected, failed, stale or
+missing, and a listing error never becomes a deletion. Only one extension set is inspected
+and everything else is counted. One runner at a time, with folders to list and files to
+verify kept as rows, gives crash recovery without a scheduler; a continued run keeps its
+mode and detector. Cleanup applies to the exact inspected version only, through the existing
+journal, quarantine and history, so it needs no stored copy of the flagged version; after
+any edit the library is scanned again first. A scan trusts nothing and writes no checkpoint,
+and session start does not read the inventory, so historical findings never interrupt a
+session. Trade-offs: an unchanged library still costs a full read per scan; false positives
+are silenced with the global allowlist because there is no per-file dismissal; rules that
+need context (contradictions, duplicates, source attribution) do not run; applying a cleanup
+is refused on Windows, where the folder cannot be held open.
