@@ -263,13 +263,13 @@ def test_inventory_rows_cannot_name_anything_outside_the_root(root, tmp_path):
     for bad in ("../outside.md", str(tmp_path.resolve() / "outside.md"), "sub//x.md", "./note.md", "a/../note.md", ""):
         with pytest.raises(ValueError):
             library._parts(bad)
-    with sqlite3.connect(library.db_path()) as db:
+    with contextlib.closing(sqlite3.connect(library.db_path())) as db, db:
         db.execute("UPDATE files SET rel='../outside.md', todo=1")
     with pytest.raises(ValueError, match="Invalid relative path"):
         library.clean("M1", "1")
     with library.runner_lock():
         job = library.prepare(root)
-        with sqlite3.connect(library.db_path()) as db:
+        with contextlib.closing(sqlite3.connect(library.db_path())) as db, db:
             db.execute("UPDATE runs SET phase='inspect' WHERE id=?", (job["run"],))
             db.execute("UPDATE files SET todo=1")
         library.run(job["run"])
@@ -280,7 +280,7 @@ def test_inventory_rows_cannot_name_anything_outside_the_root(root, tmp_path):
 def test_a_newer_or_foreign_inventory_is_refused(root):
     (root / "note.md").write_bytes(BENIGN)
     scan(root)
-    with sqlite3.connect(library.db_path()) as db:
+    with contextlib.closing(sqlite3.connect(library.db_path())) as db, db:
         db.execute(f"PRAGMA user_version={library.VERSION + 1}")
     with pytest.raises(StoreError, match="newer AgentDetox"):
         library.status()
@@ -454,7 +454,7 @@ def test_resume_keeps_the_runs_mode_and_detector(root, monkeypatch):
             library.prepare(root)
         with pytest.raises(StoreError, match="is cancelled"):
             library.run(1)
-        with sqlite3.connect(library.db_path()) as db:
+        with contextlib.closing(sqlite3.connect(library.db_path())) as db, db:
             db.execute("UPDATE runs SET state='active'")
         with pytest.raises(StoreError, match="different detector"):
             library.run(1)
@@ -670,7 +670,7 @@ def test_cleanup_rechecks_file_and_inventory_under_the_lock_before_the_journal(r
     path.write_bytes(BENIGN + POISON)
 
     def rescanned_meanwhile(*args):
-        with sqlite3.connect(library.db_path()) as db:
+        with contextlib.closing(sqlite3.connect(library.db_path())) as db, db:
             db.execute("UPDATE files SET verified_run=verified_run, state='failed'")
         return plan(*args)
 
