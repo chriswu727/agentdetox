@@ -1,0 +1,11 @@
+{
+  "scope": "built wheel, registered hook subprocesses and CLI; not real-client hook delivery",
+  "model_calls": 0,
+  "python": "3.12.16",
+  "platform": "Windows",
+  "wheel": "agentdetox-0.4.1-py3-none-any.whl",
+  "sha256": "1cde9576ff9df94bb130a27451afdf45ebad2023a15f0899146c3b93719622ce",
+  "completed": [],
+  "passed": false,
+  "error": "AssertionError: Package imported outside the fresh environment"
+}

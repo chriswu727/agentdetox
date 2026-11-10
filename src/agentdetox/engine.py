@@ -14,7 +14,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import allowlist, daemon, events, ledger, shell, storage
+from . import allowlist, events, ledger, shell, storage
 from .agentscan import read_text, scan_text
 from .allowlist import Flag, contradiction_flag, copy_flag, finding_flag, source_id
 from .consistency import (
@@ -320,6 +320,8 @@ def record_in_background(cf: ContextFile, old: str, project: Path, *, content: b
     text = content.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
     if not content.strip() or text == old.replace("\r\n", "\n").replace("\r", "\n"):
         return
+    from . import daemon
+
     daemon.submit({"path": str(cf.path), "project": str(project), "old": old, "content_hex": content.hex()})
 
 
@@ -367,6 +369,8 @@ def _nli():
     """The model for checks that must answer now (ask mode, session start): the model
     server's, so only its first use pays the load. None when the extra or model is
     missing. A process that set _NLI_INSTANCE (a benchmark) uses its own model."""
+    from . import daemon
+
     if not _NLI_INSTANCE:
         nli = NLI()
         _NLI_INSTANCE.append(None if not nli.available() else _ServerNLI() if daemon.SERVER else nli)
@@ -375,6 +379,8 @@ def _nli():
 
 class _ServerNLI:
     def contradiction(self, pairs: list[tuple[str, str]]) -> list[float]:
+        from . import daemon
+
         probs = daemon.contradiction(pairs)
         if probs is None:  # no server could be reached: load the model here, as before
             probs = NLI().contradiction(pairs)

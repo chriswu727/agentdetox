@@ -71,6 +71,7 @@ def _isolated_store(tmp_path, monkeypatch):
     """No test may read the real ~/.agentdetox settings or allowlist, or the user's
     AGENTDETOX_* overrides, or follow the user's CLAUDE_CONFIG_DIR."""
     monkeypatch.setenv("AGENTDETOX_HOME", str(tmp_path / "store"))
+    monkeypatch.setenv("AGENTDETOX_USER_HOME", str(tmp_path / "home"))
     for key in ("SUSPICIOUS", "COPIED", "CONTRADICTION"):
         monkeypatch.delenv(f"AGENTDETOX_{key}", raising=False)
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)

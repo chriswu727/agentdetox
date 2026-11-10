@@ -1,0 +1,5 @@
+# Shell scripts must remain executable by Git Bash even with core.autocrlf=true.
+*.sh text eol=lf
+plugins/agentdetox/scripts/hook text eol=lf
+# Preserve frozen fixture bytes and their published SHA-256 on every checkout.
+bench/fixtures/*.json text eol=lf

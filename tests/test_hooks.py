@@ -263,8 +263,13 @@ def test_snapshot_copies_are_private(env, tmp_path, capsys):
     assert all(stat.S_IMODE(p.stat().st_mode) == 0o600 for p in (store / "objects").iterdir())
 
 
-def test_restore_works_for_deep_paths(env, tmp_path, capsys):
+def test_restore_works_for_deep_paths(env, tmp_path, capsys, monkeypatch):
     home, project, _ = env
+    if os.name == 'nt':
+        # Exercise the same long path even on hosts without the system-wide
+        # LongPathsEnabled policy. Do not shorten the fixture or skip recovery.
+        home = Path('\\\\?\\' + str(home.resolve()))
+        monkeypatch.setenv('AGENTDETOX_USER_HOME', str(home))
     deep = home / ".claude/projects" / ("-Users-me-" + "x" * 200) / "memory"
     deep.mkdir(parents=True)
     (deep / "notes.md").write_text("Use pnpm.\n", encoding="utf-8")

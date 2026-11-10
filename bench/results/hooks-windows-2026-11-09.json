@@ -1,0 +1,104 @@
+{
+  "platform": "Windows-11-10.0.26200-SP0",
+  "python": "3.12.16",
+  "results": [
+    {
+      "case": "Bash pre, no context write",
+      "samples": 100,
+      "p50_ms": 207.5,
+      "p95_ms": 237.6,
+      "budget_ms": 100,
+      "within_budget": false
+    },
+    {
+      "case": "Bash pre + post, no context write",
+      "samples": 100,
+      "p50_ms": 377.5,
+      "p95_ms": 447.6,
+      "budget_ms": 200,
+      "within_budget": false
+    },
+    {
+      "case": "Protected Edit pre, 50k history entries",
+      "samples": 100,
+      "p50_ms": 174.0,
+      "p95_ms": 193.1,
+      "budget_ms": 120,
+      "within_budget": false
+    },
+    {
+      "case": "Protected Write pre, 3889974 byte transcript",
+      "samples": 100,
+      "p50_ms": 181.2,
+      "p95_ms": 188.2,
+      "budget_ms": 200,
+      "within_budget": true
+    },
+    {
+      "case": "Protected Write post, 100 added lines, 3889974 byte transcript",
+      "samples": 100,
+      "p50_ms": 218.5,
+      "p95_ms": 229.6,
+      "budget_ms": 500,
+      "within_budget": true
+    },
+    {
+      "case": "Protected Write pre, 29 distinct large source outputs",
+      "samples": 100,
+      "p50_ms": 225.0,
+      "p95_ms": 249.5,
+      "budget_ms": 200,
+      "within_budget": false
+    },
+    {
+      "case": "Protected Write post, 100 added lines, 29 distinct large source outputs",
+      "samples": 100,
+      "p50_ms": 303.7,
+      "p95_ms": 339.8,
+      "budget_ms": 500,
+      "within_budget": true
+    },
+    {
+      "case": "Four protected Write posts plus Bash pre/post, 100 lines per write",
+      "samples": 100,
+      "p50_ms": 511.6,
+      "p95_ms": 550.6,
+      "budget_ms": 1000,
+      "within_budget": true
+    },
+    {
+      "case": "SessionStart, 1000 unchanged files",
+      "samples": 100,
+      "p50_ms": 384.3,
+      "p95_ms": 418.9,
+      "budget_ms": 250,
+      "within_budget": false
+    },
+    {
+      "case": "SessionStart, 100 changed of 1000 files, initially 10k history entries",
+      "samples": 100,
+      "p50_ms": 1275.3,
+      "p95_ms": 1673.1,
+      "budget_ms": 1000,
+      "within_budget": false
+    },
+    {
+      "case": "Bash pre + post, 1000 active memory files plus 1000 unrelated files",
+      "samples": 100,
+      "p50_ms": 752.8,
+      "p95_ms": 801.7,
+      "budget_ms": 350,
+      "within_budget": false
+    },
+    {
+      "case": "NLI record frontend, 1000 active memory files, fake queue, no inference",
+      "samples": 100,
+      "p50_ms": 213.5,
+      "p95_ms": 234.8,
+      "budget_ms": 250,
+      "within_budget": true
+    }
+  ],
+  "model": "disabled; no model or subscription usage",
+  "warmup": "one untimed call per case"
+}

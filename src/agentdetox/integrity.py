@@ -23,7 +23,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from .agentscan import read_text, scan_text
+from .agentscan import scan_text
 from .compat import hook_executable, quote_executable, release, try_lock
 from .context import ContextFile, is_hook_script
 from .findings import Finding
@@ -153,7 +153,10 @@ def store_dir() -> Path:
 def private_dir(path: Path) -> Path:
     # Snapshots copy files such as ~/.claude.json and settings.json that can hold
     # tokens or API keys; the copies must not be more readable than the originals.
-    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # Most callers reuse these directories for every content object. Avoid a failed
+    # mkdir syscall for each one, but still repair permissions on every call.
+    if not path.is_dir():
+        path.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(path, 0o700)
     return path
 
@@ -363,7 +366,12 @@ def verify(files: list[ContextFile], roots: list[Path]) -> tuple[list[Change], l
 
     for path, cf in current.items():
         entry = baseline.get(path)
-        text = read_text(cf.path)
+        data = cf.path.read_bytes()
+        if entry is not None and _sha(data) == entry["sha256"]:
+            continue
+        # Hash and scan the same read; a second open can observe a different version.
+        # Preserve read_text's universal-newline behavior without reopening the file.
+        text = data.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
         if entry is None:
             changes.append(Change(path, "added", cf.kind))
             findings.extend(scan_text(path, path, text, cf.kind))
@@ -371,8 +379,6 @@ def verify(files: list[ContextFile], roots: list[Path]) -> tuple[list[Change], l
             # change; a project seen for the first time is its own, which the agent asks to trust.
             if cf.kind == "config" and max((r for r in root_strs if path.startswith(r)), key=len, default=None) in known:
                 findings.extend(_config_changes(path, cf.path, text, {}))
-            continue
-        if _sha(cf.path.read_bytes()) == entry["sha256"]:
             continue
         if cf.kind == "config":
             # Agent configs churn constantly (counters, caches); only the

@@ -4,6 +4,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-.venv/bin/ruff check src tests bench scripts lab
-.venv/bin/mypy
-.venv/bin/pytest -q -p no:warnings
+python=.venv/bin/python
+if [ -f .venv/Scripts/python.exe ]; then
+  python=.venv/Scripts/python.exe
+fi
+exec "$python" scripts/check.py "$@"

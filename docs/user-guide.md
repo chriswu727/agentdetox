@@ -258,6 +258,10 @@ reports the removal.
   it refuses overlap and ambiguous repeated matches and does not support executable config.
 - On Windows the shell checks understand Git Bash commands (`/c/...` paths, `agentdetox.exe`), not
   PowerShell or cmd.exe syntax.
+  Claude versions exposing a separate PowerShell tool can be restricted to the tested Bash
+  workflow with `CLAUDE_CODE_USE_POWERSHELL_TOOL=0`; this is not PowerShell analysis support.
+  Ordinary Windows paths beyond MAX_PATH require the host's long-path policy. See the
+  [native Windows validation record](windows-validation.md) for measured coverage and limits.
 
 ## Other agents
 

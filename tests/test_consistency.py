@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from agentdetox import engine, hooks, settings
+from agentdetox import daemon, engine, hooks, settings
 from agentdetox.cli import main
 from agentdetox.consistency import NLI, Statement, candidate_pairs, find_contradictions, statements
 from agentdetox.context import claude_memory_dir
@@ -185,7 +185,7 @@ def test_post_tool_use_hands_contradictions_to_the_model_server(env, monkeypatch
     monkeypatch.setattr(engine, "_nli", lambda: nli)
     monkeypatch.setattr(engine, "_nli_installed", lambda: True)
     jobs = []
-    monkeypatch.setattr(engine.daemon, "submit", jobs.append)
+    monkeypatch.setattr(daemon, "submit", jobs.append)
 
     def post(path):
         hooks.handle("claude-code", {"hook_event_name": "PostToolUse", "cwd": str(project), "tool_name": "Write",
@@ -246,7 +246,7 @@ def test_record_frontend_never_reads_related_files_or_selects_candidates(env, mo
     monkeypatch.setattr(engine, 'comparison', unexpected)
     monkeypatch.setattr('agentdetox.consistency.candidate_pairs', unexpected)
     jobs = []
-    monkeypatch.setattr(engine.daemon, 'submit', jobs.append)
+    monkeypatch.setattr(daemon, 'submit', jobs.append)
     path = mem / 'deploy.md'
     path.write_bytes(path.read_text().replace('\n', newline).encode('utf-8'))
     content = path.read_bytes()

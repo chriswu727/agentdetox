@@ -41,8 +41,8 @@ def main() -> int:
         p95 = sorted(timings)[math.ceil(.95 * len(timings)) - 1]
         row = dict(case=label, samples=len(timings), p50_ms=round(statistics.median(timings), 1),
                    p95_ms=round(p95, 1), budget_ms=budget, within_budget=p95 <= budget)
-        results.append(row)
         print(json.dumps(row), flush=True)
+        results.append({**row, 'samples_ms': [round(value, 3) for value in timings]})
 
     with tempfile.TemporaryDirectory(prefix='agentdetox-perf-') as directory:
         base = Path(directory).resolve()
@@ -170,10 +170,10 @@ def main() -> int:
             (active_memory / f'note-{n}.md').write_bytes((mem / f'note-{n}.md').read_bytes())
         measure('Bash pre + post, 1000 active memory files plus 1000 unrelated files', 350, shell_round_trip)
         queued = '''import json, sys
-from agentdetox import engine, hooks
+from agentdetox import daemon, engine, hooks
 engine._nli_installed = lambda: True
 jobs = []
-engine.daemon.submit = jobs.append
+daemon.submit = jobs.append
 code = hooks.main_hook('claude-code')
 assert len(jobs) == 1 and jobs[0]['content_hex']
 assert 'numpy' not in sys.modules

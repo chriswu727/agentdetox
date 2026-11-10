@@ -10,12 +10,16 @@ import contextlib
 import os
 import re
 import shlex
+from importlib import import_module
+from types import ModuleType
 
+fcntl: ModuleType | None
 try:
-    import fcntl
+    # Host-specific typeshed stubs omit the other platform's lock attributes.
+    fcntl = import_module('fcntl')
 except ImportError:
-    fcntl = None  # type: ignore[assignment]
-    import msvcrt
+    fcntl = None
+    msvcrt = import_module('msvcrt')
 
 WINDOWS = os.name == "nt"
 

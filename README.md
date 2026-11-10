@@ -29,8 +29,11 @@ with a backup either way.
 **0.4.1 is published** on [PyPI](https://pypi.org/project/agentdetox/0.4.1/) and
 [GitHub](https://github.com/chriswu727/agentdetox/releases/tag/v0.4.1).
 The project is in **preview**: Claude Code is supported; Codex and Cursor hooks are experimental;
-OpenClaw has tamper detection only. Developed on macOS; Windows has CI coverage, without
-validation through daily use on a real machine.
+OpenClaw has tamper detection only. Development supports native Windows with Python 3.12 and
+Git Bash, alongside macOS/Linux. Windows offline validation covers the installed-wheel lifecycle;
+real-client and sustained daily-use validation remain separate. See [Windows evidence](docs/windows-validation.md).
+Native Windows latency measurements still exceed several existing budgets; the
+[performance record](bench/HOOK_LATENCY.md) retains failures and paired optimization results.
 
 <p align="center">
 <picture>
@@ -42,6 +45,11 @@ validation through daily use on a real machine.
 ## Quick start
 
 Requires **Python 3.11+**. Install with [uv](https://docs.astral.sh/uv/) or `pipx`:
+
+On Windows, install Git for Windows for Claude's Bash tool. PowerShell can launch these CLI
+commands, but AgentDetox's shell-write analysis supports Git Bash syntax; PowerShell/cmd.exe
+syntax is not supported. Windows uses background NLI workers, without a resident model server.
+Native development commands are in [CONTRIBUTING.md](CONTRIBUTING.md#setup-and-checks).
 
 ```bash
 uv tool install agentdetox
