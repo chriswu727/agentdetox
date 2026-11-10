@@ -134,7 +134,17 @@ def check_command(command: str, project: Path, cwd: Path | None = None) -> list[
         context += [str(f) for f in folders
                     if any(Path(p).is_relative_to(os.path.realpath(f)) for p in inside)]
     if context:
-        findings = allowlist.unsuppressed(scan_text("shell", "shell", command, "shell"))
+        analyzed = command
+        findings = []
+        literal = shell.literal_printf(command)
+        if literal:
+            target, body, executable = literal
+            cf = classify(shell.resolve(target, cwd), project=project)
+            if cf and cf.kind in {'memory', 'instructions'}:
+                findings = scan_text(str(cf.path), str(cf.path), body, cf.kind)
+                analyzed = executable
+        findings += scan_text("shell", "shell", analyzed, "shell")
+        findings = allowlist.unsuppressed(findings)
         if _worst(findings) == "high":
             return [Signal(PLANTED, "AgentDetox: shell command writes to agent context and "
                                     + printable("; ".join(sorted({f.message for f in findings}))) + ".",

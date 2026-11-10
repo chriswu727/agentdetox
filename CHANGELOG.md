@@ -19,6 +19,10 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ### Fixed
 
+- Analyze a narrowly recognized literal `printf '%s'`/`printf '%s\n'` write to memory or
+  instructions as prose, while scanning the remaining executable shell text independently.
+  Benign quoted safety notes no longer produce a false high-severity block. Shell context
+  writes still require approval; this does not bypass provenance or configuration guards.
 - Bind pre-write external-change findings to the captured bytes and scan outside the global
   store lock; retry if another writer advances the ledger before recording.
 - Detect bounded soft-wrapped instructions in memory and instruction files, preserving the

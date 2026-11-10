@@ -87,6 +87,24 @@ def split(command: str) -> list[str]:
         return []
 
 
+def literal_printf(command: str) -> tuple[str, str, str] | None:
+    """A leading printf with literal %s arguments and one static output path. Everything
+    after that command remains executable shell text; no substitutions or %b decoding."""
+    match = re.match(
+        r"\A\s*printf[ \t]+'(?P<format>%s(?:\\n)?)'[ \t]+"
+        r"(?P<args>'[^']*'(?:[ \t]+'[^']*')*)[ \t]+"
+        r"(?P<redirect>>{1,2})[ \t]*(?P<target>'[^'\n]+'|[A-Za-z0-9_./~-]+)"
+        r"(?=[ \t]*(?:$|&&|;|\n))", command,
+    )
+    if not match:
+        return None
+    values = re.findall(r"'([^']*)'", match['args'])
+    separator = '\n' if match['format'] == r'%s\n' else ''
+    body = separator.join(values) + separator
+    executable = 'printf ' + match['redirect'] + ' ' + match['target'] + command[match.end():]
+    return match['target'].strip("'"), body, executable
+
+
 def _segments(tokens: list[str]) -> list[tuple[list[str], list[str]]]:
     """Each simple command, with the files its output redirections write."""
     out: list[tuple[list[str], list[str]]] = []
