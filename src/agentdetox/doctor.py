@@ -10,7 +10,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import __version__, allowlist, compat, daemon, events, settings, storage
+from . import __version__, allowlist, background, compat, daemon, events, settings, storage
 from .consistency import NLI, NLI_MODEL
 from .context import home_dir
 from .install import (
@@ -34,6 +34,7 @@ def run(project: Path) -> list[Check]:
     checks += _claude_code_hooks(project)
     checks += _settings()
     checks += _nli()
+    checks += _background()
     checks += _store()
     checks += _other_agents(project)
     try:
@@ -203,6 +204,35 @@ def _nli() -> list[Check]:
     elif info:
         checks.append(Check("ok", f"model server running (pid {info['pid']}, model "
                                   f"{'loaded' if info['model_loaded'] else 'not loaded yet'})"))
+    return checks
+
+
+def _background() -> list[Check]:
+    """Contradiction checks handed to the background worker that have not finished. A
+    failed one is a version nobody compared; one that only waits is not a failure."""
+    state = background.status()
+    log = store_dir() / "daemon.log"
+    days = int(background.KEEP_SECONDS // 86400)
+    checks = []
+    if state["failed"]:
+        last = state["last_failure"]
+        about = f" for {last['path']}" if last["path"] else ""
+        checks.append(Check("fail", f"{state['failed']} background contradiction check(s) failed, so those versions "
+                                    f"were not compared with what the agent already knows; last at {last['ts']}: "
+                                    f"{last['error']}{about} after {last['attempts']} attempt(s). Each is kept in "
+                                    f"{state['directory']} for {days} days. See {log}, fix the cause, then run "
+                                    "`agentdetox daemon retry`"))
+    if state["waiting_model"]:
+        checks.append(Check("warn", f"{state['waiting_model']} background contradiction check(s) are waiting for the "
+                                    "contradiction model, which the background worker did not find; run "
+                                    "`agentdetox fetch-models`, then `agentdetox daemon retry`, or turn the check off "
+                                    f"with `agentdetox config contradiction off`. Waiting checks expire after {days} days"))
+    if state["stalled"]:
+        checks.append(Check("warn", f"{state['stalled']} background contradiction check(s) have waited more than "
+                                    f"{int(background.STALLED_AFTER // 60)} min (oldest queued {state['oldest']}); run "
+                                    f"`agentdetox daemon retry` to start them, and see {log} if they stay queued"))
+    if state["queued"] - state["stalled"]:
+        checks.append(Check("ok", f"{state['queued'] - state['stalled']} background contradiction check(s) queued"))
     return checks
 
 

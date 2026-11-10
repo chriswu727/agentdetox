@@ -157,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
     p_config.add_argument("value", nargs="?", choices=settings.MODES)
 
     p_daemon = sub.add_parser("daemon", help="the background process that keeps the contradiction model loaded")
-    p_daemon.add_argument("action", choices=["status", "stop"])
+    p_daemon.add_argument("action", choices=["status", "stop", "retry"])
     p_serve = sub.add_parser("_daemon")  # no help: hidden from the listing
     p_serve.add_argument("--job")
 
@@ -385,6 +385,11 @@ def _install(args) -> int:
 
 
 def _daemon_command(action: str) -> int:
+    if action == "retry":
+        requeued, waiting = daemon.retry()
+        print(f"{requeued} failed check(s) queued again; the background worker now has {waiting} check(s) to run"
+              if waiting else "no background checks are waiting or failed")
+        return 0
     info = daemon.ping()
     if action == "stop":
         if info is None:

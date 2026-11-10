@@ -4,7 +4,7 @@ import stat
 
 import pytest
 
-from agentdetox import allowlist, events, hooks, settings
+from agentdetox import allowlist, background, events, hooks, settings
 from agentdetox.cli import main
 from agentdetox.context import claude_memory_dir, discover
 from agentdetox.integrity import store_dir, verify
@@ -308,3 +308,30 @@ def test_status_after_activity(env, capsys):
     main(["status", "--project", str(project), "--format", "json"])
     data = json.loads(capsys.readouterr().out)
     assert data["activity"]["blocked"] == 1 and data["recent"][-1]["what"] == "asked"
+
+
+def test_status_shows_background_checks_that_wait_or_failed(env, capsys):
+    _, project, mem = env
+    main(["install", "claude-code", "--project", str(project), "--apply"])
+    capsys.readouterr()
+    main(["status", "--project", str(project)])
+    assert "Background" not in capsys.readouterr().out
+    job = {"path": str(mem / "deploy.md"), "project": str(project), "old": "the undisclosed old text",
+           "content_hex": b"the undisclosed new text".hex()}
+    background.enqueue(job)
+    failed = background.enqueue(job)
+    background.fail(failed, background.load(failed), "RuntimeError")
+    events.record("background_check_failed", job=failed.stem, path=job["path"], error="RuntimeError", attempts=3)
+    assert main(["status", "--project", str(project)]) == 0
+    out = capsys.readouterr().out
+    health = out.split("Watching")[0]
+    assert "1 failure(s)" in health and "1 background contradiction check(s) failed" in health
+    assert "  Background   1 check(s) queued, 1 failed\n" in out
+    recent = out.split("Recent")[1]
+    assert "check failed" in recent and "RuntimeError after 3 attempt(s)" in recent and "deploy.md" in recent
+    assert "undisclosed" not in out and job["content_hex"] not in out
+    main(["status", "--project", str(project), "--format", "json"])
+    data = json.loads(capsys.readouterr().out)
+    assert (data["background"]["queued"], data["background"]["failed"]) == (1, 1)
+    assert data["background"]["last_failure"]["error"] == "RuntimeError" and "undisclosed" not in json.dumps(data)
+    assert job["content_hex"] not in json.dumps(data)

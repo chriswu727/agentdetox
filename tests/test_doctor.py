@@ -1,9 +1,10 @@
 import json
 import os
+import time
 
 import pytest
 
-from agentdetox import __version__, compat
+from agentdetox import __version__, background, compat
 from agentdetox.cli import main
 
 
@@ -131,3 +132,64 @@ def test_a_store_not_yet_upgraded_shows_its_own_format(env, capsys):
     capsys.readouterr()
     _, out = doctor(capsys, project)
     assert "store format 2)" in out and f"upgrades to {storage.VERSION}" in out
+
+
+# Background contradiction checks ------------------------------------------------------
+
+def queue_job(home, project):
+    return background.enqueue({"path": str(home / ".claude/projects/p/memory/deploy.md"), "project": str(project),
+                               "old": "the undisclosed old text", "content_hex": b"the undisclosed new text".hex()})
+
+
+def installed_doctor(capsys, project):
+    main(["install", "claude-code", "--project", str(project), "--apply"])
+    capsys.readouterr()
+    code, out = doctor(capsys, project)
+    return code, out, [line for line in out.splitlines() if "background contradiction check" in line]
+
+
+def test_nothing_queued_says_nothing_and_creates_nothing(env, capsys):
+    _, project = env
+    code, _, lines = installed_doctor(capsys, project)
+    assert code == 0 and lines == [] and not background.queue_dir().exists()
+
+
+def test_a_failed_background_check_fails_doctor_and_says_what_to_do(env, capsys):
+    home, project = env
+    path = queue_job(home, project)
+    job = background.load(path)
+    for _ in range(background.MAX_ATTEMPTS):
+        background.claim(path, job)
+    background.fail(path, job, "RuntimeError")
+    code, out, [line] = installed_doctor(capsys, project)
+    assert code == 1 and line.startswith("FAIL 1 background contradiction check(s) failed")
+    assert "RuntimeError" in line and "after 3 attempt(s)" in line
+    assert f"~{os.sep}.claude{os.sep}projects{os.sep}p{os.sep}memory{os.sep}deploy.md" in line
+    assert "daemon.log" in line and "`agentdetox daemon retry`" in line
+    assert "undisclosed" not in out and b"the undisclosed new text".hex() not in out
+
+
+def test_checks_waiting_for_the_model_warn_without_failing(env, capsys):
+    home, project = env
+    path = queue_job(home, project)
+    job = background.load(path)
+    background.claim(path, job)
+    background.wait_for_model(path, job)
+    code, _, [line] = installed_doctor(capsys, project)
+    assert code == 0 and line.startswith("WARN 1 background contradiction check(s) are waiting for the contradiction model")
+    assert "`agentdetox fetch-models`" in line and "failed" not in line
+
+
+def test_a_queue_nobody_is_working_on_warns(env, capsys):
+    home, project = env
+    fresh = queue_job(home, project)
+    code, _, [line] = installed_doctor(capsys, project)
+    assert code == 0 and line == "OK   1 background contradiction check(s) queued"
+    queued_long_ago = time.time_ns() - int((background.STALLED_AFTER + 60) * 1e9)
+    fresh.rename(fresh.with_name(f"{queued_long_ago:020d}-0a0b0c0d.json"))
+    queue_job(home, project)
+    code, _, lines = installed_doctor(capsys, project)
+    assert code == 0 and len(lines) == 2
+    assert lines[0].startswith("WARN 1 background contradiction check(s) have waited more than 10 min")
+    assert "`agentdetox daemon retry`" in lines[0] and "daemon.log" in lines[0]
+    assert lines[1] == "OK   1 background contradiction check(s) queued"

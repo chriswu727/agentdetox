@@ -7,10 +7,10 @@ from collections import Counter
 from dataclasses import asdict
 from pathlib import Path
 
-from . import __version__, allowlist, daemon, doctor, events, settings, storage
+from . import __version__, allowlist, background, daemon, doctor, events, settings, storage
 from .adapters import SHELL_TOOLS
 from .consistency import NLI
-from .context import home_dir
+from .context import home_dir, short_path
 from .findings import printable
 from .integrity import StoreError, baseline_entries, usage
 
@@ -34,6 +34,16 @@ def describe(row: dict) -> tuple[str, str, str]:
     elif event == "hook_error":
         ids = str(row.get("event_id", ""))
         label, text = "check failed", f"{row.get('stage')}: {row.get('error')} (protection degraded)"
+    elif event == "background_check_failed":
+        ids = str(row.get("job", ""))
+        # The error first: a row is cut to its width, and a memory path alone can fill it.
+        path = short_path(str(row.get("path") or ""))
+        about = f" of {path if len(path) <= 34 else '…' + path[-33:]}" if path else ""
+        label, text = "check failed", (f"{row.get('error')} after {row.get('attempts')} attempt(s), "
+                                       f"contradiction check{about}")
+    elif event == "background_check_expired":
+        label, text = "expired", (f"{row.get('count')} background contradiction check(s) did not run within "
+                                  f"{row.get('days')} days")
     elif event == "contradiction":
         label, text = "contradiction", f'"{row.get("new", "")}" vs "{row.get("existing", "")}"'
     elif event == "session_notice":
@@ -83,6 +93,7 @@ def collect(project: Path, days: int = 7) -> dict:
         "checks": [asdict(s) for s in current],
         "contradiction_model": NLI.installed() and NLI().available(),
         "model_server": daemon.ping(),
+        "background": background.status(),
         "store": store,
         "config_file": str(settings.config_path()) if settings.config_path().exists() else None,
         "allowed": len(allowlist.entries()),
@@ -131,6 +142,12 @@ def render(data: dict) -> str:
                             f"{s['jobs']} job(s), idle {s['idle_seconds'] // 60} min" if s else
                             "not running; starts on the next changed memory write; loads the model only for candidates"
                             if daemon.SERVER else "not available on Windows yet; each check loads the model")
+    b = data["background"]
+    waiting = [f"{b[key]} {what}" for key, what in (("queued", "check(s) queued"),
+                                                    ("waiting_model", "waiting for the model"), ("failed", "failed"))
+               if b[key]]
+    if waiting:
+        row("Background", ", ".join(waiting))
     st = data["store"]
     if st:
         row("Store", f"{st['bytes'] / 1e6:.1f} MB in {st['objects']} snapshot copies"
