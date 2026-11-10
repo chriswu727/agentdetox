@@ -16,6 +16,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from itertools import islice
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .findings import Finding
 from .hidden import normalize
@@ -37,7 +38,8 @@ _TOKEN_RE = re.compile(r"[a-z0-9_]+|[一-鿿]")
 _FRONTMATTER_RE = re.compile(r"\A---\n.*?\n---\n", re.S)
 _REMEMBER_RE = re.compile(
     r"\b(remember|memori[sz]e|keep in mind|note (this|that|it) down|make a note|take note"
-    r"|(save|store|add|write|put|record)\b[^.\n]{0,80}\b(memory|memories|notes?|claude\.md)\b)"
+    r"|(save|store|add|write|put|record)\b[^.\n]{0,80}\b(memory|memories|notes?|claude\.md)\b"
+    r"|update\s+(?:(?:the|my|our)\s+)?(?:memory|memories|notes?|claude\.md)\b)"
     r"|记住|记下|记一下|记得|存到记忆|保存到记忆|写进记忆|加到记忆|备忘",
     re.I,
 )
@@ -164,11 +166,13 @@ def _shingles(tokens: list[str], n: int = SHINGLE) -> set[tuple[str, ...]]:
 
 
 def asked_to_remember(human: list[str]) -> bool:
-    if not human:
-        return False
-    prompt = normalize(human[-1])
+    return bool(human and _remember_target(human[-1]) is not None)
+
+
+def _remember_target(prompt: str) -> str | None:
+    prompt = normalize(prompt)
     quoted = [(m.start(), m.end()) for m in _QUOTED_RE.finditer(prompt)]
-    requested = False
+    target = None
     for match in _REMEMBER_RE.finditer(prompt):
         if any(start <= match.start() < end for start, end in quoted):
             continue
@@ -176,10 +180,10 @@ def asked_to_remember(human: list[str]) -> bool:
         if _RECOLLECTION_RE.search(before) or _DISCUSSION_RE.search(before):
             continue
         if _NEGATED_REQUEST_RE.search(before) and not _DONT_FORGET_RE.search(before):
-            requested = False
+            target = None
             continue
-        requested = True
-    return requested
+        target = prompt[match.start():]
+    return target
 
 
 def _requested(transcript: Transcript) -> bool:
@@ -211,11 +215,15 @@ def _human_shingles(transcript: Transcript, n: int) -> set[tuple[str, ...]]:
 
 
 def _source_tokens(src: Source, transcript: Transcript) -> list[str]:
+    return _text_tokens(src.text, transcript)
+
+
+def _text_tokens(text: str, transcript: Transcript) -> list[str]:
     memo = transcript._memo
-    key = ("text_tokens", src.text)
+    key = ("text_tokens", text)
     cached = memo.get(key)
     if cached is None:
-        cached = _tokens(src.text)
+        cached = _tokens(text)
         memo[key] = cached
     return cached
 
@@ -254,16 +262,109 @@ def copied_from_untrusted(new_text: str, transcript: Transcript,
     tokens = _tokens(body)
     new = _shingles(tokens)
     sources = transcript.sources if sources is None else sources
-    if not new or not sources or _requested(transcript):
+    if not new or not sources:
         return None
     from_user = _human_shingles(transcript, SHINGLE)
+    passages = []
+    for part in re.split(r'\n+|(?<=[.!?])\s+|(?<=[。！？])', body):
+        words = _text_tokens(part, transcript)
+        if len(words) >= 12 and len(set(words)) >= 8:
+            passages.append((part, _shingles(words)))
     best: CopyFinding | None = None
     for src in sources:
+        if _source_requested(transcript, src):
+            continue
         shared = _source_matches(src, new, transcript) - from_user
-        fraction = len(shared) / len(new)
-        if fraction >= threshold and (best is None or fraction > best.fraction):
-            best = CopyFinding(src.tool, fraction, _excerpt(body, shared), src.origin)
+        for passage, shingles in [(body, new), *passages]:
+            matched = shared & shingles
+            fraction = len(matched) / len(shingles)
+            if passage != body and (len(matched) < SHINGLE or fraction < .7):
+                continue
+            if fraction >= threshold and (best is None or fraction > best.fraction):
+                best = CopyFinding(src.tool, fraction, _excerpt(passage, matched), src.origin)
     return best
+
+
+def _source_requested(transcript: Transcript, src: Source) -> bool:
+    if not _requested(transcript):
+        return False
+    key = ('source_requested', transcript.human[-1], src.tool, src.text, src.origin,
+           bool(transcript.sources and src == transcript.sources[-1]))
+    if key not in transcript._memo:
+        transcript._memo[key] = _source_request_matches(transcript, src)
+    return transcript._memo[key]
+
+
+def _source_request_matches(transcript: Transcript, src: Source) -> bool:
+    prompt = transcript.human[-1]
+    clauses = re.split(r'[;；\n]|(?<=[.!?])\s+(?=[A-Z])|(?<=[。！？])', prompt)
+    for clause in clauses:
+        if not asked_to_remember([clause]):
+            continue
+        target = _remember_target(clause)
+        if target is None:
+            continue
+        urls = re.findall(r'https?://[^\s\x22\x27<>]+', clause)
+        if urls and src.origin:
+            origins = re.findall(r'https?://[^\s\x22\x27<>]+', src.origin)
+            if {_url_key(url) for url in urls} & {_url_key(url) for url in origins}:
+                return True
+            continue
+        from .consistency import _tokens as content_tokens
+
+        if re.search(r"(?i)^remember\s+(?:that\s+)?(?:I\b|my\s+(?!memory\b|notes?\b))"
+                     r"|\bI\s+(?:prefer|like|want)\b|我(?:喜欢|希望)", target):
+            continue
+        latest = _referenced_source(transcript, target)
+        if re.fullmatch(r'(?:记住|记下|记一下|记得)(?:(?:这个|那个|这份|里面|其中|这些|它|页面|文档|的|部署|关键))*'
+                        r'(?:要求|内容|要点|信息)?[。！]?'
+                        r'|(?:写进记忆|保存到记忆|加到记忆)(?:里)?[。！]?', target.strip()):
+            return src == latest
+        if re.search(r'(?i)\b(?:this|that|the)\s+(?:page|document|doc|article|email|readme|wiki)\b', target):
+            return src == latest
+        if re.match(r'(?i)remember\s+(?:that\s|to\s)', target):
+            continue
+        topic = re.sub(r'^(?:记住|记下|记一下|记得)', '', target)
+        words = set(content_tokens(topic)) - _REQUEST_WORDS
+        if words:
+            source_text = src.text + ' ' + src.origin
+            if all((word in source_text if re.search(r'[一-鿿]', word) else
+                    re.search(r'(?<!\w)' + re.escape(word) + r'(?!\w)', source_text, re.I)) for word in words):
+                return True
+        elif src == latest:
+            return True
+    return False
+
+
+def _url_key(url: str) -> tuple[str, str, str, str]:
+    try:
+        parts = urlsplit(url.rstrip('.,);'))
+        return parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip('/'), parts.query
+    except ValueError:
+        return '', '', url, ''
+
+
+def _referenced_source(transcript: Transcript, target: str) -> Source | None:
+    from .context import named_like_context
+
+    eligible = [s for s in transcript.sources if not (
+        s.tool == 'Read' and (named_like_context(s.origin)
+                             or '/.claude/projects/' in s.origin.replace('\\', '/') and '/memory/' in s.origin)
+        or s.tool == 'Bash' and re.match(r'^\s*(?:ls|pwd)(?:\s|$)', s.origin)
+        or s.tool in {'Bash', 'Grep'} and any(named_like_context(part.strip('\x22\x27'))
+                                            for part in s.origin.split()))]
+    if re.search(r'(?i)\b(?:page|article|website)\b|页面|网页', target):
+        pages = [s for s in eligible if s.tool in {'WebFetch', 'WebSearch'}]
+        if pages:
+            eligible = pages
+    return eligible[-1] if eligible else None
+
+
+_REQUEST_WORDS = frozenset(
+    'remember memorize memorise keep mind note notes down save store add write put record memory memories '
+    'claude.md important key points requirements setup install steps page document article email handbook '
+    'readme doc docs policy security requires forget read rules checklist facts later update learned'.split()
+)
 
 
 def origin_of(text: str, transcript: Transcript | None) -> tuple[str, str, bool]:
@@ -288,7 +389,7 @@ def origin_of(text: str, transcript: Transcript | None) -> tuple[str, str, bool]
         if fraction > best:
             best, source = fraction, src
     if source is not None and best >= COPY_THRESHOLD:
-        return "copied", f"{source.tool} {source.origin}".strip()[:200], requested
+        return "copied", f"{source.tool} {source.origin}".strip()[:200], _source_requested(transcript, source)
     return "agent", "", requested
 
 
@@ -299,7 +400,7 @@ def typed_by_user(finding: Finding, human: list[str]) -> bool:
     if finding.detector == "config-command":
         spans = [finding.anchor]
     elif finding.detector == "persistence":
-        line = normalize(finding.anchor)
+        line = ' '.join(normalize(finding.anchor).splitlines())
         spans = [m.group(0) for severity, label, pattern in TEXT_RULES
                  if label == finding.message and severity == finding.severity and (m := pattern.search(line))]
     else:

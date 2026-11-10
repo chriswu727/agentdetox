@@ -24,6 +24,9 @@ _FETCH_EXEC = (
     r"(?:it|the\s+(?:result|response|output|script))\s+(?:to|into|through)\s+(?:ba|z|da)?sh\b"
 )
 _REVERSE_SHELL = r"/dev/tcp/\d|\bnc\b[^\n]{0,40}\s-e\s|\bmkfifo\b[^\n]{0,60}\bnc\b"
+_PATH_END = r"(?=$|[\s\x22\x27`;,)，。:]|\.(?:\s|$))"
+_PUBLIC_SSH = rf"(?:id_(?:rsa|ed25519)\.pub|known_hosts){_PATH_END}"
+_PRIVATE_KEY = rf"(?<![A-Za-z0-9_])id_(?:rsa|ed25519)(?![A-Za-z0-9_]|\.pub{_PATH_END})"
 # Every later install resolves through a registry a memory names, so a planted one swaps
 # in the attacker's packages. The default registries and the big public mirrors (common
 # in China) are not flagged.
@@ -68,12 +71,17 @@ TEXT_RULES: list[tuple[str, str, re.Pattern]] = [
         "reads credentials",
         re.compile(
             r"\b(cat|read|open|copy|cp|print|dump|base64|send|upload|post|exfiltrate|curl|scp|rsync|tar|zip)\b[^\n]{0,60}"
-            r"((~|\$HOME)/\.ssh/|\bid_(rsa|ed25519)\b|(~|\$HOME)/\.aws/credentials|(~|\$HOME)/\.config/gh/hosts|keychain)"
+            rf"((~|\$HOME)/\.ssh/(?!{_PUBLIC_SSH}|(?:config|authorized_keys){_PATH_END})|{_PRIVATE_KEY}|(~|\$HOME)/\.aws/credentials|(~|\$HOME)/\.config/gh/hosts|keychain)"
+            rf"|\b(copy|cp|scp|rsync|send|upload|post|curl|tar|zip)\b[^\n]{{0,60}}(~|\$HOME)/\.ssh/(?:config|authorized_keys){_PATH_END}"
+            rf"|>>?\s*[\x22\x27]?(~|\$HOME)/\.ssh/(?:config|authorized_keys){_PATH_END}"
+            rf"|\b(open|read)\b[^\n]{{0,30}}(~|\$HOME)/\.ssh/(?:config|authorized_keys){_PATH_END}[^\n]{{0,40}}\b(add|append|write|modify)\b"
             r"|\b(send|upload|post|exfiltrate|curl|scp|rsync)\b[^\n]{0,60}(\.env\b|\.npmrc\b|\.netrc\b)",
             re.I,
         ),
     ),
-    ("high", "reads credentials", re.compile(r"(读取|复制|发送|上传|打印)[^。\n]{0,30}(\.ssh/|id_rsa|id_ed25519|\.aws/credentials|钥匙串)")),
+    ("high", "reads credentials", re.compile(
+        rf"(读取|复制|发送|上传|打印)[^。\n]{{0,30}}(\.ssh/(?!{_PUBLIC_SSH}|(?:config|authorized_keys){_PATH_END})|{_PRIVATE_KEY}|\.aws/credentials|钥匙串)"
+        rf"|(复制|发送|上传|写入|追加|修改)[^。\n]{{0,30}}\.ssh/(?:config|authorized_keys){_PATH_END}")),
     (
         "medium",
         "acts without the user's knowledge",
@@ -104,13 +112,17 @@ _COMMAND_KEYS = {"command", "args", "url", "notify"} | _HELPER_KEYS
 
 
 def text_findings(text: str, *, prose: bool = False) -> list[tuple[str, str, int]]:
+    return [(severity, label, start) for severity, label, start, _ in text_matches(text, prose=prose)]
+
+
+def text_matches(text: str, *, prose: bool = False) -> list[tuple[str, str, int, int]]:
     norm = normalize(text)
     hits = []
     for severity, label, pattern in TEXT_RULES:
         for m in pattern.finditer(norm):
             if prose and is_prohibited_action(norm, m.start(), m.end()):
                 continue
-            hits.append((severity, label, m.start()))
+            hits.append((severity, label, m.start(), m.end()))
             break
     return hits
 

@@ -28,10 +28,11 @@ not silently refreshed to describe current code.
 |---|---|
 | [Offline regression gallery](../bench/ACCURACY.md) | Prevention, monitoring, recovery and explicit known misses; no model calls |
 | [Hook latency](../bench/HOOK_LATENCY.md) | Dated measurements, raw reports and per-case budgets |
+| [Large-memory protocol](../bench/LARGE_MEMORY.md) | Synthetic inventory baseline and future scale, cleanup and observation gates |
 | [Memory benchmark v0](../bench/MEMORY_BENCHMARK.md) | Historical public-data detector comparison and synthetic transcript evaluation |
 | [Knowledge-base benchmark](../bench/KB_BENCHMARK.md) | Historical scanner comparison on public RAG data |
 | [Real-agent lab](../lab/README.md) | Protocol, authorization, costs and outcome definitions |
-| [Latest recorded lab run](../lab/results/latest.md) | 2026-11-02, 16 real Claude Code sessions; not a new run for this documentation update |
+| [Latest recorded lab run](../lab/results/latest.md) | 2026-11-09 development checks: two scenarios, four sessions, two retained failures |
 
 ## Develop and contribute
 

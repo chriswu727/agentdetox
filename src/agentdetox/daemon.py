@@ -2,10 +2,16 @@
 
 Loading the NLI model costs about 6 s and 1 GB, too much for every hook process (and
 several at once after a session start that finds many changed files). Hooks hand the
-work to this process over a Unix socket inside the store, which only the user can
-reach, and return at once. It loads the model on first use, runs jobs one at a time,
-and exits after IDLE_SECONDS without work. A lock held for its whole life makes it
-the only one per store, so concurrent hooks may start it without coordinating.
+work to this process and return at once. It loads the model on first use, runs jobs
+one at a time, and exits after IDLE_SECONDS without work. A lock held for its whole life
+makes it the only one per store, so concurrent hooks may start it without coordinating.
+
+A record job is saved in the queue (background.py) before anyone is told of it; the Unix
+socket inside the store, which only the user can reach, carries just the wake-up. The job
+stays saved until its check has been recorded, so whoever holds the lock next, after a
+crash, a stop or an update, finds it there. A check that raises is tried again a bounded
+number of times and then set aside for doctor and status to report; one that only lacks
+the optional model waits for it instead.
 
 Windows has no Unix sockets, so there is no server there yet: each record job starts a
 worker, workers take turns on the same lock, and the one holding it runs every queued
@@ -27,14 +33,16 @@ import threading
 import time
 from pathlib import Path
 
-from . import __version__, compat
-from .integrity import private_dir, store_dir
+from . import __version__, background, compat, events
+from .integrity import StoreError, private_dir, store_dir
 
 SERVER = os.name == "posix" and hasattr(socket, "AF_UNIX")
 IDLE_SECONDS = 30 * 60
 CONNECT_TIMEOUT = 0.5
 START_TIMEOUT = 10.0
 QUEUE_WAIT = 600.0
+# Seconds before a failed check's second and third attempt.
+RETRY_DELAYS = (5.0, 60.0)
 _MAX_SOCKET_PATH = 100  # sun_path is 104 bytes on macOS
 
 
@@ -91,18 +99,33 @@ def request(message: dict, timeout: float = 5.0) -> dict | None:
 
 
 def submit(job: dict) -> None:
-    """Hand a record job to the server, starting one if needed. Never waits for the work."""
-    reply = request({"op": "record", **job}, timeout=2.0)
-    if reply and reply.get("ok"):
+    """Save a record job where it outlives any process, then wake the server, starting
+    one if needed. Never waits for the work."""
+    job_file = background.enqueue(job)
+    if job_file is None:
+        # Raising would cost the hook its remaining bookkeeping for a check that is optional.
+        events.record("hook_error", stage="background-queue",
+                      error=f"QueueFull: {background.QUEUE_LIMIT} contradiction checks already wait or failed")
         return
-    pending = private_dir(store_dir() / "pending")
-    fd, part = tempfile.mkstemp(dir=pending, suffix=".part")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(job, f, ensure_ascii=False)
-    # Renamed only once complete: a Windows worker draining the queue must not read it half-written.
-    job_file = part[:-len(".part")] + ".json"
-    os.replace(part, job_file)
-    _spawn(job_file)
+    _wake(str(job_file))
+
+
+def _wake(job_file: str | None) -> None:
+    reply = request({"op": "wake"}, timeout=2.0)
+    if not (reply and reply.get("ok")):
+        _spawn(job_file)
+
+
+def retry() -> tuple[int, int]:
+    """Queue failed checks again and start the worker on everything that waits. Returns
+    how many had failed and how many wait now."""
+    requeued = background.retry_failed()
+    waiting = len(background.legacy()) + len(background.queued())
+    if waiting:
+        # A live worker can have set an I/O-blocked job aside for its lifetime.
+        stop()
+        _wake(None)
+    return requeued, waiting
 
 
 def contradiction(pairs: list[tuple[str, str]], timeout: float = 120.0) -> list[float] | None:
@@ -182,14 +205,137 @@ def _local_nli():
     return nli if nli.available() else None
 
 
+class ModelUnavailable(Exception):
+    """The optional model is not installed or not downloaded. Nothing failed: the check waits."""
+
+
 def _record(job: dict, nli) -> None:
     from .engine import record_contradictions
 
-    try:
-        content = bytes.fromhex(job["content_hex"]) if "content_hex" in job else None
-        record_contradictions(Path(job["path"]), Path(job["project"]), job.get("old", ""), nli, content=content)
-    except Exception as e:  # noqa: BLE001
-        print(f"{time.strftime('%H:%M:%S')} record job failed: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+    content = bytes.fromhex(job["content_hex"]) if "content_hex" in job else None
+    record_contradictions(Path(job["path"]), Path(job["project"]), job.get("old", ""), nli, content=content)
+
+
+def _log(message: str) -> None:
+    print(f"{time.strftime('%H:%M:%S')} {message}", file=sys.stderr, flush=True)
+
+
+def _error_name(e: BaseException) -> str:
+    """What may be written down about an error. An exception's text can quote the memory
+    it was working on, so only AgentDetox's own store errors, which name paths, keep theirs."""
+    name = type(e).__name__
+    return f"{name}: {str(e)[:200]}" if isinstance(e, StoreError) else name
+
+
+def _where(e: BaseException) -> str:
+    frames = []
+    tb = e.__traceback__
+    while tb is not None:
+        code = tb.tb_frame.f_code
+        frames.append(f"{Path(code.co_filename).name}:{tb.tb_lineno} in {code.co_name}")
+        tb = tb.tb_next
+    return " < ".join(reversed(frames[-3:]))
+
+
+class _Drainer:
+    """Runs the queue for the process that holds the daemon lock. A job is tried when it
+    is due and at most background.MAX_ATTEMPTS times in all. What this process cannot get
+    further with (no model, a job file a virus scanner holds open) it leaves for the next
+    process instead of running it over and over."""
+
+    def __init__(self, nli, lock=None) -> None:
+        self._nli = nli
+        self._lock = lock if lock is not None else contextlib.nullcontext()
+        self._retry_at: dict[str, float] = {}
+        self._left: set[str] = set()
+        self.completed = 0
+
+    def _model(self):
+        nli = self._nli()
+        if nli is None:
+            raise ModelUnavailable
+        return nli
+
+    def run_due(self, stop=None) -> float | None:
+        """Run every job that is due, those queued meanwhile included, unless `stop` says
+        to leave them. Returns the seconds until the next retry, None if there is none."""
+        for path in background.legacy():
+            background.adopt(path)
+        expired = background.prune()
+        if expired:
+            days = int(background.KEEP_SECONDS // 86400)
+            events.record("background_check_expired", count=expired, days=days)
+            _log(f"{expired} background check(s) expired without running after {days} days")
+        ran = True
+        while ran:
+            ran = False
+            for path in background.queued():
+                if stop is not None and stop():
+                    return None
+                if path.name in self._left or self._retry_at.get(path.name, 0.0) > time.monotonic():
+                    continue
+                self._run(path)
+                ran = True
+        # A job that expired or was removed meanwhile must not leave a retry that is forever due.
+        still_queued = {path.name for path in background.queued()}
+        self._retry_at = {name: at for name, at in self._retry_at.items() if name in still_queued}
+        if not self._retry_at:
+            return None
+        return max(0.0, min(self._retry_at.values()) - time.monotonic())
+
+    def _run(self, path: Path) -> None:
+        self._retry_at.pop(path.name, None)
+        try:
+            self._attempt(path)
+        except OSError as e:
+            # The queue itself could not be updated; trying again at once would spin.
+            self._left.add(path.name)
+            _log(f"background check {path.stem} left queued: {type(e).__name__}")
+
+    def _attempt(self, path: Path) -> None:
+        try:
+            job = background.load(path)
+        except FileNotFoundError:
+            return
+        except ValueError:
+            return self._set_aside(path, None, "InvalidJob", 0)
+        meta = job["queue"]
+        if meta["attempts"] >= background.MAX_ATTEMPTS:
+            # Counted before each start: attempts that left no error ended with the process.
+            return self._set_aside(path, job, meta.get("error") or "Interrupted", meta["attempts"])
+        if meta.get("waiting") == "model" and not self._has_model():
+            self._left.add(path.name)
+            return
+        attempts = background.claim(path, job)
+        try:
+            with self._lock:
+                _record(job, self._model)
+        except ModelUnavailable:
+            background.wait_for_model(path, job)
+            self._left.add(path.name)
+            _log(f"background check {path.stem} waits for the contradiction model")
+        except Exception as e:  # noqa: BLE001
+            error = _error_name(e)
+            _log(f"background check {path.stem} failed, attempt {attempts} of {background.MAX_ATTEMPTS}: "
+                 f"{error} ({_where(e)})")
+            if attempts >= background.MAX_ATTEMPTS:
+                return self._set_aside(path, job, error, attempts)
+            background.retry_later(path, job, error)
+            self._retry_at[path.name] = time.monotonic() + RETRY_DELAYS[min(attempts, len(RETRY_DELAYS)) - 1]
+        else:
+            if not background.done(path):
+                self._left.add(path.name)
+            self.completed += 1
+
+    def _has_model(self) -> bool:
+        with self._lock:
+            return self._nli() is not None
+
+    def _set_aside(self, path: Path, job: dict | None, error: str, attempts: int) -> None:
+        background.fail(path, job, error)
+        events.record("background_check_failed", job=path.stem, path=job["path"] if job else "", error=error,
+                      attempts=attempts)
+        _log(f"background check {path.stem} set aside after {attempts} attempt(s): {error}")
 
 
 class _State:
@@ -199,14 +345,16 @@ class _State:
         self.code = code_id()
         self.started = time.time()
         self.last = time.monotonic()
-        self.jobs = 0
         self.busy = 0
         self.work = threading.Lock()
         self.count = threading.Lock()
         self.stopping = threading.Event()
+        self.wake = threading.Event()
+        self.finish_queue = False
         self._factory = nli_factory or _local_nli
         self._nli = None
         self._loaded = False
+        self.drainer = _Drainer(self.nli, self.work)
 
     def nli(self):
         """Called only while holding `work`, so the model loads once."""
@@ -226,21 +374,43 @@ class _State:
                 self.busy -= 1
                 self.last = time.monotonic()
 
-    def stop(self) -> None:
-        if not self.stopping.is_set():
+    def stop(self, finish_queue: bool = False) -> None:
+        """`finish_queue` for an exit the server decided on itself: a job saved while it
+        was deciding is still run before the lock is let go. When told to stop, it leaves
+        the queue, as it is on disk, to the next server."""
+        with self.count:
+            if self.stopping.is_set():
+                return
             self.stopping.set()
-            threading.Thread(target=self.server.shutdown, daemon=True).start()
+            self.finish_queue = finish_queue
+        self.wake.set()
+        threading.Thread(target=self.server.shutdown, daemon=True).start()
+
+    def wake_up(self) -> bool:
+        """False once stopping, so the sender starts a server instead of counting on this one."""
+        with self.count:
+            if self.stopping.is_set():
+                return False
+            self.wake.set()
+            return True
+
+    def run_queue(self) -> None:
+        try:
+            while not self.stopping.is_set():
+                with self.active():
+                    delay = self.drainer.run_due(self.stopping.is_set)
+                self.wake.wait(delay)
+                self.wake.clear()
+        except Exception as e:  # noqa: BLE001
+            # A server that answers wake-ups but runs nothing would hide the queue's state.
+            _log(f"background worker stopped: {_error_name(e)} ({_where(e)})")
+            self.stop()
 
     def info(self) -> dict:
         return {"ok": True, "pid": os.getpid(), "version": __version__, "code": self.code,
                 "started": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(self.started)),
-                "model_loaded": self._nli is not None, "jobs": self.jobs, "busy": self.busy,
+                "model_loaded": self._nli is not None, "jobs": self.drainer.completed, "busy": self.busy,
                 "idle_seconds": round(time.monotonic() - self.last)}
-
-    def record(self, job: dict) -> None:
-        with self.work:
-            _record(job, self.nli)
-            self.jobs += 1
 
 
 class _Handler(socketserver.StreamRequestHandler):
@@ -261,9 +431,8 @@ class _Handler(socketserver.StreamRequestHandler):
                 # The client runs newer code: make way for a server running it too.
                 self._reply({"ok": False, "error": "stale"})
                 return state.stop()
-            if op == "record":
-                self._reply({"ok": True})
-                return state.record(msg)
+            if op == "wake":
+                return self._reply({"ok": state.wake_up()})
             if op == "contradiction":
                 with state.work:
                     nli = state.nli()
@@ -284,22 +453,22 @@ if SERVER:
 
 
 def serve(job_file: str | None = None, nli_factory=None, idle: float | None = None) -> int:
-    """Run the server until it is idle for `idle` seconds or asked to stop. If another
-    server holds the store, hand it `job_file` and return."""
+    """Run the server, working through the queue, until it is idle for `idle` seconds or
+    asked to stop. If another server holds the store, wake it and return. `job_file` is a
+    job saved outside the queue, as earlier versions did; it is moved in first."""
+    if job_file:
+        background.adopt(Path(job_file))
     if not SERVER:
         return _work_queue(nli_factory)
-    job = None
-    if job_file:
-        with contextlib.suppress(OSError, ValueError):
-            job = json.loads(Path(job_file).read_text(encoding="utf-8"))
-        Path(job_file).unlink(missing_ok=True)
-    deadline = time.monotonic() + START_TIMEOUT
+    # With jobs saved, outwait a server that is finishing its last one before it steps down.
+    waiting = bool(background.queued() or background.legacy())
+    deadline = time.monotonic() + (QUEUE_WAIT if waiting else START_TIMEOUT)
     while True:
         with _try_lock() as held:
             if held is not None:
-                return _run(held, job, nli_factory, idle_seconds() if idle is None else idle)
+                return _run(held, nli_factory, idle_seconds() if idle is None else idle)
         # Another server owns the store. It may still be binding or just shutting down.
-        reply = request({"op": "record", **job}, timeout=2.0) if job else ping()
+        reply = request({"op": "wake"}, timeout=2.0)
         if reply and reply.get("ok"):
             return 0
         if time.monotonic() > deadline:
@@ -307,26 +476,23 @@ def serve(job_file: str | None = None, nli_factory=None, idle: float | None = No
         time.sleep(0.1)
 
 
-def _run(lock_fd: int, job: dict | None, nli_factory, idle: float) -> int:
+def _run(lock_fd: int, nli_factory, idle: float) -> int:
     path = socket_path()
     path.unlink(missing_ok=True)  # we hold the lock, so any socket left here is stale
     server = _Server(str(path), _Handler)
     os.chmod(path, 0o600)
     state = server.state = _State(server, nli_factory, idle)
     if nli_factory is None and _local_nli() is None:
-        state.stop()  # no model to serve; hooks fall back to doing nothing
-    if job:
-        def first() -> None:
-            with state.active():
-                state.record(job)
-        threading.Thread(target=first, daemon=True).start()
+        state.stop(finish_queue=True)  # no model to serve: mark what waits for it, then leave
+    worker = threading.Thread(target=state.run_queue, daemon=True)
+    worker.start()
 
     def watchdog() -> None:
         while not state.stopping.wait(min(5.0, max(idle / 4, 0.05))):
             with state.count:
                 idle_for = time.monotonic() - state.last if state.busy == 0 else 0
             if idle_for >= idle:
-                state.stop()
+                state.stop(finish_queue=True)
     threading.Thread(target=watchdog, daemon=True).start()
     try:
         server.serve_forever(poll_interval=0.2)
@@ -334,8 +500,15 @@ def _run(lock_fd: int, job: dict | None, nli_factory, idle: float) -> int:
         server.server_close()
         deadline = time.monotonic() + 120
         while state.busy and time.monotonic() < deadline:
-            time.sleep(0.05)  # finish accepted jobs before letting go of the lock
-        path.unlink(missing_ok=True)
+            time.sleep(0.05)  # finish the job in hand before letting go of the lock
+        worker.join(max(0.0, deadline - time.monotonic()))
+        try:
+            if state.finish_queue and not state.busy and not worker.is_alive():
+                # A wake-up acknowledged just before stopping was decided has had no pass yet.
+                # Its job was saved before it was sent, so one pass now, with the socket closed, finds it.
+                state.drainer.run_due()
+        finally:
+            path.unlink(missing_ok=True)
     return 0
 
 
@@ -364,18 +537,7 @@ def _drain(nli_factory) -> int:
             loaded.append(nli_factory())
         return loaded[0]
 
-    pending, seen = store_dir() / "pending", set()
-    # `seen` stops a job file that cannot be deleted (held open by a virus scanner) from
-    # being run over and over.
-    while jobs := [p for p in sorted(pending.glob("*.json")) if p not in seen]:
-        for job_file in jobs:
-            seen.add(job_file)
-            try:
-                job = json.loads(job_file.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                job = None
-            with contextlib.suppress(OSError):
-                job_file.unlink()
-            if isinstance(job, dict):
-                _record(job, nli)
-    return len(seen)
+    drainer = _Drainer(nli)
+    while (delay := drainer.run_due()) is not None:
+        time.sleep(delay)  # a retry is due later; the attempts are bounded, so this ends
+    return drainer.completed

@@ -131,3 +131,29 @@ bytes briefly, compute evidence without the lock, and validate both versions bef
 Retry up to three times, then report a visible failure rather than trust unchecked content.
 The optional contradiction worker receives captured bytes instead of reopening a potentially
 newer target; related context is evaluated when the job runs, not frozen at write time.
+
+Pre-write external-change observation also scans captured bytes outside the lock and retries
+when the ledger base changes. It records the version actually observed, even if a subsequent
+filesystem edit has already replaced it. This path does not advance a trusted checkpoint.
+
+## ADR 18: Bounded prose analysis with original evidence
+
+Memory and instruction rules may join soft-wrapped prose, including short list continuations,
+within eight lines and 2,048 characters. Blank lines, separate list items, other Markdown blocks,
+fenced/indented code, sentence endings and independent action lines bound the analysis.
+Configuration and shell syntax keep their existing analysis. Hidden Unicode
+and HTML checks still receive original text. Matched rule spans map back to the original source
+lines, so adjacent ordinary notes do not change finding IDs or falsely resolve retained findings
+during cleanup. The snapshot and restoration bytes are never normalized.
+
+Copied-text checks inspect both the complete addition and substantive passages. A local passage
+must have at least twelve tokens, eight distinct tokens, six matching six-token shingles and
+70% shingle overlap; the original whole-write threshold remains unchanged.
+This reduces dilution by unrelated notes but remains lexical evidence for review, not a verdict
+of maliciousness. Remember intent is scoped using explicit source URLs or shared target words;
+generic instructions refer to the latest relevant source, excluding housekeeping reads of
+recognized agent context. Page references prefer web sources. URL matching tolerates a trailing
+slash and surrounding punctuation but does not assume different schemes or hosts are equivalent.
+Ambiguous references may still prompt.
+The same scoped result is used in source attribution metadata. Paraphrases and semantic intent
+remain outside this rule's guarantees.

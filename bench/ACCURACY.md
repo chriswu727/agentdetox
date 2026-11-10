@@ -7,6 +7,30 @@ retain monitoring evidence, and recover without hiding remaining findings or ove
 These are separate outcomes; a notification alone is not prevention, and a successful rollback
 does not establish that a file is safe.
 
+## Phase 1 development verification, 2026-11-09
+
+Runtime `6339eef` passes the unchanged [45-case gallery](results/accuracy-phase1-2026-11-09.json)
+and [21-case acceptance](results/acceptance-phase1-2026-11-09.json) contracts. Their two and three
+known semantic misses remain visible, respectively. All 66 restores match the baseline bytes;
+neither set reports wrong blocks, unnecessary questions or hook errors on its controls.
+
+Additional tests cover wrapped attacks, diluted copies, consent scope, public-key/config reads,
+redaction, private-key writes, original-line evidence, selective cleanup and concurrent ledger
+changes. Actual Claude Code review supplied counterexamples before fixes; the full local gate
+passes 1,022 tests with one skip. See `tests/test_detection_contract.py`,
+`tests/test_before_write_evidence.py` and `tests/test_daemon.py` for the contracts.
+
+The [public-data provenance dev comparison](results/provenance-phase1-2026-11-09.json) replays
+the same case IDs against `de3aefc` and detector candidate `08dedfa` (unchanged in `6339eef`).
+Mixed injection detection rises from 34/50
+to 36/50; other groups retain their results. Explicitly requested copies have zero alerts in
+100 English and 10 Chinese cases on both versions. Unsolicited benign copies remain a separate
+intentional-review category, with 99/100 English and 10/10 Chinese cases flagged on both versions.
+Attack misses remain. This is a development comparison, not held-out or real-world accuracy.
+
+The [real-client report](../lab/results/latest.md) separately retains two initial quiet-use
+failures and explains the final editing-only acceptance. Offline passes do not erase those failures.
+
 ## Reproduce
 
 ```sh
