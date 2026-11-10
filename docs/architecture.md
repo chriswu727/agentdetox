@@ -87,7 +87,7 @@ left an I/O-blocked job queued. This queue carries contradiction checks only; li
 | `background.py` | Durable job files, attempts, retention and background health |
 | `integrity.py` | Snapshot store: baseline, content-addressed copies, verify, restore, quarantine, locking |
 | `safefs.py` | File access through an opened folder, so a swapped parent cannot redirect recovery, cleanup or library reads |
-| `library.py` | Inspection of a chosen folder of memory files: durable runs, inventory, review, exact-version cleanup |
+| `library.py` | Inspection of a chosen folder of memory files: durable runs, inventory, review, exact-version cleanup and dismissal |
 | `storage.py` | SQLite schema, transactional legacy migration, indexed metadata and references |
 | `review.py` | Diff, exact-version accept, finding dismissal, recovery journal and retention |
 | `cleanup.py` | Explicit added-line selection and conflict-checked mapping onto current text |
@@ -171,6 +171,33 @@ conclusion counts as current. The row also stops waiting, and a scan batch recor
 if the row still holds the version seen when the batch picked it up, so a batch that read the
 earlier bytes cannot write over a finished cleanup. A later scan verifies the cleaned bytes by
 hash like any other.
+
+A dismissal (`library dismiss M<ID> <flag>`) is a row in `dismissals`, keyed by file and flag
+id and carrying the content hash and detector it was made for. It never changes `findings`,
+`allowlist.json` or `state.sqlite3`, and takes neither `store.lock` nor `library.lock`. Two
+things keep it bound to one version. Every reader joins a dismissal to a finding on file,
+flag, hash and detector, so a row that outlived its version hides nothing. And every writer of
+this version deletes a file's dismissals when it records anything but the same bytes judged
+again by the same detector: a scan batch (which compares the row it picked up with what it
+concluded), a cleanup, a link, a missing file, a restarted root. A read that failed keeps the
+last inspected version, its findings and its dismissals. Recording a dismissal needs a current
+conclusion (inspected, this detector, verified by the latest run) and the review hash, which
+covers the root's path and filesystem identity, the file id and relative path, the content
+hash and the detector. The file is read again through the root within the scan's limits,
+first without any lock, so an unreadable file holds nothing up. The row, the review hash, the
+bytes on disk and the stored finding are then all checked again inside the `BEGIN IMMEDIATE`
+transaction that inserts the row, so a scan or cleanup that commits first wins, and an edit
+made before the transaction is refused. An edit after that last read is not seen: the
+dismissal then stands for bytes no longer on disk, review says the file changed, and the next
+scan ends it.
+
+`library.sqlite3` carries a format version. Version 2 adds `dismissals` and changes no
+existing table. Opening an older inventory, for reading as well, first runs the missing
+steps in one transaction that rereads the version under the write lock; a failure rolls back
+and is reported, and a newer, lost or emptied inventory is refused as before. Upgrades only
+add tables because a scan worker of the older version may still be running on its open
+connection: it keeps writing the tables it knows, and the join above is why it cannot make a
+dismissal apply to bytes it recorded later.
 
 ## Distribution
 

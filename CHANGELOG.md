@@ -19,6 +19,19 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
   existing preview hash, journal, quarantine and history (undo with `restore C<ID>`). It applies
   to the exact inspected version only and is refused on Windows, where the file's folder cannot
   be held open. The inventory records that a cleanup, not a scan run, inspected the cleaned bytes.
+- `agentdetox library dismiss M<ID> <id> --expected-hash <review-hash>` sets one finding aside
+  as a false positive in one inspected file, for the exact bytes and detector reviewed, without
+  touching the allowlist: the same text stays flagged in other files, other libraries and every
+  write check. `library review M<ID>` prints the review hash and keeps showing dismissed
+  findings with their excerpt, date and note; `library review --state dismissed` lists the
+  files; `library status` counts dismissed findings and files, and files whose findings are
+  all dismissed or allowlisted, apart from files with no findings. `library reopen` undoes it.
+  A dismissal ends when the file's bytes or the detector change, after a cleanup, and when the
+  file goes missing; stale, unreadable, replaced or unverified versions cannot be dismissed.
+- The library inventory format is now version 2. An existing inventory is upgraded in place, in
+  one transaction, by the first library command that opens it, reading commands included;
+  nothing recorded is lost and no scan is needed to read it. Earlier builds refuse the upgraded
+  inventory. Conclusions recorded by an earlier build are shown stale until scanned.
 - A synthetic end-to-end library benchmark harness (`bench/library_eval.py`) and a library step
   in the installed-wheel journey.
 
@@ -35,7 +48,19 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
   commands; system links such as `/tmp` on macOS are followed. Windows checks the path before
   and after each step, which narrows the gap without closing it. No compare-and-swap is claimed
   against another same-user program changing the same file in the same folder.
-- An agent needs approval to run `library cancel` or `library scan --restart`.
+- An agent needs approval to run `library cancel`, `library scan --restart`, `library dismiss`
+  or `library reopen`.
+- An agent could run a command that changes what AgentDetox trusts without the approval
+  question by leaving the deciding words out of the command text: `printf 'allow <id>' | xargs
+  agentdetox`, `xargs -I{} agentdetox library {} …`, `A=allow; agentdetox $A <id>`, and the same
+  through `python -m`, wrappers, `bash -c` and `xargs sh -c '… "$@"'`. An `agentdetox` call
+  with arguments supplied by `xargs` (appended, or substituted for a token, including BSD
+  `-J`) or by shell expansion (variables, command substitution, file name patterns, braces)
+  now needs approval unless what is written out is a command that can only read. **Behavior
+  change:** such calls of non-reading commands ask even when harmless, for example
+  `agentdetox review --project "$PWD"`; reading commands such as `library review "$ID"` stay
+  free. Still not recognized: a program name built at run time (a variable or alias for
+  `agentdetox`, a command line given to `xargs sh -c`).
 
 ### Changed
 

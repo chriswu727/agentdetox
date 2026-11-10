@@ -123,6 +123,17 @@ def main(argv: list[str] | None = None) -> int:
     l_review.add_argument("--page", type=int, default=1)
     l_review.add_argument("--page-size", type=int, default=20)
     l_review.add_argument("--format", choices=["text", "json"], default="text")
+    l_dismiss = lsub.add_parser("dismiss", help="set a finding aside as a false positive in one file, for the exact "
+                                                "bytes and detector reviewed; nothing is allowed elsewhere")
+    l_dismiss.add_argument("file", help="the file id shown by library review (M42)")
+    l_dismiss.add_argument("ids", nargs="+", metavar="id", help="finding ids shown by `library review M42`")
+    l_dismiss.add_argument("--expected-hash", required=True, help="review hash printed by `library review M42`")
+    l_dismiss.add_argument("--note", default="", help="why it is a false positive, kept and shown with the dismissal")
+    l_dismiss.add_argument("--format", choices=["text", "json"], default="text")
+    l_reopen = lsub.add_parser("reopen", help="undo a dismissal: the finding is listed and counted again")
+    l_reopen.add_argument("file", help="the file id (M42)")
+    l_reopen.add_argument("ids", nargs="+", metavar="id", help="dismissed finding ids shown by `library review M42`")
+    l_reopen.add_argument("--format", choices=["text", "json"], default="text")
     l_cancel = lsub.add_parser("cancel", help="stop an unfinished scan after the file in hand; it can be continued")
     l_cancel.add_argument("target")
     l_worker = lsub.add_parser("_worker")  # no help: started by scan --background
@@ -690,7 +701,7 @@ def _print_trace(rows, fmt: str) -> None:
 
 def library_states() -> tuple[str, ...]:
     # The states are the inventory's; the module is loaded only for library commands.
-    return ("suspicious", "low", "stale", "queued", "uninspected", "failed", "missing", "inspected")
+    return ("suspicious", "low", "dismissed", "stale", "queued", "uninspected", "failed", "missing", "inspected")
 
 
 @contextlib.contextmanager
@@ -746,6 +757,11 @@ def _library(args) -> int:
         return 0
     if command == "cancel":
         print(library.cancel(args.target))
+        return 0
+    if command in ("dismiss", "reopen"):
+        result = (library.dismiss(args.file, args.ids, expected_hash=args.expected_hash, note=args.note)
+                  if command == "dismiss" else library.reopen(args.file, args.ids))
+        print(json.dumps(result, ensure_ascii=False, indent=2) if args.format == "json" else library.render_triage(result))
         return 0
     if command == "status":
         rows = library.status(args.target)

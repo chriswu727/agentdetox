@@ -36,7 +36,8 @@ In scope:
 - **An agent changing its own guardrails**: hooks, MCP servers, permissions, environment variables
   and helper commands.
 - **An agent changing AgentDetox's own state**: its settings, allowlist and snapshots, by writing
-  them or by running the commands that change them.
+  them or by running the commands that change them, including dismissing or reopening a
+  library finding.
 
 Out of scope; see the [full limitations](docs/user-guide.md#what-it-does-not-catch):
 
@@ -60,7 +61,9 @@ Out of scope; see the [full limitations](docs/user-guide.md#what-it-does-not-cat
 - **A library scan reads, it does not trust.** `agentdetox library` inspects one folder the
   user names. The name given is resolved once, when the folder is first scanned, and that
   resolved folder is the library; no link found inside it is followed (links are counted). A
-  scan records no checkpoint and never reports a file as clean.
+  scan records no checkpoint and never reports a file as clean. A finding dismissed in a
+  library (development `main`) is set aside for one file at the exact bytes and detector
+  reviewed; it is not an allowlist entry, and hooks never read it.
 - **The store is private.** `~/.agentdetox` is created 0700 and its files 0600.
 - **No imports from the project.** Background processes and the `python -m` hook fallback start
   Python with `-I`, so a repository cannot plant an `agentdetox` package for the hook to import.
@@ -70,6 +73,12 @@ Out of scope; see the [full limitations](docs/user-guide.md#what-it-does-not-cat
 - **The shell check reads, it does not run.** A command is checked before it runs by parsing it;
   where the parse is uncertain (a `cd` that may fail, a variable set elsewhere) it assumes the
   worse case or judges the target by its file name. A script file or a path built at run time
-  is checked right after the command instead.
+  is checked right after the command instead. An `agentdetox` call whose arguments are not all
+  written out (supplied by `xargs`, by a variable, a command substitution, a file name pattern
+  or braces) needs approval unless what is written out is already a command that can only
+  read, such as `library review` or `status`: the missing part could be `allow`, `dismiss` or
+  `--apply`. This recognizes calls of `agentdetox` by name. A program name built at run time
+  (a variable or alias for `agentdetox`, a whole command line handed to `xargs sh -c`, code
+  that imports the package) is not recognized.
 - **A blocked store is reported.** If another process holds AgentDetox's store lock, content
   checks still run and session start says the store is locked.

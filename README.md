@@ -189,7 +189,8 @@ store, including `objects/`, and review retention before deleting history.
   false positives. [Setup and limits](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#contradiction-detection-experimental).
 - **Existing memory libraries (development `main`):** `agentdetox library scan <folder>` inventories
   a folder you choose, inspects its text files with the per-file rules, resumes after interruption
-  and never calls a file clean; `clean M<ID>` removes reviewed lines with a backup.
+  and never calls a file clean; `clean M<ID>` removes reviewed lines with a backup, and
+  `library dismiss` sets a false positive aside for one file's exact bytes without allowlisting it.
   [Library guide](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#inspecting-a-library-of-memory-files).
 - **RAG knowledge bases:** `agentdetox scan` for hidden instructions and suspicious passage clusters;
   `trace` ranks leads behind a wrong answer. [Scanner guide](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#also-scanning-a-rag-knowledge-base).

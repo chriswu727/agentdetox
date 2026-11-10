@@ -185,7 +185,29 @@ def journey(wheel: Path, completed: list[str]) -> None:
         listed = json.loads(cli('library', 'review', scanned['id'], '--format', 'json').stdout)['rows']
         target = f"M{listed[0]['id']}"
         assert listed[0]['finding']['lines'] == '2', 'Library review did not locate the flagged line'
-        assert json.loads(cli('library', 'review', target, '--format', 'json').stdout)['on_disk'] == 'unchanged'
+        reviewed = json.loads(cli('library', 'review', target, '--format', 'json').stdout)
+        assert reviewed['on_disk'] == 'unchanged'
+        finding, token = reviewed['findings'][0]['flag_id'], reviewed['review_hash']
+        wrong = cli('library', 'dismiss', target, finding, '--expected-hash', reviewed['sha256'], expected=2)
+        assert 'not the version that was reviewed' in wrong.stderr, f'Unexpected dismissal refusal: {wrong.stderr}'
+        dismissed = json.loads(cli('library', 'dismiss', target, finding, '--expected-hash', token,
+                                   '--note', '发布指南中的示例', '--format', 'json').stdout)
+        assert dismissed['action'] == 'dismissed' and note.read_bytes() == inspected, 'Dismissal changed the file'
+        triaged = json.loads(cli('library', 'status', '--format', 'json').stdout)[0]
+        assert (triaged['suspicious'], triaged['dismissed_findings'], triaged['dismissed_files'],
+                triaged['dismissed_only'], triaged['no_findings']) == (0, 1, 1, 1, 1), f'Unexpected triage counts: {triaged}'
+        assert json.loads(cli('library', 'review', scanned['id'], '--format', 'json').stdout)['total'] == 0
+        set_aside = json.loads(cli('library', 'review', scanned['id'], '--state', 'dismissed', '--format', 'json').stdout)
+        assert [row['id'] for row in set_aside['rows']] == [listed[0]['id']], 'Dismissed file missing from its list'
+        evidence = cli('library', 'review', target).stdout
+        assert 'DISMISSED HIGH' in evidence and 'curl' in evidence and '发布指南中的示例' in evidence, \
+            'Review lost the evidence or the reason of a dismissed finding'
+        assert 'nothing allowed yet' in cli('allow', '--list').stdout, 'A library dismissal changed the allowlist'
+        still = hook('PreToolUse', 'Write', {'file_path': str(memory), 'content': poison})
+        assert still['hookSpecificOutput']['permissionDecision'] == 'deny', 'A library dismissal weakened the write check'
+        cli('library', 'reopen', target, finding)
+        assert json.loads(cli('library', 'status', '--format', 'json').stdout)[0]['suspicious'] == 1, 'Reopening did not restore the finding'
+        cli('library', 'dismiss', target, finding, '--expected-hash', token)
         preview = json.loads(cli('clean', target, '--lines', '2', '--format', 'json').stdout)
         assert note.read_bytes() == inspected, 'Library cleanup preview changed the file'
         edited = inspected + '预览之后的修改。\n'.encode()
@@ -207,12 +229,18 @@ def journey(wheel: Path, completed: list[str]) -> None:
             while json.loads(cli('library', 'status', scanned['id'], '--format', 'json').stdout)[0]['run']['state'] != 'completed':
                 assert time.monotonic() < deadline, 'Background library scan did not complete'
                 time.sleep(0.2)
+        rescanned = json.loads(cli('library', 'status', scanned['id'], '--format', 'json').stdout)[0]
+        assert (rescanned['suspicious'], rescanned['dismissed_findings']) == (1, 0), \
+            f'A dismissal outlived the bytes it was made for: {rescanned}'
+        outdated = cli('library', 'dismiss', target, finding, '--expected-hash', token, expected=2)
+        assert 'not the version that was reviewed' in outdated.stderr, f'A stale review was accepted: {outdated.stderr}'
         preview = json.loads(cli('clean', target, '--lines', '2', '--format', 'json').stdout)
         command = ('clean', target, '--lines', '2', '--expected-hash', preview['current_hash'], '--apply', '--format', 'json')
         if os.name == 'nt':
             assert 'not supported on this system' in cli(*command, expected=2).stderr
             assert note.read_bytes() == edited, 'A refused library cleanup changed the file'
-            mark('library scan, coverage, review and cleanup preview; stale previews refused; apply declined on Windows')
+            mark('library scan, coverage, review, exact-version dismissal and reopening, and cleanup preview; '
+                 'stale reviews and previews refused; apply declined on Windows')
         else:
             applied = json.loads(cli(*command).stdout)
             assert note.read_bytes() == edited.replace(flagged, b''), 'Library cleanup did not remove exactly the chosen line'
@@ -223,8 +251,8 @@ def journey(wheel: Path, completed: list[str]) -> None:
             cli('restore', undo, '--apply')
             assert note.read_bytes() == edited, 'Undoing a library cleanup did not restore exact bytes'
             assert json.loads(cli('library', 'review', target, '--format', 'json').stdout)['on_disk'] == 'changed'
-            mark('library scan, coverage, review, background rescan, exact cleanup with backup and undo; '
-                 'stale previews refused')
+            mark('library scan, coverage, review, exact-version dismissal and reopening, background rescan, '
+                 'exact cleanup with backup and undo; stale reviews and previews refused')
 
         data = json.loads(settings.read_text(encoding='utf-8'))
         own = data['hooks']['PreToolUse'].pop()['hooks'][0]

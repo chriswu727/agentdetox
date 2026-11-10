@@ -162,7 +162,8 @@ AgentDetox 提供检查和恢复，**不构成安全边界，也不验证事实�
 - **其他智能体：**Codex、Cursor 的实验性钩子，以及 OpenClaw 篡改检测。[集成矩阵（英文）](docs/user-guide.md#other-agents)。
 - **矛盾检测：**可选本地 NLI，因仍有误报，默认在后台记录。[配置与限制（英文）](docs/user-guide.md#contradiction-detection-experimental)。
 - **已有记忆库（开发分支 `main`）：**`agentdetox library scan <文件夹>` 为你指定的文件夹建立清单，
-  用逐文件规则检查其中的文本文件，中断后可继续，且从不把文件报告为“干净”；`clean M<ID>` 删除经审核的行并保留备份。
+  用逐文件规则检查其中的文本文件，中断后可继续，且从不把文件报告为“干净”；`clean M<ID>` 删除经审核的行并保留备份，
+  `library dismiss` 可只针对某个文件的当前内容搁置一条误报，而不将其加入全局允许列表。
   [记忆库指南（英文）](docs/user-guide.md#inspecting-a-library-of-memory-files)。
 - **RAG 知识库：**`agentdetox scan` 检查隐藏指令和可疑段落簇；`trace` 为错误答案提供排查线索排序。[扫描器指南（英文）](docs/user-guide.md#also-scanning-a-rag-knowledge-base)。
 
