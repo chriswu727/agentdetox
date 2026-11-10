@@ -1,5 +1,17 @@
 # Hook latency
 
+## Library scan load on Mac, 2026-11-10
+
+Runtime `eae840a` passed **12/12 original budgets** with 100 samples per case both
+[idle](results/hooks-library-idle-2026-11-10.json) and
+[during a continuously active library scan](results/hooks-library-active-2026-11-10.json).
+The scan shared the hook store and progressed from 0 to 48,600 of 100,000 synthetic files,
+then was cancelled normally. It did not complete the 100k corpus. The
+[large-memory protocol](LARGE_MEMORY.md#hook-latency-during-inspection) records the method,
+selected P95 timings and limits. These sequential Mac measurements do not establish Windows
+performance, production-scale support, NLI inference latency or complete client startup time.
+Earlier failures below remain part of the record.
+
 ## Phase 1 Mac gate, 2026-11-09
 
 The [complete report](results/hooks-phase1-2026-11-09.json) measures runtime `6339eef`,

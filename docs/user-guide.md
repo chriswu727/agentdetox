@@ -162,7 +162,23 @@ reinstated; use whole-version restore when that is the intent. Removing every li
 empty file. Cleanup refuses selected lines that were modified or removed later, and repeated
 matches when later edits make their identity ambiguous. It supports UTF-8 memory, instructions
 and skills up to 1 MB and 10,000 lines; executable config, deleted files and symlinks require
-another recovery method. Selection is explicit: copied content is not automatically malicious.
+another recovery method. On development `main` the 1 MB limit is applied before reading: a larger
+file, or a larger recorded version, is refused without being loaded, at the preview and at every
+later check. Whole-version `restore` keeps no such limit.
+Selection is explicit: copied content is not automatically malicious.
+
+On development `main`, `restore`, `agent restore` and `clean` open the folder that holds the file
+once and read, back up and replace the file through that open folder, so a folder swapped for a
+link between review and apply, or during the operation, cannot send the write elsewhere. They
+refuse a path that passes through a symbolic link your user could repoint (a linked project or a
+linked `~/.claude`); links owned by the system, such as `/tmp` on macOS, are followed. A file
+recorded under such a linked path is still watched and reviewed, but must be recovered by hand
+from the diff. If the folder is moved or replaced while a recovery runs, the change is applied
+inside the folder that was opened, the operation is reported as failed in `doctor` with its
+backup, and nothing is written at the path's new target. This is not a lock against other
+programs of yours: one that rewrites the same file in the same folder between the last check and
+the replacement can still lose that write to the quarantine copy. On Windows the checks are made
+on the path before and after instead, which narrows the same gap without closing it.
 
 Applying uses the recovery journal, preserves current file permissions and quarantines the
 entire current version. The new history entry identifies the source change and selected lines;
@@ -202,8 +218,8 @@ instead of asking. An `AGENTDETOX_<KEY>` environment variable overrides the file
 
 The settings, the allowlist and the snapshots are guarded like the agent's own config: an agent
 writing under `~/.agentdetox`, deleting it, or running `agentdetox allow`, `config <key> <value>`,
-`install`, `uninstall`, `agent snapshot`, review mutations or recovery needs your approval, or an injected
-instruction could switch a check off or allow itself.
+`install`, `uninstall`, `agent snapshot`, review mutations, recovery, or stopping or restarting a
+library inspection needs your approval, or an injected instruction could switch a check off or allow itself.
 
 Hooks fail open: if AgentDetox itself errors, the agent's action proceeds, and an unresolved failure
 remains visible in `doctor` and `status`. After investigating, acknowledge its event id with
@@ -213,6 +229,114 @@ a protection failure. Interrupted recoveries show their backup location in docto
 acknowledging it. SQLite fallback errors use `health acknowledge fallback`. `disableAllHooks` is also checked. If an attacker deletes
 the hooks, the session-start check cannot run; `agentdetox agent verify` (by hand or in CI) still
 reports the removal.
+
+## Inspecting a library of memory files
+
+Hooks watch changes. A folder of memory that already exists (thousands of notes an agent or a
+memory tool reloads) needs looking at first. `agentdetox library` inspects one folder you name.
+It is on development `main` and not part of 0.4.1.
+
+```bash
+agentdetox library scan ~/notes/memory        # list the folder; inspect what is new or changed
+agentdetox library scan L1 --background       # the same in a detached worker; returns at once
+agentdetox library status                     # coverage and progress of every library
+agentdetox library review L1                  # files with high or medium findings
+agentdetox library review L1 --state failed   # or low, stale, queued, uninspected, missing, inspected
+agentdetox library review M42                 # one file: version, findings and their line numbers
+agentdetox clean M42                          # list its lines; then --lines, --expected-hash, --apply
+agentdetox library cancel L1                  # stop after the file in hand; scan again to continue
+agentdetox library scan L1 --full             # inspect every file again, changed or not
+agentdetox library scan L1 --restart          # abandon an unfinished run and start a new one
+```
+
+**Scope.** Only the folder you name is read, and nothing above it. Your home folder, a whole
+disk and anything overlapping `~/.agentdetox` are refused. Files ending in `.md`, `.markdown`,
+`.mdc` or `.txt` are candidates and are read as memory text by the same per-file rules that check
+an agent's writes. Every other file is counted as excluded, by extension, and shown in `status`;
+it is not inspected. Symbolic links are counted and never followed, inside the folder or out of
+it. Nothing is sent anywhere, no model runs, and the knowledge-base `scan` command with its
+embedding and clustering is a different command that this one never calls.
+
+**What a scan concludes.** Each candidate is in one of five states:
+
+| State | Meaning |
+|---|---|
+| inspected | Read in full and judged by the rules, at the bytes whose hash is shown |
+| queued | Seen in a listing, not read yet (the run is unfinished) |
+| not inspected | Larger than 1 MB, not UTF-8, binary, a symbolic link, or not a regular file |
+| failed | Could not be read, changed or was replaced while being read, or its folder became a link |
+| missing | Inspected earlier and absent from a complete listing of its folder |
+
+**Stale** is not a sixth state but a qualifier of an inspected file: its conclusion was not
+verified by the latest run, or was made by an older detector. Stale files are counted within
+the inspected ones, `status` says how many there are, and `--state stale` lists them.
+
+An inspected file is **suspicious** when it has a high or medium finding, is listed apart when it
+has **low-severity findings only**, and otherwise has **no findings recorded**. That last phrase
+means the deterministic rules matched nothing in the bytes read. It is never a verdict that a
+file is clean or true: paraphrased instructions and plausible false facts pass, and a first scan
+establishes what was read, not that it can be trusted. Findings whose id you allowed with
+`agentdetox allow <id>` are hidden from these lists; `status` counts how many findings in how many
+files your allowlist hides, and a file whose findings are all hidden is counted on its own line,
+not among the files without findings. The allowlist is applied when a list is shown, so allowing
+or re-flagging an id needs no new scan. At most 50 findings are stored per file, the most severe
+first; the number left out is shown. A rule reports its first match in a file, so cleaning one
+flagged line can reveal another at the next look.
+
+**Versions.** A conclusion belongs to the exact bytes read (their SHA-256) and to the detector
+that judged them: the release, the size limits, and the source text of the rules and of the
+library inspection code itself, so a development build that reads or judges files differently
+is a different detector even without a new version number. File timestamps and line endings of
+the installed code do not count. Every scan reads and hashes every
+candidate again: size and modification time are never taken as proof that a file is unchanged.
+The rules run again only when the bytes or the detector changed; `--full` runs them on every
+file. After an upgrade that changes the rules, earlier conclusions are shown as stale until the
+next scan. Starting any new run marks earlier conclusions stale until that run has verified them.
+
+**Runs.** Progress is saved as the scan goes: which folders are still to be listed and which
+files still to be verified. Ctrl-C, `library cancel`, a crash or a kill lose at most the batch in
+hand, and `library scan` continues the same run, including a run stopped while folders were
+still being listed. A continued run keeps the mode (`--full` or not) and the detector it started
+with; asking for something else is refused, and `--restart` abandons the unfinished run so that
+nothing it verified counts for the new one. One scan runs at a time per store; a second is
+refused. `--background` saves the run, starts a detached worker and waits until the worker has
+taken the run. If the worker fails to start, the command says why (from `~/.agentdetox/library.log`)
+and exits 1; the saved run can then be continued in the foreground. `library scan` exits 0 when the
+run completed, 3 when it was stopped before the end, and 2 when it was refused.
+
+A folder that cannot be listed (permissions, an I/O error) is reported, and the files known below
+it stay as they were, marked stale: a listing error never turns unvisited files into deletions. A
+file is reported missing only when its folder was listed to the end without it. If the library
+folder itself is replaced or recreated (a different folder at the same path), scans and cleanups
+refuse until `library scan L1 --restart`, which discards the earlier conclusions: they described
+another folder. If the inventory file is deleted or emptied, commands say so instead of reporting
+that nothing was ever scanned.
+
+**Cleanup.** `agentdetox clean M42` uses the same preview hash, recovery journal, quarantine copy
+and history as `clean C42`, with these differences. It works on the exact inspected version only:
+after any edit to the file, however unrelated, it refuses until the library is scanned again,
+because the findings and line numbers describe bytes that are no longer there. Every line of the
+file can be chosen, by its line number in that version; the lines the findings point at are
+shown by `library review M42`. Applying records an ordinary history entry, so
+`agentdetox restore C<ID>` undoes it, and the inventory is updated to the cleaned bytes with what
+the rules still find in them. `library review M42` then says that a cleanup inspected those
+bytes, not a scan run, until a later scan verifies them by hash or (`--full`) judges them
+again. Nothing is trusted or checkpointed by a scan or a cleanup. A cleanup never reads more
+than 1 MB of the file, at the preview or at any later check: a file that grew past that after
+it was inspected, even between the preview and the last check before the replacement, is refused
+and left as it is.
+Applying needs a system where AgentDetox can hold the file's folder open (macOS, Linux). On
+Windows the preview works and applying is refused with an explanation: remove the lines with an
+editor and scan again.
+
+An agent needs your approval to run `library cancel`, `library scan --restart` or
+`clean M42 … --apply`; scanning, status, review and cleanup previews are free.
+
+Limits: files over 1 MB and folders nested deeper than 64 levels are not inspected; cleanup keeps
+its 10,000-line limit; contradiction checks, duplicate detection and source attribution do not
+run on libraries; there is no per-file dismissal (use `allow`, a lasting exception everywhere, or
+clean the lines). Scale has been exercised with synthetic folders only; see the
+[large-memory protocol](../bench/LARGE_MEMORY.md).
 
 ## What it does not catch
 

@@ -5,6 +5,38 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ## [Unreleased]
 
+### Added
+
+- `agentdetox library`: inspect an explicitly chosen folder of UTF-8 memory files
+  (`.md`, `.markdown`, `.mdc`, `.txt`). `library scan` keeps a durable inventory in its own
+  database, reads and hashes every candidate on every run, reruns the rules only for changed
+  bytes or a changed detector (`--full` for all), and can be cancelled, killed and continued;
+  `--background` uses a detached worker and reports a failed start. `library status` and
+  `library review` show inspected, suspicious, low-only, queued, not-inspected, failed, stale
+  and missing files, exclusions by extension and what the allowlist hides. Nothing is reported
+  as clean, nothing is checkpointed, and session start does not read the inventory.
+- `agentdetox clean M<ID>` removes chosen lines from an inspected library file through the
+  existing preview hash, journal, quarantine and history (undo with `restore C<ID>`). It applies
+  to the exact inspected version only and is refused on Windows, where the file's folder cannot
+  be held open. The inventory records that a cleanup, not a scan run, inspected the cleaned bytes.
+- A synthetic end-to-end library benchmark harness (`bench/library_eval.py`) and a library step
+  in the installed-wheel journey.
+
+### Security
+
+- `restore`, `agent restore` and `clean` could write outside the reviewed location: a parent
+  folder replaced by a symbolic link, before applying or at the final rename, redirected the
+  write to a file with the same content elsewhere. On macOS and Linux they now open the file's
+  folder once, without following links the user could repoint, and read, back up, replace and
+  delete through that open folder; quarantine copies are written the same way and verified
+  before the target is touched. A folder moved during a recovery leaves a failed operation with
+  its backup, and nothing at the path's new target. **Behavior change:** a path that passes
+  through a user-owned folder link (a linked project or `~/.claude`) is refused by these
+  commands; system links such as `/tmp` on macOS are followed. Windows checks the path before
+  and after each step, which narrows the gap without closing it. No compare-and-swap is claimed
+  against another same-user program changing the same file in the same folder.
+- An agent needs approval to run `library cancel` or `library scan --restart`.
+
 ### Changed
 
 - Persist background contradiction jobs before waking the worker; recover after crashes and
@@ -23,6 +55,13 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ### Fixed
 
+- Selective cleanup applies its 1 MB limit before reading, at the preview and at every later
+  check in the recovery, so a file (or recorded version) that is or has grown larger is refused
+  without being loaded into memory. Whole-version restore is not limited.
+- Prepare selective cleanup (reading, planning, rule scans) without the store lock and recheck
+  the file under it, so a preview no longer makes other hooks wait. Cleaning a file that still is
+  the recorded version, and listing changes to files with thousands of repeated lines, no longer
+  take quadratic time; a change too large to compare within a budget is listed without line counts.
 - Analyze narrowly recognized literal `printf '%s'`/`printf '%s\n'` and quoted `cat` heredoc writes to memory or
   instructions as prose, while scanning the remaining executable shell text independently.
   Benign quoted safety notes no longer produce a false high-severity block. Shell context

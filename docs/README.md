@@ -28,7 +28,7 @@ not silently refreshed to describe current code.
 |---|---|
 | [Offline regression gallery](../bench/ACCURACY.md) | Prevention, monitoring, recovery and explicit known misses; no model calls |
 | [Hook latency](../bench/HOOK_LATENCY.md) | Dated measurements, raw reports and per-case budgets |
-| [Large-memory protocol](../bench/LARGE_MEMORY.md) | Synthetic inventory baseline and future scale, cleanup and observation gates |
+| [Large-memory protocol](../bench/LARGE_MEMORY.md) | Synthetic inventory baseline, the end-to-end library harness, and scale, cleanup and observation gates |
 | [Memory benchmark v0](../bench/MEMORY_BENCHMARK.md) | Historical public-data detector comparison and synthetic transcript evaluation |
 | [Knowledge-base benchmark](../bench/KB_BENCHMARK.md) | Historical scanner comparison on public RAG data |
 | [Real-agent lab](../lab/README.md) | Protocol, authorization, costs and outcome definitions |
@@ -37,7 +37,7 @@ not silently refreshed to describe current code.
 ## Develop and contribute
 
 - [Contributing](../CONTRIBUTING.md): setup, required checks, documentation language and releases.
-- [Architecture](architecture.md): hook processing, observation, storage and recovery.
+- [Architecture](architecture.md): hook processing, observation, storage, recovery and library inspection.
 - [Design decisions](decisions.md): choices and their trade-offs.
 
 Attack payloads in `lab/fixtures`, `examples` and benchmark data are test material. Their language

@@ -65,7 +65,8 @@ CI (`.github/workflows/ci.yml`) runs on every pull request and push to `main`: U
 auditing dependencies, lint, types, the tests, and building and checking the distributions
 (`scripts/check_dist.py`). Each also runs `scripts/check_journey.py dist/*.whl`: a fresh wheel
 installation outside the checkout, registration and maintenance, real hook subprocesses, review,
-whole-version recovery, selective cleanup preserving later edits, and uninstall. The script may download normal package dependencies; it makes no model
+whole-version recovery, selective cleanup preserving later edits, a library scan with review,
+cleanup and undo, and uninstall. The script may download normal package dependencies; it makes no model
 calls and does not validate real-client hook delivery. Windows now also gates CI on the demo,
 lint, types, tests, both offline galleries, distributions and the installed-wheel lifecycle.
 The Windows journey executes registered hooks through Git Bash in paths containing spaces and
@@ -120,6 +121,11 @@ See [docs/architecture.md](docs/architecture.md) for how the pieces fit.
   and values as candidates. Post-tool observation covers scoped persistent changes the parser misses.
 - **Snapshots, restore, quarantine**: `integrity.py`. Never delete a user's file; move it to
   quarantine. Bump `SCHEMA_VERSION` and handle the old format when the store's layout changes.
+  Anything that reads a file and then writes it for the user goes through a `safefs` pin, never
+  through the path twice.
+- **Library inspection**: `library.py`, with its own `library.sqlite3` (bump `VERSION` and
+  migrate when its layout changes). A scan must not take the store lock, store file content,
+  record a checkpoint or report a file as clean, and hooks must not import the module.
 - **The ledger**: `ledger.py`. Changes append transactionally; failures reach the fail-open hook boundary and become visible
   health events. Explicit retention may remove old resolved records. Cleanup must keep every
   referenced content object.

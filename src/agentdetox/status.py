@@ -12,7 +12,7 @@ from .adapters import SHELL_TOOLS
 from .consistency import NLI
 from .context import home_dir, short_path
 from .findings import printable
-from .integrity import StoreError, baseline_entries, usage
+from .integrity import StoreError, baseline_entries, store_dir, usage
 
 ACTIVITY = ("blocked", "asked", "recorded", "contradictions", "notices")
 _DECISIONS = {"deny": "blocked", "ask": "asked", "record": "recorded"}
@@ -66,6 +66,19 @@ def _bucket(row: dict) -> str:
     return {"contradiction": "contradictions", "session_notice": "notices"}.get(row.get("event", ""), "")
 
 
+def _library() -> dict | None:
+    """A few totals of the scanned libraries, counted in the database; None when no folder
+    was ever scanned (the module is then not even loaded)."""
+    if not any((store_dir() / name).exists() for name in ("library.sqlite3", "library.inventory")):
+        return None
+    try:
+        from . import library
+
+        return library.summary()
+    except (OSError, StoreError) as error:
+        return {"error": str(error)}
+
+
 def collect(project: Path, days: int = 7) -> dict:
     problems = [c for c in doctor.run(project) if c.status != "ok"]
     try:
@@ -94,6 +107,7 @@ def collect(project: Path, days: int = 7) -> dict:
         "contradiction_model": NLI.installed() and NLI().available(),
         "model_server": daemon.ping(),
         "background": background.status(),
+        "library": _library(),
         "store": store,
         "config_file": str(settings.config_path()) if settings.config_path().exists() else None,
         "allowed": len(allowlist.entries()),
@@ -154,6 +168,16 @@ def render(data: dict) -> str:
                      + (f" ({st['unreferenced']} superseded, cleaned daily)" if st["unreferenced"] else "")
                      + f", {st['quarantined']} quarantined file(s)")
 
+    lib = data.get("library")
+    if lib and "error" in lib:
+        row("Library", f"inventory unavailable: {lib['error']}")
+    elif lib:
+        row("Library", f"{lib['candidates']:,} candidate file(s) in {lib['libraries']} folder(s): "
+                       f"{lib['suspicious']:,} suspicious, {lib['unverified']:,} queued, not inspected or failed, "
+                       f"{lib['stale']:,} stale"
+                       + ("; a scan is running" if lib["running"] else
+                          "; an unfinished scan can be continued" if lib["unfinished"] else ""),
+            "`agentdetox library status`")
     row("Review", f"{data.get('pending_reviews', 0)} change(s) need attention; `agentdetox review`",
         "Weekly changes: `agentdetox review --since 7d`")
     row("Allowlist", f"{data['allowed']} id(s)" + (" (`agentdetox allow --list`)" if data["allowed"] else ""))

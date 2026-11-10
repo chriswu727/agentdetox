@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated 2026-11-09. Current published release:
+Last updated 2026-11-10. Current published release:
 [0.4.1](https://github.com/chriswu727/agentdetox/releases/tag/v0.4.1). The
 [changelog](CHANGELOG.md) records releases; this document separates
 implemented capabilities from product hypotheses and future work.
@@ -38,7 +38,9 @@ Track these outcomes independently:
 - Recovery: exact restored bytes, refusal to overwrite newer work, quarantine copies and residual
   findings. Whole-version restoration can still undo benign additions in the same change. On
   `main`, explicit selected-line cleanup preserves unselected content and non-conflicting later
-  edits, with a preview hash, conflict refusal, quarantine and residual scanning.
+  edits, with a preview hash, conflict refusal, quarantine and residual scanning. Also on `main`,
+  recovery and cleanup write through an opened folder on POSIX, so a parent folder replaced by a
+  link cannot redirect them; a same-user program racing the final replacement is not excluded.
 
 Block a release on a failed journey, a new regression or a hook error. Keep acknowledged semantic
 misses visible in every accuracy report; a passing regression gate is not a claim of complete
@@ -99,6 +101,14 @@ The agreed delivery sequence is:
 2. Add scoped lifecycle evidence and large-library inspection: initial inventory, full and
    incremental background scans, progress, interruption recovery, version-bound findings and
    reviewed cleanup. Start with files; database/vector adapters require separate validation.
+   On development `main`: `agentdetox library` inspects an explicitly chosen folder of UTF-8
+   memory files with a durable inventory, content-hash incremental runs, cancellation and
+   resumption, a detached worker, and exact-version cleanup through the existing journal and
+   quarantine. Synthetic 1k/10k full and incremental inspection contracts and all original
+   hook latency budgets during a continuously active scan passed on the development Mac;
+   raw evidence is in the large-memory protocol. Not done: a completed 100k inspection,
+   real-library false-positive review, per-file dismissal, applying cleanup on Windows,
+   context-dependent checks (contradictions, duplicates, attribution) and any adapter.
 3. Validate sustained maintainer use and release a scoped stable capability. Thirty qualifying
    active days is a proposed gate, not a claim already achieved or a reason to recruit users.
 4. Research semantic attacks, including paraphrase and poisoned consolidation. This can start

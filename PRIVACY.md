@@ -16,6 +16,10 @@ choose them:
 ## What it reads
 
 - The files it watches: the agent's memory, instruction and rules files, skills and config.
+- Only when you run `agentdetox library scan <folder>`: the names of everything in that folder
+  and the content of its `.md`, `.markdown`, `.mdc` and `.txt` files up to 1 MB each. Links are
+  not followed. Cleaning a library file stores the versions before and after in `objects/` and a
+  quarantine copy, as any recovery does.
 - For the provenance check, the end of the current Claude Code session transcript (at most the
   last 4 MB), to compare a memory write with what the agent read in the last three of your
   prompts. The transcript is read, not copied.
@@ -35,6 +39,8 @@ Everything lives in `~/.agentdetox` (or `AGENTDETOX_HOME`), private to your user
 | `sqlite-migrated` | Marker preventing a deleted database from silently reimporting stale legacy files |
 | `background/` | On development `main`: durable contradiction jobs containing earlier text and captured bytes, retry metadata and retained failures; private files removed after completion or retention expiry |
 | `pending/` | Legacy contradiction jobs used by 0.4.1; the development worker adopts them into `background/` |
+| `library.sqlite3`, `library.inventory` | On development `main`, only after `agentdetox library scan`: for each folder you scanned, its path and filesystem identity, every candidate file's relative path, size, content hash and state, per-folder counts of excluded files by extension, run history, and for each finding its id, rule, severity, message, an excerpt of at most 200 characters and line numbers (at most 50 findings per file). No file content beyond those excerpts. The marker file lets a deleted inventory be reported as lost |
+| `library.log`, `library.lock` | The detached scan worker's start, finish and error lines, and the lock that allows one scan at a time |
 | `config.toml`, `allowlist.json` | Your settings and the ids you allowed |
 | `daemon.log`, `*.lock`, `nli.sock` | The model server's log, locks and socket |
 
