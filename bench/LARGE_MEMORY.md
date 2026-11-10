@@ -52,8 +52,55 @@ continued to full coverage rather than restarted.
 
 It does **not** measure hooks while a scan runs, the detached worker, process kills (covered
 by tests, not timed), cleanup, real libraries or any false-positive rate, and it runs on one
-filesystem. No result of this harness is recorded here yet: measurements are to be taken in
-isolation and added with their raw reports. The 100k tier has not been run.
+filesystem. The full 100k tier has not been run.
+
+On 2026-11-10, runtime `eae840a` passed all seven harness contracts in separate processes on
+the development Mac, without concurrent tests or benchmarks. Raw reports retain CPU time,
+corpus hashes, coverage and known misses: [1k](results/library-1000-2026-11-10.json) and
+[10k](results/library-10000-2026-11-10.json).
+
+| Files | Note bytes | First inspection | Unchanged incremental | 1% changed | Peak RSS | Inventory |
+|---|---:|---:|---:|---:|---:|---:|
+| 1,000 | 1,088,690 | 0.829 s | 0.043 s | 0.050 s | 28.6 MB | 0.44 MB |
+| 10,000 | 41,880,640 | 30.491 s | 0.909 s | 0.771 s | 39.0 MB | 3.81 MB |
+
+These are single runs, not latency distributions; elapsed times vary with filesystem caching
+and scheduling. The unchanged runs hash every candidate but execute zero rule scans; the
+changed runs inspect exactly 10 and 100 changed files. Neither run copies content into the
+store. Injected cancellation is acknowledged in 1.29 ms and 0.45 ms, respectively, and both
+resume to complete coverage. Those cancellation times measure the harness callback, not CLI
+startup or a user command round trip. The 50 and 500 seeded unsupported-fact cases remain
+explicit known semantic misses. This is inventory evidence, not a real-world accuracy estimate.
+
+### Hook latency during inspection
+
+```bash
+.venv/bin/python -m bench.hook_latency --samples 100 --output /tmp/hooks-library-idle.json
+.venv/bin/python -m bench.library_hook_latency --samples 100 --files 100000 --minimum-bytes 4096 --output /tmp/hooks-library-active.json
+```
+
+The load harness calls the original hook benchmark with its original cases and budgets. It
+starts a full library scan in a separate process using the same store as the hooks, then checks
+that the same scan remains in inspection and makes progress throughout the measurement. It
+stops its worker before deleting the temporary corpus. A completed or failed worker invalidates
+the load measurement. NLI inference is excluded, as in the original hook benchmark.
+
+Runtime `eae840a` passed all 12 original budgets with 100 samples per case both
+[idle](results/hooks-library-idle-2026-11-10.json) and
+[during a scan](results/hooks-library-active-2026-11-10.json). The single scan used 100,000
+synthetic files (418,827,640 bytes), advancing from 0 to 48,600 verified files while the hooks
+ran. It was then cancelled normally. This proves a continuously active inspection load for
+this measurement; it is **not** a completed 100k inspection or a production-scale claim.
+
+| Hook case | Idle P95 | During scan P95 | Original budget |
+|---|---:|---:|---:|
+| Bash pre + post, no context write | 110.1 ms | 112.6 ms | 200 ms |
+| Four protected writes plus Bash pre/post | 258.9 ms | 306.4 ms | 1,000 ms |
+| SessionStart, 1,000 unchanged files | 123.1 ms | 135.4 ms | 250 ms |
+| Bash pre + post, 1,000 active plus 1,000 unrelated memory files | 217.0 ms | 227.2 ms | 350 ms |
+
+The two conditions ran sequentially on one Mac; they are not a randomized multi-host trial.
+All per-case samples, original budgets and worker-progress evidence are in the reports.
 
 ## Product acceptance, before claiming scale support
 

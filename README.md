@@ -158,10 +158,11 @@ which remain visible in `doctor` and `status`. Code running as your user can alt
   scenario. This supplements the ten-scenario 0.4.1 acceptance; it is not a full rerun.
   Guardrail success and user-task completion are reported separately.
   [Recorded results](https://github.com/chriswu727/agentdetox/blob/main/lab/results/latest.md).
-- **Reference latency, 2026-11-05:** 100 samples per case on one Mac, no NLI inference. All 12
-  budgets passed in the initial reference run; later contention failures and focused follow-ups are retained. Bash pre/post P95 **145.6 ms**; a 100-line post-write check with a 3.9 MB transcript
-  **95.3 ms**; four concurrent writes plus a Bash pre/post pair **491.0 ms**.
-  [Method, raw data and budgets](https://github.com/chriswu727/agentdetox/blob/main/bench/HOOK_LATENCY.md).
+- **Development latency, 2026-11-10:** 100 samples per case on one Mac, no NLI inference.
+  All 12 original budgets passed both idle and during a library scan. Under that scan load,
+  Bash pre/post P95 was **112.6 ms**; startup with 1,000 unchanged files **135.4 ms**;
+  four concurrent writes plus a Bash pre/post pair **306.4 ms**. Earlier failures remain retained.
+  [Method, raw data and limits](https://github.com/chriswu727/agentdetox/blob/main/bench/LARGE_MEMORY.md#hook-latency-during-inspection).
 
 Source matching is evidence of copied text, not proof of malicious intent or human authorship.
 An empty rescan does not certify a file as safe.
