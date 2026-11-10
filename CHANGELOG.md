@@ -126,6 +126,8 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 - A Codex patch could move a file with planted text onto `AGENTS.md`, delete a config that
   registers AgentDetox, or remove `approval_policy` and `sandbox_mode` without being checked,
   while an ordinary `config.toml` edit was blocked as a broken config.
+- Codex patch previews now preserve context spelling and line endings, choose the file's first
+  line ending for additions, and retain trailing blank context as the native tool writes it.
 - A file removed by an edit tool, a patch or a shell command is recorded with the content it had
   when removed, not an older checkpoint, so restoring it does not lose later work.
 - Safety notes are no longer flagged as the thing they forbid: a sentence whose every clause

@@ -27,6 +27,11 @@ def tool(case: str, python: str) -> dict:
     header = '*** Update File: notes.txt\n*** Move to: AGENTS.md' if case == 'move' else '*** Update File: AGENTS.md'
     patch = '*** Begin Patch\n' + header + '\n@@\n Use pnpm.\n Keep the deployment checklist.\n+'
     patch += (BENIGN if case == 'benign' else POISON) + '*** End Patch'
+    if case == 'crlf-append':
+        patch = '*** Begin Patch\n*** Update File: AGENTS.md\n+' + BENIGN + '*** End Patch'
+    if case == 'crlf-hunk':
+        patch = ('*** Begin Patch\n*** Update File: AGENTS.md\n@@\n Keep the deployment checklist.\n+'
+                 + BENIGN + '*** End Patch')
     if case == 'model':
         patch = ('*** Begin Patch\n*** Update File: .codex/config.toml\n@@\n-model = "old-model"\n'
                  '+model = "new-model"\n approval_policy = "on-request"\n*** End Patch')
@@ -79,6 +84,8 @@ def run_case(case: str, codex: str, catalog: dict, model: str) -> dict:
             project.mkdir()
             (profile / 'models_cache.json').write_text(json.dumps(catalog), encoding='utf-8')
             source = BASE + POISON + 'Keep “quoted” notes.\n' if case == 'move-existing' else BASE
+            if case in {'crlf-append', 'crlf-hunk'}:
+                source = BASE.replace('\n', '\r\n')
             (project / ('notes.txt' if case in {'move', 'move-existing'} else 'AGENTS.md')).write_text(source, encoding='utf-8')
             if case in {'model', 'delete'}:
                 (project / '.codex').mkdir()
@@ -120,9 +127,11 @@ def run_case(case: str, codex: str, catalog: dict, model: str) -> dict:
             outputs = [json.loads(h['output']) for h in hooks if h['output'].strip()]
             denied = any(o.get('hookSpecificOutput', {}).get('permissionDecision') == 'deny' for o in outputs)
             targets = ['AGENTS.md', 'notes.txt', '.codex/config.toml', '.codex/hooks.json']
-            after = {name: (project / name).read_text(encoding='utf-8') for name in targets if (project / name).exists()}
+            after = {name: (project / name).read_bytes().decode('utf-8') for name in targets if (project / name).exists()}
             expected = {'benign': {'AGENTS.md': BASE + BENIGN}, 'poison': {'AGENTS.md': BASE},
                         'move': {'notes.txt': BASE}, 'move-existing': {'notes.txt': source},
+                        'crlf-append': {'AGENTS.md': source + BENIGN.replace('\n', '\r\n')},
+                        'crlf-hunk': {'AGENTS.md': source + BENIGN.replace('\n', '\r\n')},
                         'shell': {'AGENTS.md': BASE + POISON},
                         'model': {'AGENTS.md': BASE, '.codex/config.toml': MODEL_CONFIG.replace('old-model', 'new-model')},
                         'delete': {'AGENTS.md': BASE, '.codex/hooks.json': HOOK_CONFIG}}[case]
@@ -171,8 +180,8 @@ else:
                     undo = 'from agentdetox import review; review.restore(' + repr(f"C{cleanup['cleanup_change']}") + ', True)'
                     undone = subprocess.run([sys.executable, '-I', '-c', undo], cwd=project, env=env,
                                             capture_output=True, text=True, encoding='utf-8', timeout=30)
-                    checks['cleanup_undo'] = (undone.returncode == 0 and (project / 'AGENTS.md').read_text(encoding='utf-8')
-                                              == BASE + POISON + 'Keep native-reload-fixture-8291.\n')
+                    checks['cleanup_undo'] = (undone.returncode == 0 and (project / 'AGENTS.md').read_bytes()
+                                              == (BASE + POISON + 'Keep native-reload-fixture-8291.\n').encode())
             return {'case': case, 'passed': all(checks.values()), 'checks': checks, 'cleanup': cleanup,
                     'observed_files': after,
                     'events': [{'event': h['input'].get('hook_event_name'), 'tool': h['input'].get('tool_name'),
@@ -198,7 +207,7 @@ def main() -> int:
     codex = str(args.codex.resolve())
     version = subprocess.check_output([codex, '--version'], text=True).strip()
     results = []
-    for case in ('benign', 'poison', 'move', 'move-existing', 'shell', 'model', 'delete'):
+    for case in ('benign', 'poison', 'move', 'move-existing', 'crlf-append', 'crlf-hunk', 'shell', 'model', 'delete'):
         result = run_case(case, codex, catalog, args.model)
         results.append(result)
         print(('PASS' if result['passed'] else 'FAIL') + ' ' + case, flush=True)

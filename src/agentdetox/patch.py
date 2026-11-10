@@ -14,16 +14,25 @@ The envelope is the one Codex's own tool reads:
 
 Hunks are placed as Codex places them: each after the one before, looking for its context
 and removed lines exactly, then ignoring trailing blanks, then leading ones too, then with
-look-alike punctuation folded; a hunk with nothing to look for goes at the end of the file. A patch that does not fit the
-file as it is now (Codex would reject it) or that uses anything outside this grammar is
-not guessed at: the change carries a `problem`, and its content after is the content
-before (for a move, of the file being moved) with the added lines appended, so that both
-what the patch adds and what it would carry along are still checked.
+look-alike punctuation folded; a hunk with nothing to look for goes at the end of the file.
+
+The bytes written are the tool's too, as its own apply_patch (codex-cli 0.167) was seen to
+write them: a line the patch leaves alone or names as context stays as the file has it,
+spelling and line ending both, even where the patch spells it differently; an added line
+takes the file's first line ending (CRLF, LF or a lone CR; LF in a file with none); the last
+line always ends in one. A new file is written with LF.
+
+A patch that does not fit the file as it is now (Codex would reject it) or that uses
+anything outside this grammar is not guessed at: the change carries a `problem`, and its
+content after is the content before (for a move, of the file being moved) with the added
+lines appended, so that both what the patch adds and what it would carry along are still
+checked.
 """
 
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,9 +52,13 @@ class FileChange:
 @dataclass
 class _Hunk:
     context: str | None = None
-    old: list[str] = field(default_factory=list)
-    new: list[str] = field(default_factory=list)
+    # Its lines in order, each with what it is: " " context, "-" removed, "+" added.
+    lines: list[tuple[str, str]] = field(default_factory=list)
     at_end: bool = False
+
+    @property
+    def old(self) -> list[str]:
+        return [text for kind, text in self.lines if kind != "+"]
 
 
 def _read(path: Path) -> str | None:
@@ -180,18 +193,12 @@ def _hunks(body: list[str]) -> tuple[list[_Hunk], str]:
             hunks.append(_Hunk())  # the first hunk of a file may come without @@
         hunk = hunks[-1]
         if line == "":
-            hunk.old.append("")
-            hunk.new.append("")
-        elif line[0] == " ":
-            hunk.old.append(line[1:])
-            hunk.new.append(line[1:])
-        elif line[0] == "-":
-            hunk.old.append(line[1:])
-        elif line[0] == "+":
-            hunk.new.append(line[1:])
+            hunk.lines.append((" ", ""))
+        elif line[0] in " -+":
+            hunk.lines.append((line[0], line[1:]))
         else:
             return [], f"a hunk has a line that is neither context, removal nor addition: {line[:60]!r}"
-    if not hunks or any(not h.old and not h.new for h in hunks):
+    if not hunks or any(not h.lines for h in hunks):
         return [], "it has an Update File section without a change"
     return hunks, ""
 
@@ -224,34 +231,61 @@ def _seek(lines: list[str], wanted: list[str], start: int, at_end: bool) -> int 
     return None
 
 
+_ENDING = re.compile(r"\r\n|\n|\r")
+
+
 def _apply(text: str, hunks: list[_Hunk]) -> tuple[str | None, str]:
-    lines = text.split("\n")
-    if lines and lines[-1] == "":
-        lines.pop()
-    replacements: list[tuple[int, int, list[str]]] = []
+    # Each line of the file with its own ending; "" for a last line that has none. An ending
+    # of None marks a line the patch adds, which takes the file's.
+    lines: list[tuple[str, str | None]] = []
+    start = 0
+    for ending in _ENDING.finditer(text):
+        lines.append((text[start:ending.start()], ending.group()))
+        start = ending.end()
+    if start < len(text):
+        lines.append((text[start:], ""))
+    file_ending = lines[0][1] or "\n" if lines else "\n"
+    content = [line for line, _ in lines]
+    replacements: list[tuple[int, int, list[tuple[str, str | None]]]] = []
     position = 0
     for hunk in hunks:
         if hunk.context is not None:
-            found = _seek(lines, [hunk.context], position, False)
+            found = _seek(content, [hunk.context], position, False)
             if found is None:
                 return None, f"the file has no line {hunk.context[:60]!r} for a hunk to start from"
             position = found + 1
+        steps = hunk.lines
         if not hunk.old:
-            replacements.append((len(lines), 0, hunk.new))
+            replacements.append((len(lines), 0, [(added, None) for _, added in steps]))
             continue
-        old, new = hunk.old, hunk.new
-        found = _seek(lines, old, position, hunk.at_end)
-        if found is None and old[-1] == "":
-            # A trailing empty line in the hunk stands for the file's final newline.
-            old, new = old[:-1], new[:-1] if new and new[-1] == "" else new
-            found = _seek(lines, old, position, hunk.at_end)
+        found = _seek(content, hunk.old, position, hunk.at_end)
+        if found is None and hunk.old[-1] == "":
+            # The hunk ends in an empty line the file does not have there (it stood for the
+            # final newline). The tool then stops looking for that line but, when it was
+            # context, still writes it, as a blank line of the patch's own; and it drops one
+            # empty line from the end of what it writes, if there is one.
+            last = max(i for i, (kind, _) in enumerate(steps) if kind != "+")
+            steps = steps[:last] + ([("+", "")] if steps[last][0] == " " else []) + steps[last + 1:]
+            kept = [i for i, (kind, _) in enumerate(steps) if kind != "-"]
+            if kept and steps[kept[-1]][1] == "":
+                steps = steps[:kept[-1]] + steps[kept[-1] + 1:]
+            found = _seek(content, [line for kind, line in steps if kind != "+"], position, hunk.at_end)
         if found is None:
             return None, "a hunk's context and removed lines are not in the file as it is now"
-        replacements.append((found, len(old), new))
-        position = found + len(old)
+        written: list[tuple[str, str | None]] = []
+        at = found
+        for kind, line in steps:
+            if kind == "+":
+                written.append((line, None))
+            else:
+                if kind == " ":
+                    written.append(lines[at])   # the file's own line, not the patch's spelling of it
+                at += 1
+        replacements.append((found, at - found, written))
+        position = at
     for index, count, new in sorted(replacements, key=lambda r: r[0], reverse=True):
         lines[index:index + count] = new
-    return "".join(line + "\n" for line in lines), ""
+    return "".join(line + (ending or file_ending) for line, ending in lines), ""
 
 
 def touched(patch: str, response: object, base: Path) -> list[Path]:

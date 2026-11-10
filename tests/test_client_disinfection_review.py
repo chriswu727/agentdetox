@@ -389,3 +389,41 @@ def test_openclaw_json5_read_only_scan_does_not_initialize_state(client_env, cap
     after = {str(p.relative_to(store)): p.read_bytes() for p in store.rglob('*') if p.is_file()}
     assert after == before, 'A read-only scan created or changed persistent cache/state files'
     assert existing_store or not store.exists()
+
+
+@pytest.mark.parametrize('body', ['+three', '@@\n two\n+three'])
+@pytest.mark.parametrize('before,expected', [
+    (b'one\ntwo\n', b'one\ntwo\nthree\n'),
+    (b'one\r\ntwo\r\n', b'one\r\ntwo\r\nthree\r\n'),
+    (b'one\r\ntwo\n', b'one\r\ntwo\nthree\r\n'),
+    (b'one\ntwo\r\n', b'one\ntwo\r\nthree\n'),
+    (b'one\r\ntwo', b'one\r\ntwo\r\nthree\r\n'),
+    (b'one\ntwo', b'one\ntwo\nthree\n'),
+])
+def test_codex_patch_predictions_match_native_line_ending_evidence(tmp_path, body, before, expected):
+    from agentdetox.patch import changes
+
+    path = put(tmp_path / 'test.md', before)
+    [change] = changes('*** Begin Patch\n*** Update File: test.md\n' + body + '\n*** End Patch', tmp_path)
+    assert not change.problem
+    assert change.new.encode() == expected
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize('body,ending', [
+    ('@@\n three\n \n+end', 'end'),
+    ('@@\n three\n \n+', ''),
+])
+@pytest.mark.parametrize('before,base,eol', [
+    (b'one\ntwo\nthree\n', b'one\ntwo\nthree\n', b'\n'),
+    (b'one\r\ntwo\r\nthree\r\n', b'one\r\ntwo\r\nthree\r\n', b'\r\n'),
+    (b'one\r\ntwo\nthree\r\n', b'one\r\ntwo\nthree\r\n', b'\r\n'),
+    (b'one\r\ntwo\nthree', b'one\r\ntwo\nthree\r\n', b'\r\n'),
+])
+def test_codex_trailing_empty_context_matches_native_bytes(tmp_path, body, ending, before, base, eol):
+    from agentdetox.patch import changes
+
+    put(tmp_path / 'test.md', before)
+    [change] = changes('*** Begin Patch\n*** Update File: test.md\n' + body + '\n*** End Patch', tmp_path)
+    assert not change.problem
+    assert change.new.encode() == base + eol + (ending.encode() + eol if ending else b'')

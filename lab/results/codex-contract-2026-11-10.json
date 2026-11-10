@@ -54,6 +54,30 @@
       }
     },
     {
+      "case": "crlf-append",
+      "passed": true,
+      "checks": {
+        "client_completed": true,
+        "expected_file_bytes": true,
+        "hook_execution_healthy": true,
+        "decision": true,
+        "native_event_sequence": true,
+        "canonical_tool_name": true
+      }
+    },
+    {
+      "case": "crlf-hunk",
+      "passed": true,
+      "checks": {
+        "client_completed": true,
+        "expected_file_bytes": true,
+        "hook_execution_healthy": true,
+        "decision": true,
+        "native_event_sequence": true,
+        "canonical_tool_name": true
+      }
+    },
+    {
       "case": "shell",
       "passed": true,
       "checks": {
@@ -94,6 +118,6 @@
       }
     }
   ],
-  "source_sha256": "4bc143c1280a5508ec04faadbcb77856c5c2052fc9fc652e065fa52386fd71a7",
+  "source_sha256": "b44a54afe2d322347245680a8e60d376411229eb033c1c5331a042b0fcb8ed94",
   "source_hash_method": "SHA256 of sorted src/agentdetox/*.py relative path, NUL, bytes, NUL"
 }

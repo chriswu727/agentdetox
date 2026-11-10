@@ -103,7 +103,7 @@ leaving the requested edit undone. Other tasks have no automatic completion orac
 
 ## 0.4.1 acceptance, 2026-11-05
 
-The subsequent [2026-11-09 development run](results/latest.md) covers two new scenarios with
+The subsequent [2026-11-09 development run](results/2026-11-09.json) covers two new scenarios with
 four real sessions, including two retained quiet-use failures and a clarified editing-only
 scenario. It does not replace the broader 0.4.1 acceptance below.
 

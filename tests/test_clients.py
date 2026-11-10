@@ -44,7 +44,9 @@ def env(tmp_path, monkeypatch):
 
 def put(path, text=BASE):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding='utf-8')
+    # Bytes: a text-mode write would turn every "\n" into "\r\n" on Windows, and these
+    # fixtures say which line endings a file has.
+    path.write_bytes(text.encode('utf-8'))
     return path
 
 
@@ -211,11 +213,14 @@ def test_an_oversized_openclaw_config_is_reported_not_parsed(env, monkeypatch):
     ('{ agents: { defaults: { workspace: ', 'could not be read as JSON or JSON5'),
     ('{"agents": {"defaults": {"workspace": "${AGENTDETOX_TEST_UNSET}/ws"}}}', 'is not set here'),
     ('{"agents": {"defaults": {"workspace": "relative/ws"}}}', 'relative path'),
-    ('{"agents": {"defaults": {"workspace": "/nonexistent/agentdetox-ws"}}}', 'does not exist'),
+    ('{"agents": {"defaults": {"workspace": MISSING}}}', 'does not exist'),
     ('{"$include": "more.json5", "agents": {}}', '$include'),
 ])
 def test_an_openclaw_config_that_cannot_be_resolved_is_reported_not_passed_over(env, capsys, config, problem):
     home, project = env
+    # An absolute path on this platform: "/nonexistent" has no drive on Windows, where it is
+    # not absolute and is reported as such, not as missing.
+    config = config.replace('MISSING', json.dumps(str(home / 'no such workspace')))
     put(home / '.openclaw/openclaw.json', config)
     looked = survey(['openclaw'], None, home)
     assert any(problem in text for text in looked.problems), looked.problems
@@ -312,10 +317,94 @@ def test_a_patch_is_modelled_as_the_tool_applies_it(tmp_path):
     assert after('*** Update File: a.md', '*** Move to: b/c.md', '@@', ' one', '+x') == {
         'a.md': (None, ''), 'c.md': ('one\nx\ntwo\nthree\n', '')}
     assert after('*** Delete File: a.md', '*** Add File: new.md', '+hello') == {'a.md': (None, ''), 'new.md': ('hello\n', '')}
-    # The tool writes a hunk's own lines back, context included, so matched lines lose their CR.
-    assert after('*** Update File: crlf.md', '@@', ' two', '+3')['crlf.md'][0] == 'one\r\ntwo\n3\n'
+    # A context line stays as the file has it and an added line takes the file's line ending.
+    assert after('*** Update File: crlf.md', '@@', ' two', '+3')['crlf.md'][0] == 'one\r\ntwo\r\n3\r\n'
     assert after('*** Update File: a.md', '@@', ' one', '+x', '*** Update File: a.md', '@@', ' x', '+y') == {
         'a.md': ('one\nx\ny\ntwo\nthree\n', '')}
+
+
+# What codex-cli 0.167.0-alpha.3.2's own apply_patch wrote (`codex --codex-run-as-apply-patch`, in a
+# throwaway folder, 2026-11-10): the file before, the lines of one Update File section, the file after.
+NATIVE_UPDATES = [
+    # an added line takes the file's first line ending; lines left alone keep their own
+    (b'one\r\ntwo\r\nthree\r\n', ['+four'], b'one\r\ntwo\r\nthree\r\nfour\r\n'),
+    (b'one\ntwo\nthree\n', ['+four'], b'one\ntwo\nthree\nfour\n'),
+    (b'one\r\ntwo\nthree\r\n', ['+four'], b'one\r\ntwo\nthree\r\nfour\r\n'),
+    (b'one\ntwo\r\nthree\n', ['+four'], b'one\ntwo\r\nthree\nfour\n'),
+    (b'one\r\ntwo\nthree\n', ['+four'], b'one\r\ntwo\nthree\nfour\r\n'),              # first ending, not the commonest
+    (b'one\ntwo\r\nthree\r\n', ['+four'], b'one\ntwo\r\nthree\r\nfour\n'),
+    (b'one\ntwo\r\nthree\r\nfour\r\n', ['+five'], b'one\ntwo\r\nthree\r\nfour\r\nfive\n'),
+    (b'one\rtwo\r', ['+three'], b'one\rtwo\rthree\r'),                                   # a lone CR is an ending too
+    (b'a\rb\nc\n', ['@@', ' c', '+x'], b'a\rb\nc\nx\r'),
+    (b'a\rb\nc\n', ['@@', ' b', '+x'], b'a\rb\nx\rc\n'),
+    # a context line stays as the file has it, ending and spelling
+    (b'one\r\ntwo\r\n', ['@@', ' two', '+3'], b'one\r\ntwo\r\n3\r\n'),
+    (b'one\ntwo\nthree\r\n', ['@@', ' one', '+x'], b'one\nx\ntwo\nthree\r\n'),
+    (b'one\ntwo\r\nthree\nfour\n', ['@@', ' two', '+x'], b'one\ntwo\r\nx\nthree\nfour\n'),
+    (b'one\r\ntwo\nthree\nfour\n', ['@@', ' three', '+x'], b'one\r\ntwo\nthree\nx\r\nfour\n'),
+    (b'one  \ntwo\n', ['@@', ' one', '+x'], b'one  \nx\ntwo\n'),
+    (b'  one\ntwo\n', ['@@', ' one', '+x'], b'  one\nx\ntwo\n'),
+    ('Keep \u201cquoted\u201d notes.\ntwo\n'.encode(), ['@@', ' Keep "quoted" notes.', '+x'],
+     'Keep \u201cquoted\u201d notes.\nx\ntwo\n'.encode()),
+    # a replaced line takes the file's ending, not the one the removed line had
+    (b'one\r\ntwo\r\nthree\r\n', ['@@', ' one', '-two', '+TWO', ' three'], b'one\r\nTWO\r\nthree\r\n'),
+    (b'one\r\ntwo\nthree\r\n', ['@@', ' one', '-two', '+TWO', ' three'], b'one\r\nTWO\r\nthree\r\n'),
+    (b'one\r\ntwo\r\nthree\n', ['@@', '-three', '+THREE'], b'one\r\ntwo\r\nTHREE\r\n'),
+    (b'one\ntwo\nthree\r\n', ['@@', '-three', '+THREE', '+four'], b'one\ntwo\nTHREE\nfour\n'),
+    (b'a\r\nb\r\n', ['@@', ' a', '-b'], b'a\r\n'),
+    # the last line always ends in one
+    (b'one\r\ntwo', ['+three'], b'one\r\ntwo\r\nthree\r\n'),
+    (b'one\ntwo', ['+three'], b'one\ntwo\nthree\n'),
+    (b'one\r\ntwo', ['@@', '-one', '+ONE'], b'ONE\r\ntwo\r\n'),
+    (b'one\ntwo', ['@@', '-one', '+ONE'], b'ONE\ntwo\n'),
+    (b'one', ['+two'], b'one\ntwo\n'),
+    (b'', ['+x'], b'x\n'),
+    # a hunk ending in an empty line the file does not have there: the tool stops looking for that
+    # line, still writes it when it was context, and drops one empty line from the end of what it writes
+    (b'one\ntwo\nthree\n', ['@@', ' three', '+end', ' '], b'one\ntwo\nthree\nend\n'),
+    (b'one\ntwo\nthree\n', ['@@', ' three', ' ', '+end', '+'], b'one\ntwo\nthree\n\nend\n'),
+    (b'one\ntwo\nthree\n', ['@@', ' three', '+end', '+', ' '], b'one\ntwo\nthree\nend\n\n'),
+    (b'one\ntwo\nthree\n', ['@@ two', ' three', ' ', '+end'], b'one\ntwo\nthree\n\nend\n'),
+    (b'one\r\ntwo\nthree', ['@@', ' three', ' ', '+end', '*** End of File'], b'one\r\ntwo\nthree\r\n\r\nend\r\n'),
+    (b'three', ['@@', '-three', ' ', '+end'], b'\nend\n'),
+    (b'one\ntwo\nthree\n', ['@@', ' ', '+x'], b'\nx\none\ntwo\nthree\n'),      # nothing left to look for: at the top
+    # an empty context line the file does have is an ordinary context line
+    (b'one\ntwo\nthree\n\n', ['@@', ' three', ' ', '+end'], b'one\ntwo\nthree\n\nend\n'),
+    (b'one\n\nthree\n', ['@@', ' one', ' ', ' three', '+x'], b'one\n\nthree\nx\n'),
+]
+
+
+@pytest.mark.parametrize('before,lines,native', NATIVE_UPDATES)
+def test_the_patch_model_writes_the_bytes_the_native_tool_was_seen_to_write(tmp_path, before, lines, native):
+    (tmp_path / 'f.md').write_bytes(before)
+    [change] = patch.changes('\n'.join(('*** Begin Patch', '*** Update File: f.md', *lines, '*** End Patch')), tmp_path)
+    assert change.problem == '' and change.old.encode() == before and change.new.encode() == native
+
+
+def test_a_trailing_empty_line_that_changes_nothing_or_does_not_fit_is_modelled_as_the_tool_treats_it(tmp_path):
+    def after(*lines):
+        (tmp_path / 'f.md').write_bytes(b'one\ntwo\nthree\n')
+        return patch.changes('\n'.join(('*** Begin Patch', '*** Update File: f.md', *lines, '*** End Patch')), tmp_path)
+
+    assert after('@@', ' three', ' ') == []        # the tool reports success and leaves the file as it was
+    assert after('@@', ' three', '-') == []
+    [unfit] = after('@@', ' three', ' ', ' ', '+end')     # only one trailing empty line is forgiven: the tool rejects this
+    assert 'not in the file as it is now' in unfit.problem and unfit.new == 'one\ntwo\nthree\nend\n'
+
+
+def test_the_patch_model_matches_native_bytes_for_new_moved_and_crlf_patches(tmp_path):
+    def after(text):
+        return {c.path.name: c.new for c in patch.changes(text, tmp_path)}
+
+    (tmp_path / 'moved_src.md').write_bytes(b'one\r\ntwo\r\n')
+    assert after('*** Begin Patch\n*** Update File: moved_src.md\n*** Move to: moved_dst.md\n@@\n one\n+x\n*** End Patch') == {
+        'moved_src.md': None, 'moved_dst.md': 'one\r\nx\r\ntwo\r\n'}
+    assert after('*** Begin Patch\n*** Add File: added.md\n+one\n+two\n*** End Patch') == {'added.md': 'one\ntwo\n'}
+    (tmp_path / 'overwritten.md').write_bytes(b'old\r\n')     # a new file is LF, whatever it replaces
+    assert after('*** Begin Patch\n*** Add File: overwritten.md\n+new\n*** End Patch') == {'overwritten.md': 'new\n'}
+    (tmp_path / 'crpatch.md').write_bytes(b'one\r\ntwo\r\n')   # the patch's own line endings do not count
+    assert after('*** Begin Patch\r\n*** Update File: crpatch.md\r\n@@\r\n one\r\n+x\r\n*** End Patch\r\n') == {
+        'crpatch.md': 'one\r\nx\r\ntwo\r\n'}
 
 
 def test_a_patch_that_does_not_fit_keeps_what_it_adds_in_view(tmp_path):
@@ -476,7 +565,9 @@ def test_a_shell_command_on_a_client_that_cannot_ask_is_logged_and_compared(env,
     target = put(project / ('AGENTS.md' if agent == 'codex' else '.cursor/rules/a.mdc'))
     payload = {'cwd': str(project), 'workspace_roots': [str(project)], 'conversation_id': 'c', 'session_id': 'c',
                'tool_use_id': 'call-1', 'tool_name': 'Bash' if agent == 'codex' else 'Shell',
-               'tool_input': {'command': f'cp /tmp/notes.md {target}'}}
+               # Forward slashes, as Git Bash users write them: bash reads the backslashes of an unquoted
+               # Windows path as escapes, so the command would name another file.
+               'tool_input': {'command': f'cp /tmp/notes.md {target.as_posix()}'}}
     before = len(events.read(None))
     assert decision(handle(agent, {**payload, 'hook_event_name': pre})[1]) == 'allow'
     [logged] = [r for r in events.read(None)[before:] if r['event'] == 'write_checked']
@@ -512,6 +603,16 @@ def test_a_shell_removal_gives_back_what_was_there_not_an_older_record(env, agen
     assert 'before shell tool' in history[1].attribution and history[1].tool == ''   # not this command's doing
     review.restore(f'C{removal.id}', True)
     assert target.read_bytes() == latest.encode()
+
+
+def test_a_windows_path_in_a_shell_command_is_read_as_the_shell_reads_it():
+    from agentdetox import shell
+    path = r'C:\Users\me\project\AGENTS.md'
+    # Unquoted, bash drops the backslashes: the command names another file, and so do we.
+    assert shell.split(f'cp notes.md {path}')[-1] == 'C:UsersmeprojectAGENTS.md'
+    for spelled in (f"'{path}'", f'"{path}"'):
+        assert shell.split(f'cp notes.md {spelled}')[-1] == path
+    assert shell.split('cp notes.md C:/Users/me/project/AGENTS.md')[-1] == 'C:/Users/me/project/AGENTS.md'
 
 
 def test_cursor_replies_only_claim_a_permission_where_cursor_takes_one(env):

@@ -11,8 +11,8 @@ poisoning is recognized, or that every client delivers hooks.
 
 | Check | Observed result |
 |---|---|
-| Full macOS suite, Python 3.12.13 | 1737 passed, 5 skipped, 6 strict expected failures |
-| Independently authored disinfection and accuracy tests | 57 passed |
+| Full macOS suite, Python 3.12.13 | 1797 passed, 5 skipped, 6 strict expected failures |
+| Independently authored disinfection and accuracy tests | 77 passed |
 | Ruff / mypy | Passed; 19 source files checked by mypy |
 | [Shared client matrix](../bench/results/clients-2026-11-10.json) | 157/157 file workflows passed across 16 default, relocated and nested layouts; no cleanup refused |
 | [Installed wheel journey](../bench/results/journey-clients-2026-11-10.json) | 8/8 steps passed, including 14 cross-client layout/case pairs |
@@ -33,10 +33,11 @@ estimate of real-world accuracy. Their labels and the older frozen fixtures were
   tampering was reported, the planted action did not execute, and the user task completed.
   A benign safety instruction was written without an alert or interruption. These used model
   inference and are a focused check, not a comprehensive attack evaluation.
-- **Codex CLI 0.167.0-alpha.3.2:** seven native cases passed
+- **Codex CLI 0.167.0-alpha.3.2:** nine native cases passed
   ([summary](../lab/results/codex-contract-2026-11-10.json),
   [harness](../lab/codex_contract.py)). They cover benign and hostile patches, moves, a Unicode
-  context fallback, shell observation and cleanup, a benign model setting edit, and hook deletion.
+  context fallback, CRLF append/context preservation, shell observation and cleanup, a benign
+  model setting edit, and hook deletion. File and undo checks compare exact bytes.
   After cleanup, a fresh native session loaded the cleaned file; undo restored exact bytes.
   Responses came from a deterministic loopback server: **zero model inference calls**.
   The isolated fixture bypasses hook trust, and its two fixed config cases disable the native
@@ -47,7 +48,7 @@ estimate of real-world accuracy. Their labels and the older frozen fixtures were
 
 ## Performance
 
-On the development Mac, all **12 original budgets passed**, with 100 samples per case
+On the development Mac at `f3c18f6`, all **12 original budgets passed**, with 100 samples per case
 ([complete measurements](../bench/results/hooks-clients-2026-11-10.json)). No builds, test
 suites or other benchmarks ran alongside the measurement.
 
@@ -63,6 +64,21 @@ These timings include hook subprocesses, not complete client startup or NLI infe
 are not a paired comparison against an earlier build. The existing
 [Windows latency failures](../bench/HOOK_LATENCY.md#windows-filesystem-and-import-follow-up-2026-11-09)
 remain unresolved by these Mac measurements.
+
+## Windows CI follow-up
+
+The [first CI run](https://github.com/chriswu727/agentdetox/actions/runs/42870999524) passed the
+three macOS/Linux jobs and failed six Windows tests. The fixtures assumed a drive-less path
+was absolute, wrote LF fixtures through Windows text-mode translation, and put unquoted
+Windows backslashes into a POSIX shell command. They now use platform-valid paths and exact
+fixture bytes; no failure assertion was removed and no skip or expected failure was added.
+
+Checking those failures against native Codex also exposed a product bug: predicted patch bytes
+did not preserve context lines, CRLF/mixed endings or trailing blank context as the client does.
+The patch model now matches the observed behavior. The reviewer independently confirmed
+28 native before/after comparisons; 20 new reviewer regressions cover line endings and trailing
+context. The native client harness adds two CRLF cases. These follow-up changes affect only
+Codex patch modelling, outside the Claude/shell/startup paths in the dated latency report above.
 
 ## Remaining boundaries
 
