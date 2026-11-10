@@ -11,10 +11,36 @@ Python 3.11 or newer; the development environment uses 3.12.
 
 ```bash
 uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python -e ".[dev,nli]"
+uv pip install --python .venv/bin/python -e ".[dev]"
 ./scripts/check.sh       # ruff, mypy, tests: every change must pass this
 ./scripts/update.sh      # the checks, then reinstall your own agentdetox and run doctor
 ```
+
+Native Windows (PowerShell), Python 3.12 and Git for Windows:
+
+```powershell
+uv venv --python 3.12 .venv
+uv pip install --python .venv\Scripts\python.exe -e ".[dev]"
+.\.venv\Scripts\python.exe scripts/check.py
+.\.venv\Scripts\python.exe -m agentdetox demo
+.\.venv\Scripts\python.exe -X utf8 bench/accuracy_eval.py
+.\.venv\Scripts\python.exe -X utf8 -m bench.acceptance_eval
+# Checks first, then replaces your uv-installed tool and runs doctor:
+.\.venv\Scripts\python.exe scripts/update.py
+```
+
+`scripts/check.py` uses its invoking interpreter and stops at the first failed check. The Bash
+wrappers remain supported on macOS, Linux and Git Bash. `update.py` creates `.venv` if needed;
+without an existing environment, use `uv run --no-project --python 3.12 python scripts/update.py`.
+Updates install core dependencies by default; pass `--nli` to retain/install optional NLI support.
+That installs dependencies only, not model weights or an inference validation. Neither update
+entry point registers or removes hooks. Install hooks separately after isolated verification.
+
+PowerShell starts development commands; protected shell commands are interpreted by Git Bash.
+Set `CLAUDE_CODE_GIT_BASH_PATH` if Git for Windows is not in its standard location. WSL tests
+do not substitute for native Windows. Shell scripts and frozen fixtures retain LF through
+`.gitattributes`. The deep-path test uses Windows extended paths even when `LongPathsEnabled`
+is off; ordinary paths beyond MAX_PATH still depend on the host's long-path policy.
 
 `mypy` covers the hook path's contracts listed in `pyproject.toml`; the rest of the package is not
 yet typed strictly. Tests never use your real `~/.agentdetox` or `~/.claude`: fixtures point
@@ -40,8 +66,10 @@ auditing dependencies, lint, types, the tests, and building and checking the dis
 (`scripts/check_dist.py`). Each also runs `scripts/check_journey.py dist/*.whl`: a fresh wheel
 installation outside the checkout, registration and maintenance, real hook subprocesses, review,
 whole-version recovery, selective cleanup preserving later edits, and uninstall. The script may download normal package dependencies; it makes no model
-calls and does not validate real-client hook delivery. A Windows job runs the demo and the tests without blocking, since
-Windows support is still young.
+calls and does not validate real-client hook delivery. Windows now also gates CI on the demo,
+lint, types, tests, both offline galleries, distributions and the installed-wheel lifecycle.
+The Windows journey executes registered hooks through Git Bash in paths containing spaces and
+Chinese characters and verifies preservation of mixed CRLF/LF content during cleanup.
 
 Usability and detection are separate release gates. The offline gallery reports wrong blocks,
 unnecessary questions, prevention and monitoring misses, exact restores and known gaps. Its

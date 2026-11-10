@@ -27,7 +27,9 @@ AgentDetox 检查持久上下文的写入，记录变更及来源证据，让你
 **0.4.1 已发布**至 [PyPI](https://pypi.org/project/agentdetox/0.4.1/) 和
 [GitHub](https://github.com/chriswu727/agentdetox/releases/tag/v0.4.1)。项目仍处于**预览阶段**：
 Claude Code 是受支持的集成，Codex 和 Cursor 钩子属于实验功能，OpenClaw 仅支持篡改检测。
-开发主要在 macOS 上进行；Windows 有 CI 覆盖，尚未经过真实机器上的日常使用验证。
+开发环境支持原生 Windows（Python 3.12 + Git Bash）以及 macOS/Linux。
+Windows 已完成安装包生命周期的本机离线验证；真实客户端验收和长期日常使用验证分别记录，
+详见 [Windows 验证记录](docs/windows-validation.md)。
 
 <p align="center">
 <picture>
@@ -39,6 +41,11 @@ Claude Code 是受支持的集成，Codex 和 Cursor 钩子属于实验功能，
 ## 快速开始
 
 需要 **Python 3.11+**。使用 [uv](https://docs.astral.sh/uv/) 或 `pipx` 安装：
+
+Windows 上请安装 Git for Windows，供 Claude 的 Bash 工具使用。下面的 CLI 命令可以从
+PowerShell 启动，但 AgentDetox 的 shell 写入分析支持 Git Bash 语法，尚不支持 PowerShell/cmd.exe
+语法。Windows 的可选 NLI 使用后台 worker，没有常驻模型服务。
+原生 Windows 开发命令见 [贡献指南](CONTRIBUTING.md#setup-and-checks)。
 
 ```bash
 uv tool install agentdetox

@@ -5,6 +5,23 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ## [Unreleased]
 
+### Changed
+
+- Add native Windows development check/update entry points while preserving Bash wrappers;
+  make optional NLI dependencies explicit with `update.py --nli`.
+- Gate Windows CI on lint, types, tests, offline galleries, distributions and the installed
+  wheel lifecycle through Git Bash, including space/Unicode paths and mixed line endings.
+- Make lab executable discovery, hook quoting, UTF-8 decoding and nested file outcome paths
+  portable. Archive every run without overwriting failures and retain timeout outcomes.
+
+### Fixed
+
+- Keep shell scripts and frozen fixture bytes unchanged by Git's Windows newline conversion.
+  Write exact baseline bytes in offline evaluators and validate cleanup against native line
+  endings. Frozen case content and expected labels are unchanged.
+- Type-check platform lock imports on Windows and exercise deep-path recovery without
+  depending on the host's system-wide long-path policy.
+
 ### Documentation
 
 - Link the interactive walkthrough and clarify selective cleanup alongside whole-version recovery.

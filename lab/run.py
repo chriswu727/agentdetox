@@ -16,23 +16,27 @@ import argparse
 import datetime
 import json
 import os
+import platform
 import shutil
 import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from agentdetox import __version__
+from agentdetox.compat import quote_executable
 from agentdetox.context import claude_dir, claude_memory_dir
 from agentdetox.install import claude_code_settings
+from scripts.platform_tools import git_bash
 
 from .scenarios import SCENARIOS, Outcome, Scenario
 
 LAB = Path(__file__).resolve().parent
-AGENTDETOX = LAB.parent / ".venv" / "bin" / "agentdetox"
+AGENTDETOX = LAB.parent / '.venv' / ('Scripts/agentdetox.exe' if os.name == 'nt' else 'bin/agentdetox')
 ARMS = ("agentdetox", "none")
 MARKER = "agentdetox-lab-"
 
@@ -44,53 +48,74 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--jobs", type=int, default=4, help="sessions to run at once")
     parser.add_argument("--max-sessions", type=int, required=True, help="explicit spending cap for this invocation")
     parser.add_argument("--keep", action="store_true", help="keep the temporary projects and Claude folders")
+    parser.add_argument('--claude', default='claude', help='Claude executable name or full path')
     args = parser.parse_args(argv)
     chosen = [s for s in SCENARIOS if not args.names or s.name in args.names]
     arms = [a for a in args.arms.split(",") if a in ARMS]
-    if not chosen or not arms or not AGENTDETOX.exists():
-        print("nothing to run (unknown scenario or arm, or no .venv/bin/agentdetox)", file=sys.stderr)
-        return 2
+    if set(args.names) - {s.name for s in SCENARIOS} or set(args.arms.split(',')) - set(ARMS):
+        parser.error('unknown scenario or arm')
+    if args.jobs < 1 or args.max_sessions < 1:
+        parser.error('--jobs and --max-sessions must be positive')
+    if 'agentdetox' in arms and not AGENTDETOX.is_file():
+        parser.error(f'install the development environment first: missing {AGENTDETOX}')
 
     if len(chosen) * len(arms) > args.max_sessions:
         parser.error("selected sessions exceed --max-sessions")
+    claude = shutil.which(args.claude)
+    if not claude:
+        parser.error(f'Claude executable not found: {args.claude}')
+    try:
+        bash = git_bash()
+    except FileNotFoundError as error:
+        parser.error(str(error))
 
     base = Path(tempfile.mkdtemp(prefix=MARKER))
     for arm in arms:
-        hooks = claude_code_settings({}, f"{AGENTDETOX} hook claude-code")["hooks"] if arm == "agentdetox" else {}
+        hooks = claude_code_settings({}, f"{quote_executable(str(AGENTDETOX))} hook claude-code")["hooks"] if arm == "agentdetox" else {}
         (base / f"settings-{arm}.json").write_text(json.dumps({"hooks": hooks}), encoding="utf-8")
     jobs = [(s, a) for s in chosen for a in arms]
     try:
         with ThreadPoolExecutor(args.jobs) as pool:
-            rows = list(pool.map(lambda job: run_one(*job, base), jobs))
+            rows = list(pool.map(lambda job: run_one(*job, base, claude=claude, bash=bash), jobs))
+        write_results(rows)
     finally:
         if not args.keep:
             cleanup(base, jobs)
-    write_results(rows)
     return 0 if all(r["passed"] is not False for r in rows) else 1
 
 
-def run_one(scenario: Scenario, arm: str, base: Path) -> dict:
+def run_one(scenario: Scenario, arm: str, base: Path, *, claude: str = 'claude', bash: str | None = None) -> dict:
     project = base / f"{scenario.name}-{arm}"
     shutil.copytree(LAB / "fixtures" / "shop", project)
     if scenario.name == "own-permissions":
         (project / '.claude').mkdir()
         (project / '.claude/settings.json').write_text('{}\n', encoding='utf-8')
-    env = {**os.environ, "AGENTDETOX_HOME": str(base / f"store-{scenario.name}-{arm}"), "AGENTDETOX_NLI": "0"}
+    env = {**os.environ, "AGENTDETOX_HOME": str(base / f"store-{scenario.name}-{arm}"), "AGENTDETOX_NLI": "0",
+           'PYTHONUTF8': '1'}
     env.pop("AGENTDETOX_USER_HOME", None)
+    if os.name == 'nt' and bash:
+        env['CLAUDE_CODE_GIT_BASH_PATH'] = bash
+        env['CLAUDE_CODE_USE_POWERSHELL_TOOL'] = '0'
     if arm == "agentdetox":  # the trusted baseline a real install would already have
         subprocess.run([str(AGENTDETOX), "agent", "snapshot", "--project", str(project)], env=env,
                        capture_output=True, check=True)
     if scenario.tamper:
-        subprocess.run(["sh", str(project / "scripts" / "postinstall.sh")], check=True)
-    command = ["claude", "-p", scenario.prompt, "--setting-sources", "project,local",
+        subprocess.run([bash or git_bash(), 'scripts/postinstall.sh'], cwd=project, env=env, check=True)
+    command = [claude, "-p", scenario.prompt, "--setting-sources", "project,local",
                "--settings", str(base / f"settings-{arm}.json"), "--permission-mode", "acceptEdits",
                "--allowedTools", "Read", "Glob", "Grep",
                "--output-format", "stream-json", "--verbose", "--include-hook-events", "--max-turns", "20"]
     if scenario.model:
         command += ["--model", scenario.model]
     start = time.monotonic()
-    done = subprocess.run(command, cwd=project, env=env, stdin=subprocess.DEVNULL, capture_output=True,
-                          text=True, timeout=900)
+    try:
+        done = subprocess.run(command, cwd=project, env=env, stdin=subprocess.DEVNULL, capture_output=True,
+                              text=True, encoding='utf-8', errors='replace', timeout=900)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        output = getattr(error, 'stdout', '') or ''
+        if isinstance(output, bytes):
+            output = output.decode('utf-8', errors='replace')
+        done = subprocess.CompletedProcess(command, 1, output, str(error))
     (base / f'{scenario.name}-{arm}.stream.jsonl').write_text(done.stdout, encoding='utf-8')
     (base / f'{scenario.name}-{arm}.stderr.txt').write_text(done.stderr, encoding='utf-8')
     seconds = round(time.monotonic() - start)
@@ -109,8 +134,10 @@ def run_one(scenario: Scenario, arm: str, base: Path) -> dict:
     print(f"  {scenario.name} [{arm}] {seconds}s", file=sys.stderr)
     return {
         "scenario": scenario.name, "arm": arm, "model": model, "seconds": seconds,
+        'platform': platform.platform(), 'python': platform.python_version(),
         "passed": done.returncode == 0 and outcome.completed and all(c["ok"] for c in checks) and not hook_errors,
         "checks": checks, "hook_errors": hook_errors, "agentdetox_version": __version__,
+        'origins': outcome.origins,
         "session_completed": outcome.completed,
         "user_task_completed": scenario.user_task.test(outcome) if scenario.user_task else None,
         "attempted_commands": [_anonymise(c, project) for c in outcome.commands],
@@ -162,7 +189,7 @@ def parse(stream: str, project: Path) -> tuple[Outcome, str]:
             completed = event.get("subtype") == "success" and not event.get("is_error", False)
     memory_dir = claude_memory_dir(project)
     memory = "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in sorted(memory_dir.glob("*.md")))
-    files = {str(p.relative_to(project)): p.read_text(encoding="utf-8", errors="replace")
+    files = {p.relative_to(project).as_posix(): p.read_text(encoding="utf-8", errors="replace")
              for p in project.rglob("*") if p.is_file()}
     return Outcome(decisions, notice, commands, "\n".join(text), memory, files,
                    confirmed_commands=confirmed, completed=completed, tool_errors=tool_errors), model
@@ -181,6 +208,11 @@ def cleanup(base: Path, jobs: list[tuple[Scenario, str]]) -> None:
 def write_results(rows: list[dict]) -> None:
     out = LAB / "results"
     out.mkdir(exist_ok=True)
+    # Keep every attempt, including failed reruns; the daily summary is only a view.
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+    archive = out / f'run-{stamp}-{uuid.uuid4().hex[:8]}.json'
+    with archive.open('x', encoding='utf-8', newline='\n') as stream:
+        stream.write(json.dumps(rows, indent=1, ensure_ascii=False) + '\n')
     stamp = datetime.date.today().isoformat()
     day = out / f"{stamp}.json"
     if day.exists():  # a partial rerun replaces only its own rows

@@ -10,10 +10,22 @@ benchmarks in `bench/` measure the detectors, the lab measures the product in a 
 .venv/bin/python -m lab.run --arms agentdetox --max-sessions 10 # only with AgentDetox
 ```
 
+On native Windows, use `.\.venv\Scripts\python.exe -X utf8 -m lab.run` with the same arguments.
+The runner locates `.venv/Scripts/agentdetox.exe`, quotes hook executable paths and uses Git for
+Windows for the tampering fixture. It does not use WSL's `bash.exe`. Set
+`CLAUDE_CODE_GIT_BASH_PATH` for a nonstandard Git installation. `--claude` accepts an executable
+name or an absolute path, including spaces. Check `claude auth status` before allocating sessions;
+a logged-in desktop Code session does not necessarily authenticate a separately launched CLI.
+On Windows, lab sessions explicitly use Git Bash and disable the optional PowerShell tool,
+whose shell-write syntax AgentDetox does not analyze.
+
 Results go to `lab/results/<date>.json` and `lab/results/latest.md`. The command exits non-zero
 if any check fails, any hook error is recorded, or any session fails to complete. `--max-sessions` is a required explicit
 spending cap; obtain user authorization before any real run. Failed CLI startup is not a completed
 model session and its error is retained in the result.
+Every invocation also writes a unique `run-<UTC timestamp>-<id>.json` archive before cleanup;
+reruns cannot erase earlier failed attempts. Timeouts retain partial model output and a failed
+result. `--keep` retains raw streams and the temporary store for detailed local investigation.
 
 ## What a run measures
 
@@ -35,7 +47,8 @@ arms) costs usage and is not part of CI. Run it before a release and after chang
 sees.
 
 Sessions run with `--setting-sources project,local`, so your own settings and installed hooks stay
-out. The AgentDetox arm runs this checkout's `.venv/bin/agentdetox` against a temporary store, with
+out. The AgentDetox arm runs this checkout's `.venv/bin/agentdetox` (Windows:
+`.venv/Scripts/agentdetox.exe`) against a temporary store, with
 the model server off. Claude Code still writes each scenario's memory and transcript under
 `~/.claude/projects`, in a folder named after the temporary project. The runner deletes those
 folders and the temporary store when it finishes; `--keep` leaves them for debugging.

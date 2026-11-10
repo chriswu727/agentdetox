@@ -10,11 +10,15 @@ import contextlib
 import os
 import re
 import shlex
+from importlib import import_module
+from types import ModuleType
 
+fcntl: ModuleType | None
 try:
-    import fcntl
+    # The Windows typeshed stub does not expose POSIX flock attributes.
+    fcntl = import_module('fcntl')
 except ImportError:
-    fcntl = None  # type: ignore[assignment]
+    fcntl = None
     import msvcrt
 
 WINDOWS = os.name == "nt"

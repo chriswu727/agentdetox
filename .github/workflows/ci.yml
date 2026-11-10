@@ -60,9 +60,8 @@ jobs:
         run: python scripts/check_journey.py dist/*.whl
 
   windows:
-    name: Windows (non-blocking)
+    name: Windows
     runs-on: windows-latest
-    continue-on-error: true
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -76,4 +75,15 @@ jobs:
       - name: Smoke-test the hook path
         run: agentdetox demo
       - name: Run tests
-        run: python -m pytest -q
+        run: python scripts/check.py
+      - name: Check offline detection and recovery regressions
+        run: |
+          python -X utf8 bench/accuracy_eval.py
+          python -X utf8 -m bench.acceptance_eval
+      - name: Build and check distributions and installed wheel lifecycle
+        run: |
+          python -m pip install build twine
+          python -m build
+          python -m twine check --strict dist/*
+          python scripts/check_dist.py dist/*
+          python -X utf8 scripts/check_journey.py dist/*.whl

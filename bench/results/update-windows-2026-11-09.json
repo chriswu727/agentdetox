@@ -1,0 +1,11 @@
+{
+  "scope": "native Windows uv tool download, update.py and existing hook preservation",
+  "passed": true,
+  "checks": [
+    "published 0.4.1 uv tool download/install",
+    "checks before source upgrade",
+    "registered hooks unchanged by package update",
+    "doctor after update",
+    "uninstall preserves user hook and settings"
+  ]
+}

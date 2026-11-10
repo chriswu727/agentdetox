@@ -3,6 +3,7 @@
 Usage: python scripts/check_dist.py dist/*
 """
 
+import glob
 import re
 import sys
 import tarfile
@@ -27,6 +28,8 @@ def names(path: Path) -> list[str]:
 
 
 def main(paths: list[str]) -> int:
+    # PowerShell passes wildcard arguments literally to native programs.
+    paths = [match for pattern in paths for match in (glob.glob(pattern) or [pattern])]
     problems = []
     kinds = set()
     for p in map(Path, paths):
