@@ -8,7 +8,7 @@ from .consistency import find_contradictions, statements, store_statements
 from .context import ContextFile, related_files
 from .corpus import Doc
 from .findings import Finding, line_at, pair_anchor, snippet
-from .hidden import normalize, prose_view, scan_doc
+from .hidden import normalize, outside_code, prose_view, scan_doc
 from .persistence import config_commands, own_env_keys, text_findings, text_matches
 
 
@@ -21,14 +21,17 @@ def scan_text(doc_id: str, source: str, text: str, kind: str) -> list[Finding]:
     if kind == "config":
         return _scan_config(doc_id, source, text)
     prose = kind in {"memory", "instructions"}
-    findings = scan_doc(Doc(doc_id, text, source), prose=prose, wrapped=prose)
+    # A skill is sentences and commands both: what its sentences forbid is read as forbidden,
+    # what its code blocks hold is read as what would run.
+    skill = kind == "skill"
+    findings = scan_doc(Doc(doc_id, text, source), prose=prose, wrapped=prose, guidance=skill)
     norm = normalize(text)
     def anchor(start, end):
         return line_at(norm, start)
 
     if prose:
         norm, anchor = prose_view(text)
-    for severity, label, pos, end in text_matches(norm, prose=prose):
+    for severity, label, pos, end in text_matches(norm, prose=prose, guidance=outside_code(norm) if skill else None):
         findings.append(Finding(doc_id, source, "persistence", severity, label, snippet(norm, pos),
                                 anchor=anchor(pos, end)))
     return findings

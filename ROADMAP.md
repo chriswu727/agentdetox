@@ -139,6 +139,12 @@ These require validation in a real team's repository before being described as s
 - Consider an opt-in local or provider model for contradiction judgement. Remote analysis must
   clearly state which content leaves the machine; the default remains local only.
 - Verify Codex and Cursor on real installs before expanding their experimental status.
+- Remove one added hook, MCP server or permission from a config file, and put back a line that a
+  change replaced. Today config can only be restored as a whole file, and only while it is
+  unchanged; `clean` removes lines and never reinstates what they replaced.
+- Cover what the client file checks do not reach: Codex's SQLite memory state, Claude Code `@path`
+  imports and `autoMemoryDirectory`, OpenClaw `$include` files, and an OpenClaw plugin for checks
+  as it writes.
 - Verify Windows on a real machine; passing CI is not sufficient evidence of everyday usability.
 - Keep a reproducible attack gallery alongside known gaps. A failed run is not prevention.
 

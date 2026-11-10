@@ -1,0 +1,19 @@
+{
+  "scope": "built wheel, registered hook subprocesses and CLI; not real-client hook delivery",
+  "model_calls": 0,
+  "python": "3.12.13",
+  "platform": "Darwin",
+  "wheel": "agentdetox-0.4.1-py3-none-any.whl",
+  "sha256": "a54a0268883c2881513ec9e939a981cf8a184600abf244403284faf0bfb6ed70",
+  "completed": [
+    "clean wheel installation and quick-start demo outside the repository",
+    "preview, install, mixed-hook upgrade, idempotent reinstall and doctor",
+    "registered commands run from paths with spaces; normal use quiet and attack denied",
+    "external detection, review, non-mutating preview, stale refusal and exact recovery with backup",
+    "selective cleanup preserves same-change and later work, rejects stale previews and keeps a backup",
+    "library scan, coverage, review, exact-version dismissal and reopening, background rescan, exact cleanup with backup and undo; stale reviews and previews refused",
+    "files of Claude Code, Codex, Cursor and OpenClaw in default, relocated and nested layouts: found, reviewed by version, cleaned of chosen lines only, checked again and restored, with no hook involved",
+    "mixed-hook uninstall preserves user settings and repeated uninstall is a no-op"
+  ],
+  "passed": true
+}

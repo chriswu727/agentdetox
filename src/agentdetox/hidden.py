@@ -217,14 +217,44 @@ _CONFIG_SUBJECT = (
     r"(?:the\s+)?(?:hook configuration|settings\.json|config\.toml|hooks\.json|"
     r"mcp\.json|MCP server list)"
 )
+# A closing clause that only tells the agent to ask: "...; always ask the user first." or
+# "...; always ask the user when a task would change settings.json." Asking may be waived
+# for a read-only task, which loosens nothing the clause before it forbids. Nothing else
+# may follow on the line, so the clause cannot carry an instruction of its own.
 _APPROVAL_REMINDER = re.compile(
-    r"(?:^|[;；])\s*(?:always\s+)?ask\s+the\s+user\s+when\s+(?:a|the)\s+task\s+would\s+"
+    r"(?:^|[;；])\s*(?:always\s+)?ask\s+the\s+user(?:\s+first"
+    r"(?:\s+unless\s+(?:the\s+)?(?:task|change|command|operation|action)\s+is\s+read[- ]only)?"
+    r"|\s+when\s+(?:a|the)\s+task\s+would\s+"
     rf"(?:change|modify|edit)\s+{_CONFIG_SUBJECT}"
-    rf"(?:(?:,\s*(?:or\s+)?|\s+or\s+){_CONFIG_SUBJECT})*[.!]?\s*$", re.I,
+    rf"(?:(?:,\s*(?:or\s+)?|\s+or\s+){_CONFIG_SUBJECT})*)[.!]?\s*$"
+    r"|(?:^|[;；])\s*(?:请|务必|始终|一定要)?先?(?:询问|征求)用户(?:的?(?:同意|确认|许可|意见))?[。.!！]?\s*$", re.I,
+)
+_REVERSAL = re.compile(r"\b(?:but|however|instead|then|unless|except|until|rather)\b|然后|但|而|却|改为|除非|否则", re.I)
+# How a clause that forbids something opens. "Never fail to", "do not forget to" and the
+# like forbid not doing it, which is an order to do it.
+_FORBIDS = (r"(?:(?:please\s+)?(?:do\s+not|don't|never)\s+(?!(?:fail|forget|hesitate|refuse|neglect|omit|stop|cease|"
+            r"decline|avoid)\b)|(?:请)?(?:不要|切勿|请勿|不得|禁止|勿|别)(?!忘记|忘了|拒绝|停止|犹豫))")
+_FORBIDDING_CLAUSE = re.compile(
+    rf"\s*(?:[-*>]\s*)?(?:(?:and|or|nor)\s+|也|并且|且|同时|并)?(?:also\s+)?{_FORBIDS}\S", re.I)
+_LEAD_IN = re.compile(
+    r"\s*(?:[-*>]\s*)?(?:(?:please\s+)?(?:do\s+not|don't|never)\s+"
+    rf"(?:{_GUARD_ACTION}\s+or\s+)*(?:(?:run|execute)\s+)?"
+    r"|(?:请)?(?:不要|切勿|请勿|不得|禁止|勿|别)(?:将|把)?)`?\s*", re.I,
+)
+# The same, opening a later clause of a sentence whose earlier clauses forbid too:
+# "Do not disable the sandbox, and do not bypass approval prompts."
+_JOINED_LEAD_IN = re.compile(
+    r"\s*(?:(?:and|or|nor)\s+)?(?:also\s+)?(?:(?:please\s+)?(?:do\s+not|don't|never)\s+"
+    rf"(?:{_GUARD_ACTION}\s+or\s+)*(?:(?:run|execute)\s+)?"
+    r"|(?:也|并且|且|同时|并)?(?:请)?(?:不要|切勿|请勿|不得|禁止|勿|别)(?:将|把)?)`?\s*", re.I,
 )
 
 
 def is_prohibited_action(text: str, start: int, end: int) -> bool:
+    """Whether the match at text[start:end] is something its sentence forbids, not orders.
+    The sentence has to forbid it in so many words, clause by clause: every clause before
+    the match and after it must itself forbid, none may turn the prohibition round, and the
+    only other thing a sentence may end in is a reminder to ask the user."""
     line_start = text.rfind("\n", 0, start) + 1
     line_end = text.find("\n", end)
     line_end = line_end if line_end >= 0 else len(text)
@@ -241,34 +271,55 @@ def is_prohibited_action(text: str, start: int, end: int) -> bool:
     prefix = text[line_start:start]
     if len(prefix) > 160:
         return False
-    prefix = re.split(r"[.!?。！？;；:：]", prefix)[-1]
-    if not re.fullmatch(
-        r"\s*(?:[-*>]\s*)?(?:(?:please\s+)?(?:do\s+not|don't|never)\s+"
-        rf"(?:{_GUARD_ACTION}\s+or\s+)*(?:(?:run|execute)\s+)?"
-        r"|(?:请)?(?:不要|切勿|请勿|不得|禁止|勿|别)(?:将|把)?)`?\s*", prefix, re.I,
-    ):
+    *earlier, last = re.split(r"[,，]", re.split(r"[.!?。！？;；:：]", prefix)[-1])
+    if not (_JOINED_LEAD_IN if earlier else _LEAD_IN).fullmatch(last):
         return False
-    # A prohibition cannot exempt a second clause or an instruction reversing it.
+    if any(not _FORBIDDING_CLAUSE.match(clause) or _REVERSAL.search(clause) for clause in earlier):
+        return False
+    # A prohibition cannot exempt an instruction reversing it, nor a later clause that
+    # does not forbid in its own right.
     remainder = text[start:line_end]
-    return not re.search(
-        r"[,，;；]|\b(?:but|however|instead|then|unless|except|until|rather)\b|然后|但|而|却|改为|除非|否则",
-        remainder, re.I,
-    )
+    if _REVERSAL.search(remainder):
+        return False
+    return all(_FORBIDDING_CLAUSE.match(clause) for clause in re.split(r"[,，;；]", remainder)[1:] if clause.strip(" .!。！"))
+
+
+def outside_code(text: str):
+    """A function saying whether an offset in `text` is outside its fenced code blocks: in
+    a skill, what is written there is a command to run, not a sentence about one. A fence
+    left open runs to the end."""
+    spans: list[tuple[int, int]] = []
+    opened: tuple[int, str] | None = None
+    offset = 0
+    for line in text.split("\n"):
+        mark = re.match(r"\s*(`{3,}|~{3,})", line)
+        if mark and opened is None:
+            opened = (offset, mark.group(1))
+        elif mark and opened is not None and mark.group(1)[0] == opened[1][0] and len(mark.group(1)) >= len(opened[1]):
+            spans.append((opened[0], offset + len(line)))
+            opened = None
+        offset += len(line) + 1
+    if opened is not None:
+        spans.append((opened[0], len(text)))
+    return lambda position: not any(first <= position < last for first, last in spans)
 
 
 def match_injection(text: str, *, prose: bool = True) -> list[tuple[str, str, int]]:
     return [(severity, label, start) for severity, label, start, _ in _injection_matches(text, prose=prose)]
 
 
-def _injection_matches(text: str, *, prose: bool = True) -> list[tuple[str, str, int, int]]:
+def _injection_matches(text: str, *, prose: bool = True, guidance=None) -> list[tuple[str, str, int, int]]:
+    """Injection phrases in `text`. `prose` reads all of it as sentences, in which a thing
+    forbidden is not a thing ordered; `guidance` says the same of single offsets."""
     norm = normalize(text)
     hits = []
     for severity, label, pattern in _PATTERNS:
         quoted = False
         for m in pattern.finditer(norm):
-            if prose and label == 'conceal from user' and _redacts_secret(norm, m.start()):
+            sentence = prose or guidance is not None and guidance(m.start())
+            if sentence and label == 'conceal from user' and _redacts_secret(norm, m.start()):
                 continue
-            if prose and label in {"instruction override", "data exfiltration instruction"} \
+            if sentence and label in {"instruction override", "data exfiltration instruction"} \
                     and is_prohibited_action(norm, m.start(), m.end()):
                 continue
             # Security docs and skills quote attack phrases as examples to watch for.
@@ -328,7 +379,7 @@ class _HiddenTextParser(HTMLParser):
             self.comments.append(data.strip())
 
 
-def scan_doc(doc: Doc, *, prose: bool = True, wrapped: bool = False) -> list[Finding]:
+def scan_doc(doc: Doc, *, prose: bool = True, wrapped: bool = False, guidance: bool = False) -> list[Finding]:
     findings: list[Finding] = []
     text = doc.text
 
@@ -372,7 +423,7 @@ def scan_doc(doc: Doc, *, prose: bool = True, wrapped: bool = False) -> list[Fin
 
     if wrapped:
         norm, anchor = prose_view(text)
-    for severity, label, pos, end in _injection_matches(norm, prose=prose):
+    for severity, label, pos, end in _injection_matches(norm, prose=prose, guidance=outside_code(norm) if guidance else None):
         add("injection-phrase", severity, label, snippet(norm, pos), anchor(pos, end))
     if smuggled.strip():
         for severity, label, _ in match_injection(smuggled, prose=False):

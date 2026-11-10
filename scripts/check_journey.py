@@ -254,6 +254,12 @@ def journey(wheel: Path, completed: list[str]) -> None:
             mark('library scan, coverage, review, exact-version dismissal and reopening, background rescan, '
                  'exact cleanup with backup and undo; stale reviews and previews refused')
 
+        refused = clients(root, env, executable)
+        # Cleanup by change id is supported on every platform this journey runs on.
+        assert not refused, f'Cleanup by change id was refused as unsupported: {refused}'
+        mark('files of Claude Code, Codex, Cursor and OpenClaw in default, relocated and nested layouts: found, '
+             'reviewed by version, cleaned of chosen lines only, checked again and restored, with no hook involved')
+
         data = json.loads(settings.read_text(encoding='utf-8'))
         own = data['hooks']['PreToolUse'].pop()['hooks'][0]
         data['hooks']['PreToolUse'][0]['hooks'].append(own)
@@ -265,6 +271,55 @@ def journey(wheel: Path, completed: list[str]) -> None:
         assert settings.read_bytes() == after, 'Repeated uninstall changed settings'
         assert 'hooks not installed' in cli('doctor', expected=1).stdout, 'Doctor reports protection after uninstall'
         mark('mixed-hook uninstall preserves user settings and repeated uninstall is a no-op')
+
+
+# Layouts and content cases of the shared client corpus (tests/client_corpus.py) that the
+# installed wheel is walked through: every client, every kind of layout, every outcome.
+CLIENT_WALKS = [
+    ('claude-code/project-instructions', 'mixed change, then later work'),
+    ('claude-code/worktree-memory', 'preexisting poison, no baseline'),
+    ('claude-code/nested-instructions', 'flagged line edited later'),
+    ('codex/codex-home-memory', 'preexisting poison, no baseline'),
+    ('codex/layered-skill', 'one of two flagged lines left'),
+    ('cursor/project-rule', 'CRLF and CJK'),
+    ('cursor/nested-rule', 'mixed change, then later work'),
+    ('openclaw/default-workspace', 'benign control'),
+    ('openclaw/state-dir', 'file changed after the preview'),
+    ('openclaw/configured-workspace', 'preexisting poison, no baseline'),
+    ('claude-code/subagent-memory', 'paraphrased fetch-and-run'),
+    ('codex/home-instructions', 'paraphrased fetch-and-run'),
+    ('cursor/user-skill', 'paraphrased fetch-and-run'),
+    ('openclaw/roster-workspace', 'paraphrased fetch-and-run'),
+]
+
+
+def clients(root: Path, env: dict, executable: Path) -> list[str]:
+    """Walk the chosen corpus cases through the installed command; returns the walks in which
+    applying a cleanup was refused as unsupported on this system."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'tests'))
+    import client_corpus as corpus
+
+    refused = []
+    for index, (layout_name, case_name) in enumerate(CLIENT_WALKS):
+        layout = next(item for item in corpus.LAYOUTS if item.name == layout_name)
+        case = next(item for item in corpus.CASES if item.name == case_name)
+        base = root / 'clients' / str(index)
+        roots = corpus.Roots(base / 'home', base / 'project', base / 'elsewhere')
+        target, moved = corpus.place(layout, roots)
+        own = {k: v for k, v in env.items() if not k.startswith(('OPENCLAW_', 'CURSOR_')) and k not in ('CODEX_HOME', 'XDG_CONFIG_HOME')}
+        own.update(AGENTDETOX_USER_HOME=str(roots.home), AGENTDETOX_HOME=str(base / 'store'), **moved)
+
+        def run(args, own=own, project=roots.project):
+            done = subprocess.run([str(executable), *args], env=own, cwd=project, capture_output=True, text=True,
+                                  encoding='utf-8', errors='replace', timeout=120)
+            return done.returncode, done.stdout, done.stderr
+
+        try:
+            if corpus.REFUSED in corpus.walk(layout, case, roots, run, target):
+                refused.append(f'{layout_name} / {case_name}')
+        except corpus.Unexpected as error:
+            raise AssertionError(f'{layout_name} / {case_name}: {error}') from None
+    return refused
 
 
 def main() -> int:

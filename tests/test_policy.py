@@ -47,8 +47,10 @@ def test_configurable_checks_follow_the_settings(check, mode, can_ask, action, l
 
 
 def test_a_shell_write_to_context_asks_only_where_the_agent_can():
-    assert policy.decide([signal(SHELL_WRITE)], True, RECORD).action == "ask"
-    assert policy.decide([signal(SHELL_WRITE)], False, RECORD) == policy.Decision("allow")
+    asked = policy.decide([signal(SHELL_WRITE)], True, RECORD)
+    assert asked.action == "ask" and asked.reason.endswith("Approve only if you expected it.")
+    # Where there is no prompt the command still runs, and the check is kept as a reason to log.
+    assert policy.decide([signal(SHELL_WRITE)], False, RECORD) == policy.Decision("allow", "shell-write found.")
 
 
 def test_an_ask_names_every_flagged_id_so_each_can_be_allowed():

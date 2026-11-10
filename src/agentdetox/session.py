@@ -24,10 +24,11 @@ def _more(count: int) -> list[str]:
     return [f"- and {count - LISTED} more; `agentdetox review` lists them."] if count > LISTED else []
 
 
-def notice(project: Path, contradiction_mode: str) -> str:
-    """Text for the agent to show the user, or "" when there is nothing to report."""
+def notice(project: Path, contradiction_mode: str, cwd: Path | None = None) -> str:
+    """Text for the agent to show the user, or "" when there is nothing to report. `cwd` is
+    the folder the session works in, when that is below the project root."""
     try:
-        text = _check(project, contradiction_mode)
+        text = _check(project, contradiction_mode, cwd)
     except StoreError as e:
         events.record("hook_error", stage="session-store", error=str(e)[:300])
         # Deleting or corrupting the snapshot list is itself a way to launder tampering.
@@ -38,13 +39,13 @@ def notice(project: Path, contradiction_mode: str) -> str:
     return text
 
 
-def _check(project: Path, mode: str) -> str:
+def _check(project: Path, mode: str, cwd: Path | None = None) -> str:
     # Only high findings interrupt a session. Medium ones (a user's own "commit without
     # asking" preference, a quoted attack example) stay visible in `agentdetox agent scan`
     # but would otherwise nag at every start and get the tool uninstalled.
     # Comparing, scanning and the optional model run without the store lock; only the
     # recording below takes it, so parallel hooks are not left waiting.
-    files = discover(project=project)
+    files = discover(project=project, cwd=cwd)
     roots = watched_roots(project)
     known = baseline_paths()
     first_run = not known and not ledger.entries(limit=1)
@@ -156,7 +157,10 @@ def _check(project: Path, mode: str) -> str:
     for path in list(dict.fromkeys(f.doc_id for f in findings))[:LISTED]:
         latest = ledger.entries(path, limit=1)
         if latest:
-            if latest[0].origin == 'restored':
+            if latest[0].origin == 'inspected':
+                lines.append(f"Review what was found: `agentdetox review C{latest[0].id}`. "
+                             f"List its lines and remove chosen ones: `agentdetox clean C{latest[0].id}`.")
+            elif latest[0].origin == 'restored':
                 lines.append(f"Review remaining findings: `agentdetox review C{latest[0].id}`. "
                              "This is a recovery record; restoring it would undo that recovery and may reintroduce "
                              "removed content. Inspect earlier changes with `agentdetox review` before further cleanup.")

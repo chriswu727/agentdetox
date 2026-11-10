@@ -11,7 +11,8 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{name = "Yichen Wu"}]
 requires-python = ">=3.11"
-dependencies = ["numpy>=1.24"]
+# json5 reads OpenClaw's config, which is documented as JSON5; it is imported only for a file that is not plain JSON.
+dependencies = ["numpy>=1.24", "json5>=0.9.25"]
 keywords = ["ai-agents", "agent-memory", "claude-code", "rag", "llm", "security", "prompt-injection",
             "data-poisoning", "mcp"]
 classifiers = [
@@ -70,7 +71,8 @@ files = ["src/agentdetox/engine.py", "src/agentdetox/policy.py", "src/agentdetox
          "src/agentdetox/settings.py", "src/agentdetox/hooks.py", "src/agentdetox/session.py",
          "src/agentdetox/storage.py", "src/agentdetox/review.py", "src/agentdetox/ledger.py",
          "src/agentdetox/integrity.py", "src/agentdetox/review_ui.py", "src/agentdetox/observation.py",
-         "src/agentdetox/safefs.py", "src/agentdetox/library.py"]
+         "src/agentdetox/safefs.py", "src/agentdetox/library.py", "src/agentdetox/patch.py",
+         "src/agentdetox/inspection.py"]
 follow_imports = "silent"
 check_untyped_defs = true
 warn_unused_ignores = true

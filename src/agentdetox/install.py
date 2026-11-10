@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from . import compat
-from .context import claude_dir, home_dir
+from .context import claude_dir, codex_dir, home_dir
 from .integrity import is_self_hook
 
 
@@ -43,10 +43,28 @@ def claude_code_settings(existing: dict, command: str) -> dict:
 
 
 def cursor_hooks(command: str) -> dict:
+    """Cursor's hooks.json entries. The matchers are Cursor's documented tool names: without
+    one, preToolUse would also run for every read and search. postToolUse fires only when a
+    command succeeds, so a failed one is compared through postToolUseFailure."""
     return {"version": 1, "hooks": {
         "sessionStart": [{"command": command}],
-        "preToolUse": [{"command": command}],
+        "preToolUse": [{"command": command, "matcher": "Shell|Write|Delete"}],
+        "postToolUse": [{"command": command, "matcher": "Shell|Delete"}],
+        "postToolUseFailure": [{"command": command, "matcher": "Shell"}],
         "afterFileEdit": [{"command": command}],
+    }}
+
+
+def codex_hooks(command: str) -> dict:
+    """Codex's hooks.json entries. `Bash` and `apply_patch` are the tool names Codex reports
+    for shell commands and file edits; its PostToolUse also follows a command that failed."""
+    def handler() -> list[dict]:
+        return [{"type": "command", "command": command}]
+
+    return {"hooks": {
+        "SessionStart": [{"hooks": handler()}],
+        "PreToolUse": [{"matcher": "^(Bash|apply_patch)$", "hooks": handler()}],
+        "PostToolUse": [{"matcher": "^(Bash|apply_patch)$", "hooks": handler()}],
     }}
 
 
@@ -151,7 +169,7 @@ def default_settings_path(agent: str, scope: str, project: Path) -> Path:
     return {
         "claude-code": (claude_dir() if scope == "user" else project / ".claude") / "settings.json",
         "cursor": base / ".cursor" / "hooks.json",
-        "codex": base / ".codex" / "hooks.json",
+        "codex": (codex_dir() if scope == "user" else project / ".codex") / "hooks.json",
     }[agent]
 
 

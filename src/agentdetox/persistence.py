@@ -12,9 +12,29 @@ import re
 import tomllib
 from pathlib import Path
 
-from .context import claude_dir
+from .context import CONFIG_BYTES, claude_dir, is_openclaw_config, load_json5
 from .hidden import is_prohibited_action, normalize
 
+# Fetch-and-run said in words: fetch something from a URL, then execute what was fetched.
+# Both halves are needed, in one sentence or the next, and the second must be about the
+# fetched thing itself, which is one of: "it"; "the downloaded script"; "the script" when the
+# sentence fetched nothing else it could mean (a bare URL, or a script by that name). A
+# download that is read, checked, reviewed or opened in an application is not this, and
+# neither is running something else that is merely named next ("run this unit test", "run
+# that query", "run the script on it"). "Get" and "pull" are left out as fetch verbs: "get
+# started at <URL> and run the script" is how docs talk.
+_FETCH = r"\b(?:download|fetch|grab|retrieve)\b"
+_URL = r"https?://[^\s;,]{1,200}[^.;\n|]{0,40}?"
+_THEN_RUN = r"\b(?:and|then)\s+(?:then\s+)?(?:immediately\s+)?(?:run|execute|exec|eval|source)\s+"
+_RUNNABLE = r"(?:script|installer|binary|payload|executable|program)"
+_NOT_ANOTHER = r"\b(?!\s+(?:on|against|over)\b)"
+_FETCH_THEN_RUN = (
+    rf"{_FETCH}[^.;\n|]{{0,80}}?{_URL}{_THEN_RUN}"
+    rf"(?:(?:it|them)\b(?!\s+(?:through|by|past|against)\b)|the\s+(?:downloaded|fetched)\s+(?:{_RUNNABLE}|file|code)\b)"
+    rf"|{_FETCH}\s+{_URL}{_THEN_RUN}the\s+{_RUNNABLE}{_NOT_ANOTHER}"
+    rf"|{_FETCH}[^.;\n|]{{0,60}}?\b(?P<fetched>{_RUNNABLE})\b[^.;\n|]{{0,40}}?{_URL}{_THEN_RUN}"
+    rf"the\s+(?:\w+\s+)?(?P=fetched){_NOT_ANOTHER}"
+)
 _FETCH_EXEC = (
     r"(curl|wget|iwr|invoke-webrequest)\b[^\n|]{0,200}\|\s*(sudo\s+)?(ba|z|da)?sh\b"
     r"|\b(ba|z)?sh\s+<\(\s*(curl|wget)\b"
@@ -22,6 +42,7 @@ _FETCH_EXEC = (
     r"|base64\s+(-d|--decode)\b[^\n|]{0,80}\|\s*(ba|z)?sh\b"
     r"|\b(?:fetch|download)\s+https?://[^\s;]{1,200}\s+(?:and|then)\s+pipe\s+"
     r"(?:it|the\s+(?:result|response|output|script))\s+(?:to|into|through)\s+(?:ba|z|da)?sh\b"
+    rf"|{_FETCH_THEN_RUN}"
 )
 _REVERSE_SHELL = r"/dev/tcp/\d|\bnc\b[^\n]{0,40}\s-e\s|\bmkfifo\b[^\n]{0,60}\bnc\b"
 _PATH_END = r"(?=$|[\s\x22\x27`;,)，。:]|\.(?:\s|$))"
@@ -115,12 +136,15 @@ def text_findings(text: str, *, prose: bool = False) -> list[tuple[str, str, int
     return [(severity, label, start) for severity, label, start, _ in text_matches(text, prose=prose)]
 
 
-def text_matches(text: str, *, prose: bool = False) -> list[tuple[str, str, int, int]]:
+def text_matches(text: str, *, prose: bool = False, guidance=None) -> list[tuple[str, str, int, int]]:
+    """Rule hits in `text`. In prose (memory, rules) an action the text forbids is not a hit.
+    `guidance`, a function of an offset, says where else that holds: in a skill, outside
+    its code blocks. Config values and shell commands are never read that way."""
     norm = normalize(text)
     hits = []
     for severity, label, pattern in TEXT_RULES:
         for m in pattern.finditer(norm):
-            if prose and is_prohibited_action(norm, m.start(), m.end()):
+            if (prose or guidance is not None and guidance(m.start())) and is_prohibited_action(norm, m.start(), m.end()):
                 continue
             hits.append((severity, label, m.start(), m.end()))
             break
@@ -197,6 +221,13 @@ def _claude_config(data: dict) -> dict:
 
 def _parse_config(path: Path, text: str):
     try:
+        if is_openclaw_config(path):
+            # OpenClaw documents its config as JSON5; the same settings must read the same
+            # whichever way they are spelled. Other clients' JSON stays strict.
+            try:
+                return json.loads(text)
+            except ValueError:
+                return load_json5(text) if len(text) <= CONFIG_BYTES else None
         if path.suffix == ".json":
             data = json.loads(text)
             if isinstance(data, dict) and is_claude_config(path):
@@ -204,7 +235,7 @@ def _parse_config(path: Path, text: str):
             return data
         if path.suffix == ".toml":
             return tomllib.loads(text)
-    except (ValueError, tomllib.TOMLDecodeError):
+    except (ValueError, RecursionError, tomllib.TOMLDecodeError):
         return None
     return None
 
@@ -214,7 +245,7 @@ def config_commands(path: Path, text: str) -> list[tuple[str, str]]:
     Files without structure (Codex .rules) are returned whole, as one command string."""
     data = _parse_config(path, text)
     if data is None:
-        return [] if path.suffix in (".json", ".toml") else [(WHOLE_FILE, text)]
+        return [] if path.suffix in (".json", ".toml") or is_openclaw_config(path) else [(WHOLE_FILE, text)]
     if is_claude_config(path) and isinstance(data, dict):
         return _claude_commands(data)
     out: list[tuple[str, str]] = []

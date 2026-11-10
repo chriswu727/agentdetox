@@ -66,7 +66,10 @@ auditing dependencies, lint, types, the tests, and building and checking the dis
 (`scripts/check_dist.py`). Each also runs `scripts/check_journey.py dist/*.whl`: a fresh wheel
 installation outside the checkout, registration and maintenance, real hook subprocesses, review,
 whole-version recovery, selective cleanup preserving later edits, a library scan with review,
-exact-version dismissal, cleanup and undo, and uninstall. The script may download normal package dependencies; it makes no model
+exact-version dismissal, cleanup and undo, a walk of the shared client corpus (`tests/client_corpus.py`:
+files of Claude Code, Codex, Cursor and OpenClaw in default, relocated and nested layouts, found,
+cleaned and restored from the command line), and uninstall. `python scripts/client_matrix.py` prints
+the whole corpus as a report. The script may download normal package dependencies; it makes no model
 calls and does not validate real-client hook delivery. Windows now also gates CI on the demo,
 lint, types, tests, both offline galleries, distributions and the installed-wheel lifecycle.
 The Windows journey executes registered hooks through Git Bash in paths containing spaces and

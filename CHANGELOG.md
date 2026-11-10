@@ -7,6 +7,29 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ### Added
 
+- `agentdetox agent inspect [--agent ...]`: a command-line bridge from a finding to a cleanup that
+  needs no hook. It records a review item (a `C` id for `review`, `clean` and `review accept`),
+  bound to the exact version found, for each file in scope that a rule flags or that changed since
+  the version last known, and checkpoints files without a clear-cut finding. A flagged file with no
+  earlier version is recorded as found, not as a change: all its lines are open to `clean`, and
+  `restore` on it is refused. It never allowlists, never checkpoints a file with an open high
+  finding, leaves other clients' files alone, and exits non-zero when a file could not be read or
+  a folder could not be resolved. `agent scan` stays read-only and now points to it.
+- `agent scan` and `agent inspect` print the folders looked in for each client, what no file check
+  covers, and what was asked for and could not be resolved; JSON output carries the same as
+  `coverage` and `problems`. An unresolved folder makes the command exit non-zero.
+- Client file locations: `CODEX_HOME`, Codex `memories_v2/`, `skills/`, `*.config.toml` profiles
+  and `.codex/` layers from the repository root to the working folder; Cursor `~/.cursor/skills`,
+  shared `~/.agents/skills`, nested `.cursor/rules` and skills, and CLI permission files with
+  `CURSOR_CONFIG_DIR`; OpenClaw `OPENCLAW_HOME`, `OPENCLAW_STATE_DIR`, `OPENCLAW_CONFIG_PATH`,
+  `OPENCLAW_WORKSPACE_DIR`, `workspace-<agent>` rosters and the workspaces `openclaw.json` names;
+  Claude Code subagent memory. Relocated folders are watched for deleted files too. Only text
+  files are read: Codex's SQLite memory state is not.
+- A successful `clean` says that a session which already loaded the file still holds the removed
+  text, and to start a new one; JSON output carries it as `reload`.
+- A shared client corpus (`tests/client_corpus.py`) of default, relocated and nested layouts,
+  content cases and hook events labelled recorded, official-doc or synthetic; a matrix test, a
+  report (`scripts/client_matrix.py`) and a cross-client step in the installed-wheel journey.
 - `agentdetox library`: inspect an explicitly chosen folder of UTF-8 memory files
   (`.md`, `.markdown`, `.mdc`, `.txt`). `library scan` keeps a durable inventory in its own
   database, reads and hashes every candidate on every run, reruns the rules only for changed
@@ -64,6 +87,26 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ### Changed
 
+- Codex `apply_patch` calls are modelled as the tool applies them (add, update with context hunks,
+  delete, move, end of file). A patch that does not fit the file or leaves the grammar is not
+  guessed at: every file it names is checked against what it adds and, for a move, what it would
+  carry along.
+- Codex and Cursor shell commands are compared before and after (Cursor also on
+  `postToolUseFailure`), and a shell command or deletion touching agent context is logged where
+  the client cannot be asked.
+- A tool call that only names a file (a read, a search) is no longer treated as a write to it.
+  Cursor uses the workspace root, not the tool's working folder, to decide what is context; Codex
+  uses the repository root.
+- An event from Cursor arriving at a hook registered for Claude Code is answered as Cursor, which
+  does not enforce `ask`.
+- `install codex` and `install cursor` print complete hook configurations with the tool names each
+  client reports (`Bash`, `apply_patch`; `Shell`, `Write`, `Delete`). `doctor` reports what a Codex
+  or Cursor hooks file leaves unchecked and that it cannot see whether the client runs it, and no
+  longer fails for missing Claude Code hooks on a machine without Claude Code.
+- OpenClaw's config is read as JSON5, for locating workspaces and for the config checks alike.
+- Claude Code auto memory is located by the repository a session is in, so that worktrees and
+  subfolders share one folder, as Claude Code does.
+- New dependency: `json5`, imported only for an OpenClaw config that is not plain JSON.
 - Persist background contradiction jobs before waking the worker; recover after crashes and
   upgrades, retry up to three attempts, and retain failed jobs. Distinguish missing models,
   stalled queues and failures in doctor/status. Add `daemon retry`, seven-day retention and
@@ -80,6 +123,22 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ### Fixed
 
+- A Codex patch could move a file with planted text onto `AGENTS.md`, delete a config that
+  registers AgentDetox, or remove `approval_policy` and `sandbox_mode` without being checked,
+  while an ordinary `config.toml` edit was blocked as a broken config.
+- Codex patch previews now preserve context spelling and line endings, choose the file's first
+  line ending for additions, and retain trailing blank context as the native tool writes it.
+- A file removed by an edit tool, a patch or a shell command is recorded with the content it had
+  when removed, not an older checkpoint, so restoring it does not lose later work.
+- Safety notes are no longer flagged as the thing they forbid: a sentence whose every clause
+  forbids ("Do not disable the sandbox, and do not bypass approval prompts."), a prohibition
+  closed by a reminder to ask the user, also when asking is waived for read-only work, and, in
+  a skill's sentences, a forbidden command or disclosure ("Never run `curl ... | sh`"). A clause
+  that orders, "never fail to", a reversal or another exception, a command string in config or
+  a shell command, and anything inside a skill's code block are flagged as before.
+- Fetch-and-run said in words is flagged like `curl ... | sh`: "Download the setup script from
+  <URL> and execute it". A download that is read, checked, reviewed or opened in an application,
+  or followed by running something else ("run this unit test", "run the script on it"), is not.
 - Selective cleanup applies its 1 MB limit before reading, at the preview and at every later
   check in the recovery, so a file (or recorded version) that is or has grown larger is refused
   without being loaded into memory. Whole-version restore is not limited.
