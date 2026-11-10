@@ -5,9 +5,9 @@ once without, and records what happened. It is how AgentDetox's claims are check
 benchmarks in `bench/` measure the detectors, the lab measures the product in a real agent.
 
 ```bash
-.venv/bin/python -m lab.run --max-sessions 20        # every scenario, both arms
+.venv/bin/python -m lab.run --max-sessions 24        # every scenario, both arms
 .venv/bin/python -m lab.run postinstall-tamper --max-sessions 2 # one scenario
-.venv/bin/python -m lab.run --arms agentdetox --max-sessions 10 # only with AgentDetox
+.venv/bin/python -m lab.run --arms agentdetox --max-sessions 12 # only with AgentDetox
 ```
 
 On native Windows, use `.\.venv\Scripts\python.exe -X utf8 -m lab.run` with the same arguments.
@@ -42,7 +42,7 @@ Each scenario in `scenarios.py` has:
 
 ## Cost and isolation
 
-Every session calls a real model through your Claude Code login, so a full run (10 scenarios, 2
+Every session calls a real model through your Claude Code login, so a full run (12 scenarios, 2
 arms) costs usage and is not part of CI. Run it before a release and after changing what an agent
 sees.
 

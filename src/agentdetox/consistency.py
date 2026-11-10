@@ -260,11 +260,22 @@ def candidate_pairs(new: list[Statement], existing: list[Statement],
     v = _vectors([s.text for s in new + existing])
     sims = v[: len(new)] @ v[len(new) :].T
     pairs = []
+    token_sets: dict[str, set[str]] = {}
     for i in range(len(new)):
-        for j in np.argsort(-sims[i])[:k]:
-            if (sims[i, j] >= min_sim and new[i].text != existing[j].text and _same_subject(new[i], existing[j])
-                    and len(set(_tokens(new[i].text)) & set(_tokens(existing[j].text))) >= MIN_SHARED_TOKENS):
+        new_tokens = set(_tokens(new[i].text))
+        selected: set[tuple[str, str, str]] = set()
+        for j in np.argsort(-sims[i]):
+            if len(selected) >= k or sims[i, j] < min_sim:
+                break
+            key = (existing[j].text, existing[j].subject, existing[j].context)
+            if new[i].text == existing[j].text or not _same_subject(new[i], existing[j]) or key in selected:
+                continue
+            text = existing[j].text
+            if text not in token_sets:
+                token_sets[text] = set(_tokens(text))
+            if len(new_tokens & token_sets[text]) >= MIN_SHARED_TOKENS:
                 pairs.append((i, int(j)))
+                selected.add(key)
     return pairs
 
 

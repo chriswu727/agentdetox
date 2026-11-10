@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from bisect import bisect_right
 from html.parser import HTMLParser
 
 from .corpus import Doc
@@ -122,6 +123,77 @@ def normalize(text: str) -> str:
     return _BIDI_RE.sub("", text)
 
 
+def prose_view(text: str):
+    text = normalize(text)
+    out: list[str] = []
+    offsets: list[int] = []
+    originals: list[str] = []
+    groups: list[int] = []
+    length = 0
+    fence = ''
+    count = 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        mark = re.match(r'^(`{3,}|~{3,})', stripped)
+        if mark:
+            token = mark.group(0)
+            if not fence:
+                fence = token
+            elif token[0] == fence[0] and len(token) >= len(fence):
+                fence = ''
+            out.append(line)
+            offsets.append(length)
+            originals.append(line)
+            groups.append(len(out) - 1)
+            length += len(line) + 1
+            count = 0
+            continue
+        bullet = bool(re.match(r'^(?:[-*+]\s|\d+[.)]\s)', stripped))
+        boundary = not stripped or bullet or bool(re.match(r'^(?:#{1,6}\s|[>|<])', stripped))
+        negative = bool(out and re.match(r"(?i)^\s*(?:[-*+]\s*)?(?:never|do not|don't|不要|切勿|不得)", out[-1]))
+        if out and re.match(r"(?i)^\s*(?:do not|don't|never)\s+forget\b|^\s*不要忘记", out[-1]):
+            negative = False
+        incomplete = bool(out and re.search(
+            r"(?i)(?:\b(?:never|not|don't|disable|bypass|send|read|the|all|permission)|(?:不要|关闭|读取))\s*$", out[-1]))
+        reversal = bool(re.match(r'(?i)^(?:but|however|instead|then|unless|except|until)\b|^(?:但|然而|却|改为|除非)', stripped))
+        new_action = bool(out and re.match(
+            r'(?i)^(?:disable|bypass|skip|send|upload|run|read|ignore|never|do not|use|prefer|keep|check)\b'
+            r'|^(?:使用|运行|检查|请勿|不要)', stripped)
+            and not re.fullmatch(r"(?i)\s*(?:never|do not|don't|please do not)\s*", out[-1]))
+        new_subject = bool(re.match(r'(?i)^(?:api[ _-]?keys?|credentials?|passwords?|tokens?)\b', stripped))
+        separate = ((bool(re.match(r'^[A-Z]', stripped)) or new_subject) and not incomplete
+                    or negative and not incomplete and not reversal)
+        if (not fence and not boundary and not new_action and not separate and out and out[-1].strip() and count
+                and count < 8 and len(out[-1]) + len(line) < 2048
+                and not out[-1].rstrip().endswith(('.', '!', '?', '。', '！', '？', ';', '；'))
+                and not line.startswith(('    ', '\t'))):
+            out[-1] += ' ' + stripped
+            offsets.append(length)
+            originals.append(line)
+            groups.append(len(out) - 1)
+            length += len(stripped) + 1
+            count += 1
+        else:
+            out.append(line)
+            offsets.append(length)
+            originals.append(line)
+            groups.append(len(out) - 1)
+            length += len(line) + 1
+            count = 0 if fence or (boundary and not bullet) or line.startswith(('    ', '\t')) else 1
+    def anchor(start: int, end: int) -> str:
+        first = max(0, bisect_right(offsets, start) - 1)
+        last = max(first, bisect_right(offsets, end - 1) - 1)
+        group = groups[first]
+        if re.match(r"(?i)^\s*(?:[-*+]\s*)?(?:never|do not|don't|不要|切勿|不得)", out[group]):
+            while first and groups[first - 1] == group:
+                first -= 1
+            while last + 1 < len(groups) and groups[last + 1] == group:
+                last += 1
+        return '\n'.join(originals[first:last + 1]).strip()
+
+    return '\n'.join(out), anchor
+
+
 def decode_tag_chars(text: str) -> str:
     """Unicode tag characters (U+E0020-E007E) mirror printable ASCII and render invisibly."""
     return "".join(chr(ord(c) - 0xE0000) for c in text if 0xE0020 <= ord(c) <= 0xE007E)
@@ -185,11 +257,17 @@ def is_prohibited_action(text: str, start: int, end: int) -> bool:
 
 
 def match_injection(text: str, *, prose: bool = True) -> list[tuple[str, str, int]]:
+    return [(severity, label, start) for severity, label, start, _ in _injection_matches(text, prose=prose)]
+
+
+def _injection_matches(text: str, *, prose: bool = True) -> list[tuple[str, str, int, int]]:
     norm = normalize(text)
     hits = []
     for severity, label, pattern in _PATTERNS:
         quoted = False
         for m in pattern.finditer(norm):
+            if prose and label == 'conceal from user' and _redacts_secret(norm, m.start()):
+                continue
             if prose and label in {"instruction override", "data exfiltration instruction"} \
                     and is_prohibited_action(norm, m.start(), m.end()):
                 continue
@@ -197,12 +275,25 @@ def match_injection(text: str, *, prose: bool = True) -> list[tuple[str, str, in
             # A quoted phrase is still reported, but not at a level that blocks.
             if severity == "high" and _is_quoted(norm, m.start(), m.end()):
                 if not quoted:
-                    hits.append(("medium", f"{label} (quoted, possibly describing an attack)", m.start()))
+                    hits.append(("medium", f"{label} (quoted, possibly describing an attack)", m.start(), m.end()))
                     quoted = True
             else:
-                hits.append((severity, label, m.start()))
+                hits.append((severity, label, m.start(), m.end()))
                 break
     return hits
+
+
+_REDACTION = re.compile(
+    r"\s*(?:[-*+]\s*)?(?:never|do not|don't)\s+(?:show|reveal|disclose)\s+"
+    r"(?:the\s+)?(?:api[ _-]?(?:keys?|tokens?)|passwords?|credentials?|secrets?|private keys?)\s+"
+    r"to\s+the\s+users?(?:\s+in\s+(?:error messages|logs|responses|output))?\s*[.!]?\s*", re.I,
+)
+
+
+def _redacts_secret(text: str, start: int) -> bool:
+    left = text.rfind('\n', 0, start) + 1
+    right = re.search(r'\n', text[start:])
+    return bool(_REDACTION.fullmatch(text[left:start + right.start() if right else len(text)]))
 
 
 class _HiddenTextParser(HTMLParser):
@@ -237,7 +328,7 @@ class _HiddenTextParser(HTMLParser):
             self.comments.append(data.strip())
 
 
-def scan_doc(doc: Doc, *, prose: bool = True) -> list[Finding]:
+def scan_doc(doc: Doc, *, prose: bool = True, wrapped: bool = False) -> list[Finding]:
     findings: list[Finding] = []
     text = doc.text
 
@@ -276,8 +367,13 @@ def scan_doc(doc: Doc, *, prose: bool = True) -> list[Finding]:
                 add("hidden-html", "high", f"HTML comment contains: {injected[0][1]}", comment[:200])
 
     norm = normalize(text)
-    for severity, label, pos in match_injection(text, prose=prose):
-        add("injection-phrase", severity, label, snippet(norm, pos), line_at(norm, pos))
+    def anchor(start, end):
+        return line_at(norm, start)
+
+    if wrapped:
+        norm, anchor = prose_view(text)
+    for severity, label, pos, end in _injection_matches(norm, prose=prose):
+        add("injection-phrase", severity, label, snippet(norm, pos), anchor(pos, end))
     if smuggled.strip():
         for severity, label, _ in match_injection(smuggled, prose=False):
             add("injection-phrase", "high", f"{label} (inside invisible tag characters)", smuggled[:200])

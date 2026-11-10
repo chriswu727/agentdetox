@@ -19,6 +19,18 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ### Fixed
 
+- Bind pre-write external-change findings to the captured bytes and scan outside the global
+  store lock; retry if another writer advances the ledger before recording.
+- Detect bounded soft-wrapped instructions in memory and instruction files, preserving the
+  original source lines for stable finding IDs and cleanup. Keep code and Markdown block
+  boundaries separate, and retain safety-prohibition checks.
+- Check substantive copied passages as well as whole writes, so ordinary surrounding notes
+  cannot dilute a copied payload below the whole-write threshold. Scope remember requests
+  to the referenced source or latest source for generic requests; unrelated preferences no
+  longer exempt all tool outputs. This lexical check does not establish semantic consent.
+- Avoid high-severity credential alerts for explicit SSH public-key/config paths and narrow
+  secret-redaction guidance. Private keys, ambiguous suffixes, reversals and separate attacks
+  remain checked. Apply contradiction candidate limits after eligibility and deduplication.
 - Keep shell scripts and frozen fixture bytes unchanged by Git's Windows newline conversion.
   Write exact baseline bytes in offline evaluators and validate cleanup against native line
   endings. Frozen case content and expected labels are unchanged.
@@ -31,6 +43,8 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ### Documentation
 
+- Add deterministic large-memory inventory/rule-scan fixtures and a staged scale, recovery
+  and private maintainer-observation protocol. These are not production scale-support claims.
 - Link the interactive walkthrough and clarify selective cleanup alongside whole-version recovery.
   Update the user guide to reflect that selective cleanup is available in 0.4.1.
 

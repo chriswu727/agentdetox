@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated 2026-11-05. Current published release:
+Last updated 2026-11-09. Current published release:
 [0.4.1](https://github.com/chriswu727/agentdetox/releases/tag/v0.4.1). The
 [changelog](CHANGELOG.md) records releases; this document separates
 implemented capabilities from product hypotheses and future work.
@@ -90,6 +90,24 @@ Shipped in 0.4.0 (see the changelog for the full list):
   that does not depend on the clock.
 
 ## Next
+
+The agreed delivery sequence is:
+
+1. Make current protection dependable: captured-byte evidence, durable background checks,
+   reviewed accuracy defects, cross-platform validation, unchanged hook budgets, and a private
+   maintainer-observation baseline. Unreleased fixes remain distinct from published 0.4.1.
+2. Add scoped lifecycle evidence and large-library inspection: initial inventory, full and
+   incremental background scans, progress, interruption recovery, version-bound findings and
+   reviewed cleanup. Start with files; database/vector adapters require separate validation.
+3. Validate sustained maintainer use and release a scoped stable capability. Thirty qualifying
+   active days is a proposed gate, not a claim already achieved or a reason to recruit users.
+4. Research semantic attacks, including paraphrase and poisoned consolidation. This can start
+   alongside stage 2, initially recording evidence without changing blocking decisions. Promotion
+   requires its own held-out accuracy, false-positive and performance gates.
+
+The [large-memory protocol](bench/LARGE_MEMORY.md) defines proposed 1k/10k/100k tiers and
+separates inventory measurements from production prevention, detection and disinfection.
+No stage promises factual truth from a hash, copied-text match or contradiction score.
 
 - Associate changed context with later sessions that loaded it. Do not claim downstream impact
   until the available transcript evidence supports it.

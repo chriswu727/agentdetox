@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import allowlist, events, ledger, shell, storage
-from .agentscan import read_text, scan_text
+from .agentscan import scan_text
 from .allowlist import Flag, contradiction_flag, copy_flag, finding_flag, source_id
 from .consistency import (
     NLI,
@@ -101,7 +101,7 @@ def check_write(write: Write, project: Path, run: set[str], transcript: str | No
         source = f"{copied.tool} output ({copied.origin[:100]})" if copied.origin else f"{copied.tool} output"
         signals.append(Signal(
             COPIED,
-            f"AgentDetox: {copied.fraction:.0%} of this {cf.kind} write is copied from {source} the agent "
+            f"AgentDetox: {copied.fraction:.0%} of a passage in this {cf.kind} write is copied from {source} the agent "
             f'just read ("{copied.excerpt[:80]}..."), and the user did not ask to remember it. Text planted in web '
             "pages, emails and files reaches agent memory this way. Allowing its id trusts that source from now on.",
             [copy_flag(copied)]))
@@ -214,13 +214,21 @@ def before_write(paths: list[Path], project: Path) -> None:
         cf = classify(path, project=project)
         if cf is None or cf.kind == "config" or not path.is_file():
             continue
-        with store_lock():
-            known = previous_version(str(path))
-            data = path.read_bytes()
+        for _ in range(3):
+            with store_lock():
+                known = previous_version(str(path))
+                data = path.read_bytes()
             if known is None or hashlib.sha256(data).hexdigest() == known:
-                continue
-            findings = allowlist.unsuppressed(scan_text(str(path), str(path), read_text(path), cf.kind))
-            ledger.record(path, "external", known, data, flagged=_worst(findings) == "high", findings=findings)
+                break
+            text = data.decode('utf-8', errors='replace').replace('\r\n', '\n').replace('\r', '\n')
+            findings = allowlist.unsuppressed(scan_text(str(path), str(path), text, cf.kind))
+            with store_lock():
+                if previous_version(str(path)) != known:
+                    continue
+                ledger.record(path, "external", known, data, flagged=_worst(findings) == "high", findings=findings)
+                break
+        else:
+            raise StoreError(f'{path} history changed repeatedly while recording the external version')
 
 
 def previous_version(path: str) -> str | None:
@@ -264,9 +272,10 @@ def _copied(cf: ContextFile, added: str, t: Transcript | None) -> CopyFinding | 
 
 def _added_text(old: str, new: str) -> str:
     after = new.splitlines()
-    return "\n".join(
-        line for tag, _, _, start, end in difflib.SequenceMatcher(None, old.splitlines(), after).get_opcodes()
-        if tag in ("insert", "replace") for line in after[start:end]
+    return "\n\n".join(
+        "\n".join(after[start:end])
+        for tag, _, _, start, end in difflib.SequenceMatcher(None, old.splitlines(), after).get_opcodes()
+        if tag in ("insert", "replace")
     )
 
 

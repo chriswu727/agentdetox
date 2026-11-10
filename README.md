@@ -164,6 +164,9 @@ which remain visible in `doctor` and `status`. Code running as your user can alt
 
 Source matching is evidence of copied text, not proof of malicious intent or human authorship.
 An empty rescan does not certify a file as safe.
+Large-library inspection and recovery are being developed against a separate
+[scale protocol](https://github.com/chriswu727/agentdetox/blob/main/bench/LARGE_MEMORY.md);
+the proposed 1k/10k/100k tiers are not current production-support guarantees.
 [Full limitations](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#what-it-does-not-catch) ·
 [Threat model](https://github.com/chriswu727/agentdetox/blob/main/SECURITY.md)
 
