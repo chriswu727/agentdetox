@@ -26,6 +26,8 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
   depending on the host's system-wide long-path policy.
 - Hash and scan the same captured bytes when comparing context with its checkpoint. A file
   changing between separate text/hash reads can no longer hide the version just observed.
+- Default the entire test suite to a temporary user home as well as a temporary store, so
+  tests that omit their own home fixture cannot read the host's Claude context.
 
 ### Documentation
 

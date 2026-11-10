@@ -91,6 +91,9 @@ the old second read can match the checkpoint after the first read already observ
 Initial new hook tests omitted the temporary user-home override; review caught that isolation
 error, the override was added, and all 14 entry-point/read-verification tests passed again.
 Those initial runs are excluded from claims about isolated user-home validation.
+The shared autouse fixture now also sets a temporary user home for every test by default;
+the complete `scripts/check.py` rerun with that safeguard passes ruff, mypy and **882 tests,
+31 existing skips**. Explicit per-test homes can still override this safe default.
 
 The [paired performance report](../bench/results/hooks-windows-io-paired-2026-11-09.json)
 records ordinary Bash pre P95 199.2 → 187.1 ms and the 1000-active-file Bash pair
