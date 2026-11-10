@@ -4,15 +4,17 @@ a tool that rewrites its own hook config is the behaviour AgentDetox flags in ot
 from __future__ import annotations
 
 import json
+import re
 import stat
 import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 from . import __version__, allowlist, background, compat, daemon, events, settings, storage
 from .consistency import NLI, NLI_MODEL
-from .context import home_dir
+from .context import claude_dir, home_dir
 from .install import (
     claude_code_plugin,
     claude_code_settings,
@@ -31,12 +33,17 @@ class Check:
 
 def run(project: Path) -> list[Check]:
     checks = [Check("ok", f"agentdetox {__version__} (Python {sys.version.split()[0]})")]
-    checks += _claude_code_hooks(project)
+    others = _other_agents(project)
+    claude = _claude_code_hooks(project)
+    if others and not claude_dir().exists() and [c.status for c in claude] == ["fail"]:
+        # Someone who uses only Codex or Cursor has no Claude Code hooks to be missing.
+        claude = [Check("ok", f"Claude Code: not set up on this machine (no {claude_dir()}); its hooks are not checked")]
+    checks += claude
     checks += _settings()
     checks += _nli()
     checks += _background()
     checks += _store()
-    checks += _other_agents(project)
+    checks += others
     try:
         with storage.connection() as db:
             interrupted = db.execute("SELECT * FROM operations WHERE stage NOT IN ('completed', 'acknowledged')").fetchall() if db else []
@@ -257,13 +264,85 @@ def _store() -> list[Check]:
 
 
 def _other_agents(project: Path) -> list[Check]:
+    """What can be read of the Codex and Cursor hooks from their files. Whether the client
+    runs them cannot: Codex skips a hook until the user has trusted it, and neither client
+    tells a hook's owner that it ran."""
     checks = []
     for agent in ("codex", "cursor"):
-        hooked = [p for scope in ("user", "project")
-                  if (p := default_settings_path(agent, scope, project)).exists() and is_self_hook(p.read_text(encoding="utf-8"))]
-        if hooked:
-            checks.append(Check("ok", f"{agent}: AgentDetox hook registered in {hooked[0]} (experimental)"))
+        for path in dict.fromkeys(default_settings_path(agent, scope, project) for scope in ("user", "project")):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if not is_self_hook(text):
+                continue
+            try:
+                problems = _codex_gaps(json.loads(text), path) if agent == "codex" else _cursor_gaps(json.loads(text))
+            except (ValueError, TypeError, AttributeError):
+                checks.append(Check("warn", f"{agent}: {path} names AgentDetox's hook but is not a hooks file "
+                                            f"{agent} would load"))
+                continue
+            unseen = ("Codex runs it only once you have trusted it in /hooks, which AgentDetox cannot see"
+                      if agent == "codex" else "whether Cursor runs it cannot be seen from here")
+            if problems:
+                checks.append(Check("warn", f"{agent}: AgentDetox's hook is in {path}, but " + "; ".join(problems)))
+            else:
+                checks.append(Check("ok", f"{agent}: AgentDetox's hook is in {path} (experimental; {unseen})"))
     return checks
+
+
+def _matches(matcher, names: tuple[str, ...]) -> bool:
+    if matcher in (None, "", "*"):
+        return True
+    try:
+        return any(re.search(str(matcher), name) for name in names)
+    except re.error:
+        return False
+
+
+def _codex_gaps(data: dict, path: Path) -> list[str]:
+    """What a Codex hooks.json that names AgentDetox leaves unchecked."""
+    events: dict[str, list] = {}
+    for event, groups in data.get("hooks", {}).items():
+        events[event] = [g.get("matcher") for g in groups
+                         if any(is_self_hook(str(h.get("command", ""))) for h in g.get("hooks", []))]
+    gaps = []
+    if not events.get("SessionStart"):
+        gaps.append("not for SessionStart, so changes made outside Codex are not reported")
+    # Codex reports shell commands as Bash, and file edits as apply_patch (also matched as Edit or Write).
+    for tool, names, what in (("Bash", ("Bash",), "shell commands"),
+                              ("apply_patch", ("apply_patch", "Edit", "Write"), "file edits")):
+        for event in ("PreToolUse", "PostToolUse"):
+            if not any(_matches(m, names) for m in events.get(event, [])):
+                gaps.append(f"no {event} matcher covers Codex's {tool} tool, so {what} are not "
+                            + ("checked" if event == "PreToolUse" else "recorded"))
+    try:
+        features = tomllib.loads(path.with_name("config.toml").read_text(encoding="utf-8")).get("features", {})
+    except (OSError, ValueError):
+        features = {}
+    if isinstance(features, dict) and (features.get("hooks") is False or features.get("codex_hooks") is False):
+        gaps.append(f"hooks are turned off in {path.with_name('config.toml')} ([features]), so it does not run")
+    return gaps
+
+
+def _cursor_gaps(data: dict) -> list[str]:
+    """What a Cursor hooks.json that names AgentDetox leaves unchecked."""
+    events = {event: [h.get("matcher") for h in handlers if is_self_hook(str(h.get("command", "")))]
+              for event, handlers in data.get("hooks", {}).items()}
+    gaps = []
+    if not events.get("sessionStart"):
+        gaps.append("not for sessionStart, so changes made outside Cursor are not reported")
+    if not any(_matches(m, ("Write",)) for m in events.get("preToolUse", [])):
+        gaps.append("no preToolUse matcher covers Write, so file edits are not checked")
+    if not events.get("afterFileEdit") and not any(_matches(m, ("Write",)) for m in events.get("postToolUse", [])):
+        gaps.append("not for afterFileEdit, so file edits are not recorded")
+    for event in ("preToolUse", "postToolUse", "postToolUseFailure"):
+        if not any(_matches(m, ("Shell",)) for m in events.get(event, [])):
+            gaps.append(f"no {event} matcher covers Shell, so context is not compared across "
+                        + ("failed " if event == "postToolUseFailure" else "") + "shell commands")
+    if any(m in (None, "", "*") for m in events.get("preToolUse", [])):
+        gaps.append("its preToolUse entry has no matcher, so it also runs for every read and search")
+    return gaps
 
 
 def render(checks: list[Check]) -> str:

@@ -4,6 +4,34 @@ Replays attacks, and everyday use, against a real Claude Code session, once with
 once without, and records what happened. It is how AgentDetox's claims are checked: synthetic
 benchmarks in `bench/` measure the detectors, the lab measures the product in a real agent.
 
+## Codex native contract without inference
+
+`codex_contract.py` launches the installed Codex CLI with an isolated temporary profile and a
+loopback server that supplies fixed tool calls. It exercises benign and poisoned patches,
+renaming a file into instructions, shell-change observation, benign config edits, hook deletion,
+precise cleanup, a fresh client's instruction reload, and undo. It makes no model-provider subscription calls. The model slug and
+existing catalog select native tool metadata; no model generates the responses.
+
+```bash
+.venv/bin/python lab/codex_contract.py \
+  --codex "$(command -v codex)" \
+  --catalog "$HOME/.codex/models_cache.json" \
+  --model gpt-6.1-sol \
+  --output /tmp/agentdetox-codex-contract.json
+```
+
+Use a slug present in your local catalog with freeform patch support. The harness currently
+requires POSIX. It explicitly trusts only its reviewed fixture hooks in the temporary profile;
+normal installation still requires the client's hook review. The two fixed config-patch cases
+disable Codex's native sandbox to distinguish AgentDetox's decisions from Codex's own protection
+of `.codex/`; the other cases use `workspace-write`. All targets belong to the temporary fixture.
+This checks actual hook transport,
+tool execution and instruction-file reload, not installer/trust UI, generated memory backends,
+real-model behavior or the client's response to arbitrary semantic poisoning. It is separate
+from the subscription-consuming Claude lab below.
+
+## Claude Code model sessions
+
 ```bash
 .venv/bin/python -m lab.run --max-sessions 24        # every scenario, both arms
 .venv/bin/python -m lab.run postinstall-tamper --max-sessions 2 # one scenario

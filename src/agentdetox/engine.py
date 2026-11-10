@@ -27,7 +27,15 @@ from .consistency import (
 )
 from .context import ContextFile, classify, discover, named_like_context, related_files, short_path
 from .findings import Finding, printable
-from .integrity import StoreError, baseline_entries, object_text, snapshot, store_dir, store_lock
+from .integrity import (
+    StoreError,
+    baseline_entries,
+    is_self_hook,
+    object_text,
+    snapshot,
+    store_dir,
+    store_lock,
+)
 from .persistence import guard_changes, guarded_sections
 from .provenance import (
     CopyFinding,
@@ -45,6 +53,8 @@ USER_WRITTEN = "user-written"  # the same, in text the user typed or pasted them
 OWN_STATE = "own-state"      # a change to AgentDetox's own settings, allowlist or snapshots
 GUARDRAILS = "guardrails"    # an agent changing its own hooks, MCP servers or permissions
 SHELL_WRITE = "shell-write"  # a shell command writing agent context past the write check
+DELETION = "deletion"        # an edit tool removing a memory, rules or skill file
+UNREAD = "unread"            # a write to agent context whose content could not be worked out
 SUSPICIOUS, COPIED, CONTRADICTION = "suspicious", "copied", "contradiction"
 
 
@@ -53,7 +63,9 @@ class Write:
     """A planned change to one file: its whole text before and after."""
     path: Path
     old: str
-    new: str
+    new: str | None      # None: the file is removed
+    # Why `new` is a guess (a patch that does not fit the file, an input not understood).
+    unknown: str = ""
 
 
 @dataclass
@@ -66,13 +78,18 @@ class Signal:
 def check_write(write: Write, project: Path, run: set[str], transcript: str | None = None) -> list[Signal]:
     """What is wrong with a planned write. `run` names the configurable checks to do
     now. A clear-cut finding stops the rest: the write is blocked anyway."""
-    path, old, new = write.path, write.old, write.new
+    path, old = write.path, write.old
+    if write.new is None and path.is_dir() and not path.is_symlink():
+        return _folder_removal(path, project)
     if is_own_state(path):
         return [Signal(OWN_STATE, f"AgentDetox: this write changes AgentDetox's own settings, allowlist or "
                                   f"snapshots ({short_path(str(path))}).")]
     cf = classify(path, project=project)
     if cf is None:
         return []
+    if write.new is None:
+        return _removal(cf, old)
+    new = write.new
 
     @functools.cache
     def recent() -> Transcript | None:
@@ -82,6 +99,10 @@ def check_write(write: Write, project: Path, run: set[str], transcript: str | No
         findings = allowlist.unsuppressed(scan_text(str(path), str(path), new, "config"))
         if _worst(findings) == "high":
             return [_planted(cf, findings, recent())]
+        if write.unknown:
+            return [Signal(GUARDRAILS, f"AgentDetox: could not work out what this write does to "
+                                       f"{short_path(str(path))} ({printable(write.unknown)}), so it is treated as a "
+                                       "change to the agent's hooks, MCP servers or permissions.")]
         if (guarded_sections(path, old) if old.strip() else {}) != guarded_sections(path, new):
             changes = printable("; ".join(guard_changes(path, old, new))) or "changes the hooks, MCP servers or permissions"
             return [Signal(GUARDRAILS, f"AgentDetox: this write to {short_path(str(path))} {changes}. An agent "
@@ -109,7 +130,67 @@ def check_write(write: Write, project: Path, run: set[str], transcript: str | No
     if conflicts:
         signals.append(Signal(CONTRADICTION, _conflict_reason(cf, conflicts),
                               [contradiction_flag(c) for c in conflicts]))
+    if write.unknown:
+        signals.append(Signal(UNREAD, f"AgentDetox: only the text this write adds to the agent's {cf.kind} file "
+                                      f"{short_path(str(path))} was checked, not the result: {printable(write.unknown)}."))
     return signals
+
+
+def _inside(folder: Path, project: Path) -> list[ContextFile]:
+    """The context files in `folder`: looked up among the files an agent loads and the ones
+    AgentDetox has a version of, not found by walking a folder of any size."""
+    real = os.path.realpath(folder)
+    inside = {str(cf.path): cf for cf in discover(project=project)
+              if Path(os.path.realpath(cf.path)).is_relative_to(real)}
+    for name in storage.known_under(str(folder)):   # files in subfolders are known once recorded
+        if name not in inside and os.path.isfile(name):
+            cf = classify(Path(name), project=project)
+            if cf is not None:
+                inside[name] = cf
+    return list(inside.values())
+
+
+def removal_targets(path: Path, project: Path) -> list[Path]:
+    """The files a removal of `path` takes with it that are worth keeping a version of."""
+    if path.is_dir() and not path.is_symlink():
+        return [cf.path for cf in _inside(path, project)]
+    return [path]
+
+
+def _folder_removal(folder: Path, project: Path) -> list[Signal]:
+    """What is wrong with an edit tool removing a folder, judged by the context files in it."""
+    real = os.path.realpath(folder)
+    store = os.path.realpath(store_dir())
+    if Path(store).is_relative_to(real) or Path(real).is_relative_to(store):
+        return [Signal(OWN_STATE, f"AgentDetox: this removes {short_path(str(folder))}, which holds AgentDetox's own "
+                                  "settings, allowlist or snapshots.")]
+    signals: list[Signal] = []
+    for cf in _inside(folder, project):
+        try:
+            old = cf.path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            old = ""
+        for signal in _removal(cf, old):
+            if signal.check not in {s.check for s in signals}:
+                signals.append(signal)
+    return signals
+
+
+def _removal(cf: ContextFile, old: str) -> list[Signal]:
+    """What is wrong with an edit tool removing a context file. Config that sets hooks, MCP
+    servers or permissions is guarded as any change to them is; a hook script counts whole."""
+    where = short_path(str(cf.path))
+    if not os.path.lexists(cf.path):
+        return []
+    if cf.kind == "config":
+        sections = guarded_sections(cf.path, old) if old.strip() else {}
+        if not sections:
+            return []
+        own = " It registers AgentDetox's own hooks." if any(is_self_hook(v) for v in sections.values()) else ""
+        return [Signal(GUARDRAILS, f"AgentDetox: this removes {where}, and with it the hooks, MCP servers or "
+                                   f"permissions it sets.{own} An agent changing its own hooks, MCP servers or "
+                                   "permissions is how an injected instruction makes itself permanent.")]
+    return [Signal(DELETION, f"AgentDetox: this removes the agent's {cf.kind} file {where}.")]
 
 
 def check_command(command: str, project: Path, cwd: Path | None = None) -> list[Signal]:
@@ -154,7 +235,7 @@ def check_command(command: str, project: Path, cwd: Path | None = None) -> list[
         return [Signal(OWN_STATE, "AgentDetox: this command changes AgentDetox's own settings, allowlist or snapshots.")]
     if context:
         return [Signal(SHELL_WRITE, "AgentDetox: this shell command writes to or deletes the agent's memory, rules or "
-                                    "config, bypassing the write check. Approve only if you expected it.")]
+                                    "config, bypassing the write check.")]
     return []
 
 
@@ -171,7 +252,15 @@ def after_write(paths: list[Path], project: Path, record_contradictions: bool, t
 
     for path in paths:
         cf = classify(path, project=project)
-        if cf is None or not path.is_file():
+        if cf is None:
+            if not os.path.lexists(path):
+                # A removed folder: every context file AgentDetox knew in it went with it.
+                known = [Path(name) for name in storage.known_under(str(path))]
+                if known:
+                    _record_removals(known, agent, session, tool)
+            continue
+        if not path.is_file():
+            _record_removals([path], agent, session, tool)
             continue
         for _ in range(3):
             with store_lock():
@@ -212,6 +301,70 @@ def after_write(paths: list[Path], project: Path, record_contradictions: bool, t
             raise StoreError(f"{path} changed repeatedly while recording; check it again before trusting it")
         if trusted and record_contradictions:
             record_in_background(cf, old, project, content=data)
+
+
+def _record_removals(paths: list[Path], agent: str, session: str, tool: str) -> None:
+    """Record that the agent's own tool removed context files AgentDetox knew a version of
+    (a patch that deletes or moves one, a deleted folder), all in one transaction. Their
+    checkpoints stay, so each removal can be undone and the next session still reports it."""
+    with store_lock(), storage.connection(write=True):
+        for path in paths:
+            known = previous_version(str(path))
+            if known is None or os.path.lexists(path):
+                continue
+            ledger.record(path, "agent", known, None, agent=agent, session=session, tool=tool,
+                          attribution="removed through the agent's own tool")
+
+
+def changed_findings(cf: ContextFile, before: str, text: str) -> list[Finding]:
+    """What the rules find in a change from `before` to `text`: in the added lines of a
+    memory, rules or skill file, and in what a config file's change sets up."""
+    from .integrity import _config_changes
+
+    name = str(cf.path)
+    if cf.kind == "config":
+        found = _config_changes(name, cf.path, text, guarded_sections(cf.path, before) if before.strip() else {})
+        found += scan_text(name, name, text, cf.kind)
+    else:
+        found = scan_text(name, name, _added_text(before, text), cf.kind)
+    return allowlist.unsuppressed(found)
+
+
+def before_removal(paths: list[Path], project: Path, agent: str = "") -> None:
+    """Keep the version of each context file an edit tool is about to remove, so that
+    putting the file back gives what was there and not an older checkpoint. A version
+    that differs from the last one known is recorded as the change made outside the agent
+    that it is; a file never seen before is recorded as found, with no history invented
+    for it. Neither is trusted by this: nothing is checkpointed."""
+    for path in paths:
+        cf = classify(path, project=project)
+        if cf is None or not path.is_file() or path.is_symlink():
+            continue
+        for _ in range(3):
+            with store_lock():
+                known = previous_version(str(path))
+                data = path.read_bytes()
+            digest = hashlib.sha256(data).hexdigest()
+            if known == digest:
+                break
+            text = data.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+            if known is None:
+                findings = [f for f in allowlist.unsuppressed(scan_text(str(path), str(path), text, cf.kind))
+                            if f.severity in ("medium", "high")]
+            else:
+                findings = changed_findings(cf, object_text(known), text)
+            with store_lock():
+                if previous_version(str(path)) != known:
+                    continue
+                if known is None:
+                    ledger.record(path, "inspected", digest, data, findings=findings, method=ledger.INSPECTION,
+                                  actor=agent or "agent tool",
+                                  attribution="present when a tool asked to remove it; earlier history unknown")
+                else:
+                    ledger.record(path, "external", known, data, flagged=_worst(findings) == "high", findings=findings)
+                break
+        else:
+            raise StoreError(f'{path} changed repeatedly while its version before removal was recorded')
 
 
 def before_write(paths: list[Path], project: Path) -> None:

@@ -44,6 +44,15 @@ def get(change_id: str) -> dict:
         return dict(row)
 
 
+INSPECTION = ledger.INSPECTION
+
+
+def inspected(row: dict) -> bool:
+    """Whether a record is of a version found as it was, not of a change: it has no earlier
+    version, and every line of it can be chosen for cleanup."""
+    return json.loads(row['data']).get('method') == INSPECTION
+
+
 def _digest(path: Path) -> str | None:
     if path.is_symlink():
         raise StoreError(f'Symbolic links are not supported for review actions: {path}')
@@ -98,7 +107,8 @@ def render_list(rows: list[dict], summary: bool = False) -> str:
              'Recent context changes:' if summary else 'Changes needing attention:']
     for row in rows:
         data = json.loads(row['data'])
-        operation = 'deleted' if row['after_hash'] is None else 'added' if row['before_hash'] is None else 'modified'
+        operation = ('deleted' if row['after_hash'] is None else 'added' if row['before_hash'] is None
+                     else 'inspected' if data.get('method') == INSPECTION else 'modified')
         lines.append(f"C{row['id']}  {row['review_state']:<10} {operation:<8} {short_path(row['path'])}")
         lines.append(f"    {data.get('actor') or data.get('origin', 'unknown')} · {row['ts']}")
     lines.append('Open a change: agentdetox review C<ID> (showing up to 200 changes).')
@@ -151,7 +161,8 @@ def page(*, since: str | None = None, all_changes: bool = False, project: Path |
         result['total_changes'], result['total_files'] = counts
         result['states'] = {r[0]: r[1] for r in db.execute(
             'SELECT review_state, count(*) FROM changes c' + where + ' GROUP BY review_state', args)}
-        operation = "CASE WHEN after_hash IS NULL THEN 'deleted' WHEN before_hash IS NULL THEN 'added' ELSE 'modified' END"
+        operation = ("CASE WHEN after_hash IS NULL THEN 'deleted' WHEN before_hash IS NULL THEN 'added' "
+                     f"WHEN json_extract(c.data, '$.method')='{INSPECTION}' THEN 'inspected' ELSE 'modified' END")
         result['operations'] = {r[0]: r[1] for r in db.execute(
             'SELECT ' + operation + ', count(*) FROM changes c' + where + ' GROUP BY 1', args)}
         total = result['total_files'] if group_by == 'file' else result['total_changes']
@@ -180,6 +191,8 @@ def _summary(db, change_id: int) -> dict:
     origin = data.get('origin', '')
     if data.get('method') == 'selective-removal':
         writer = 'selected lines removed by AgentDetox'
+    elif data.get('method') == INSPECTION:
+        writer = 'found as it was, earlier history unknown'
     elif origin == 'copied' and data.get('source'):
         writer = f"copied by the agent from {data['source']}"
     elif origin == 'external' and data.get('method') == 'before-after':
@@ -196,7 +209,9 @@ def _summary(db, change_id: int) -> dict:
     top = db.execute(f"SELECT severity, reason FROM findings WHERE change_id=? AND status='pending' "
                      f"ORDER BY {_SEVERITY_RANK}, id LIMIT 1", (change_id,)).fetchone()
     operation = ('deleted' if change['after_hash'] is None else 'added' if change['before_hash'] is None
-                 else 'changed')
+                 else 'inspected' if data.get('method') == INSPECTION else 'changed')
+    if data.get('method') == INSPECTION:
+        added = removed = None
     return {'writer': writer, 'operation': operation, 'added': added, 'removed': removed,
             'finding': {'severity': top['severity'], 'reason': top['reason']} if top else None}
 
@@ -270,6 +285,9 @@ def detail(change_id: str) -> str:
     lines += [f'  {printable(str(what))}' + (f': {printable(str(source))}' if source else '') for what, source in evidence]
     if not evidence:
         lines.append(f"  {data.get('attribution', 'unknown')} ({data.get('method', 'legacy')})")
+    if data.get('method') == INSPECTION:
+        lines.append('This records a version found as it was, not a change: AgentDetox has no earlier version of '
+                     'the file, so there is no diff and nothing to restore.')
     lines += [printable(line) for line in
               difflib.unified_diff(before.splitlines(), after.splitlines(), fromfile='before', tofile='after', lineterm='')]
     with storage.connection() as db:
@@ -281,10 +299,13 @@ def detail(change_id: str) -> str:
         lines.append('STALE: the file no longer matches this change. Accept and whole-version restore refuse newer work; '
                      'selective cleanup requires unchanged, unambiguous selected lines.')
     recovery_label = 'Preview undo of this recovery' if data.get('origin') == 'restored' else 'Preview recovery'
-    lines += [f'Accept only this version: agentdetox review accept C{row["id"]}',
-              f'{recovery_label}: agentdetox restore C{row["id"]}',
-              f'Inspect added lines for selective cleanup: agentdetox clean C{row["id"]}',
-              'Dismiss one finding: agentdetox review dismiss F<ID>. This grants no permanent exception.']
+    lines.append(f'Accept only this version: agentdetox review accept C{row["id"]}')
+    if data.get('method') == INSPECTION:
+        lines.append(f'List its lines for selective cleanup: agentdetox clean C{row["id"]}')
+    else:
+        lines += [f'{recovery_label}: agentdetox restore C{row["id"]}',
+                  f'Inspect added lines for selective cleanup: agentdetox clean C{row["id"]}']
+    lines.append('Dismiss one finding: agentdetox review dismiss F<ID>. This grants no permanent exception.')
     if data.get('cleanup'):
         action = data['cleanup']
         source = f"C{action['change']}" if action.get('change') is not None else action.get('library', 'a library file')
@@ -339,6 +360,9 @@ def restore(change_id: str, apply: bool = False) -> str:
 
     with store_lock():
         row = get(change_id)
+        if inspected(row):
+            raise ValueError(f'C{row["id"]} records a version found as it was, not a change: there is no earlier '
+                             f'version to restore. Remove unwanted lines with `agentdetox clean C{row["id"]}`')
         with safefs.pinned(Path(row['path'])) as pin:
             path = _check_current(row, pin=pin)
             residual, warning = _residual(path, row['before_hash'])
@@ -365,10 +389,14 @@ def clean(change_id: str, lines: str | None = None, *, apply: bool = False,
     if row['after_hash'] is None:
         raise ValueError('A deleted-file change has no added lines to clean; use restore')
     limit = cleanup.MAX_BYTES
+    # An inspected version has no version before it: all of its lines are open to cleanup.
+    before = None if inspected(row) else row['before_hash']
     with safefs.pinned(path, limit) as pin:
-        return clean_version(pin, kind, lambda _: (_object_bytes(row['before_hash'], limit),
-                                                   _object_bytes(row['after_hash'], limit)),
-                             f'C{row["id"]}', {'change': row['id']}, lines, apply=apply, expected_hash=expected_hash)
+        result = clean_version(pin, kind, lambda _: (_object_bytes(before, limit),
+                                                     _object_bytes(row['after_hash'], limit)),
+                               f'C{row["id"]}', {'change': row['id']}, lines, apply=apply, expected_hash=expected_hash)
+    result['inspected'] = inspected(row)
+    return result
 
 
 def clean_version(pin, kind: str, versions, label: str, source: dict, lines: str | None = None, *,
@@ -419,8 +447,13 @@ def clean_version(pin, kind: str, versions, label: str, source: dict, lines: str
         backup = _recover(path, store_object(plan.content), digest, pin.mode(), residual, None,
                           cleanup_data={**source, 'lines': plan.selected,
                                         'resolved_flags': sorted(original_flags - remaining_flags)}, pin=pin)
-    result.update(applied=True, backup=str(backup) if backup else None)
+    result.update(applied=True, backup=str(backup) if backup else None, reload=RELOAD)
     return result
+
+
+# A cleanup changes the file, not what a running agent has already read from it.
+RELOAD = ('An agent session that loaded this file before the cleanup still holds the removed text: start a new '
+          'session in that client before relying on the cleanup.')
 
 
 def _cleanup_line(line: bytes) -> str:
@@ -431,11 +464,12 @@ def render_cleanup(data: dict) -> str:
     library = data.get('library')
     lines = [f"Selective cleanup of {data['change']} · {short_path(data['path'])}"]
     if data['applied']:
-        lines += [f"Removed selected lines. Backup: {data['backup']}.",
+        lines += [f"Removed selected lines. Backup: {data['backup']}.", RELOAD,
                   'Unselected content was preserved. Review any remaining findings with `agentdetox '
                   + (f"library review {data['change']}`." if library else 'review`.')]
     elif not data['selected']:
         lines += ['Lines of the inspected version, which the file still is:' if library else
+                  'Lines of the inspected version (not current-file line numbers):' if data.get('inspected') else
                   'Added or replaced lines in this recorded version (not current-file line numbers):']
         lines += [f"{item['line']:>5}  {printable(item['text'])}" for item in data['added']]
         lines += [f"Choose only unwanted lines: agentdetox clean {data['change']} --lines 3,5-7"

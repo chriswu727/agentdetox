@@ -52,6 +52,10 @@ def describe(row: dict) -> tuple[str, str, str]:
         label = 'context changed'
         ids = ', '.join(row.get('changes', []))
         text = f"{len(row.get('changes', []))} context files changed across a shell tool; writing process unknown"
+    elif event == 'context_inspected':
+        label, ids = 'inspected', ', '.join(row.get('review', [])[:5])
+        text = (f"{row.get('files', 0)} context files inspected from the command line; "
+                f"{len(row.get('review', []))} review item(s) open")
     elif event == 'cleanup_applied':
         label, ids = 'cleaned', str(row.get('recovery', ''))
         text = f"{row.get('path')}: removed {len(row.get('lines', []))} selected lines from {row.get('change')}"

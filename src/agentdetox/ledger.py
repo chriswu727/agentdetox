@@ -11,6 +11,10 @@ can be replayed) and the change's origin:
   external   changed outside the agent's edit tools: another program, a person, a sync, or a
              shell command, which is not yet told apart
   restored   put back by `agentdetox agent restore`
+  inspected  not a change: a version found as it was, with no earlier one known (a flagged
+             file `agentdetox agent inspect` found, or a file about to be removed by a tool),
+             recorded so that it can be reviewed, cleaned and put back; before and after
+             are the same
 """
 
 from __future__ import annotations
@@ -23,6 +27,11 @@ from pathlib import Path
 
 from . import storage
 from .integrity import object_text, store_dir, store_object
+
+# The method of a record that is not a change: a version found as it was (by `agentdetox
+# agent inspect`, or just before a tool removed the file), kept so it can be reviewed,
+# cleaned and put back. Its before and after are the same version.
+INSPECTION = "inspection"
 
 # Blame labels for lines no recorded change explains.
 EARLIER = "earlier"          # there before the first recorded change
@@ -59,6 +68,8 @@ class Entry:
     def describe(self) -> str:
         if self.method == 'selective-removal':
             what = 'selected lines removed by AgentDetox'
+        elif self.origin == "inspected":
+            what = "found as it was; earlier history unknown"
         elif self.origin == "copied":
             what = f"copied by the agent from {self.source}" if self.source else "copied by the agent"
         else:

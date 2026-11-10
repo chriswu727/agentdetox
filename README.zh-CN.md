@@ -26,7 +26,8 @@ AgentDetox 检查持久上下文的写入，记录变更及来源证据，让你
 
 **0.4.1 已发布**至 [PyPI](https://pypi.org/project/agentdetox/0.4.1/) 和
 [GitHub](https://github.com/chriswu727/agentdetox/releases/tag/v0.4.1)。项目仍处于**预览阶段**：
-Claude Code 是受支持的集成，Codex 和 Cursor 钩子属于实验功能，OpenClaw 仅支持篡改检测。
+Claude Code 是受支持的集成，Codex 和 Cursor 钩子属于实验功能；OpenClaw 没有自己的钩子，写入时不会被实时检查，
+其文件可通过命令行检查，也会在其他客户端的会话开始时被比对。
 开发环境支持原生 Windows（Python 3.12 + Git Bash）以及 macOS/Linux。
 Windows 已完成安装包生命周期的本机离线验证；真实客户端验收和长期日常使用验证分别记录，
 详见 [Windows 验证记录](docs/windows-validation.md)。
@@ -125,6 +126,7 @@ agentdetox restore C42 --apply           # 备份当前文件后执行恢复
 `agentdetox clean C42` 列出此次变更新增的行。
 使用 `agentdetox clean C42 --lines 3,5-7` 预览仅删除自己选中的记忆、指令或技能文本，保留其他内容和无冲突的后续修改。
 审核后执行预览输出的完整应用命令；文件发生新变化时，旧预览会失效。清除会先备份当前文件，再扫描结果。
+清除只修改磁盘上的文件，不会改变已在运行的会话中已读入的内容：请在相应客户端开启新会话后再依赖清除结果。
 它不会自动把复制来的内容当作投毒，也不会恢复被覆盖的旧文本或判断事实真伪。终端交互审核也提供此操作。
 [审核、设置与恢复细节（英文）→](docs/user-guide.md#day-to-day)
 
@@ -163,7 +165,10 @@ AgentDetox 提供检查和恢复，**不构成安全边界，也不验证事实�
 
 ## 更多用法
 
-- **其他智能体：**Codex、Cursor 的实验性钩子，以及 OpenClaw 篡改检测。[集成矩阵（英文）](docs/user-guide.md#other-agents)。
+- **其他智能体：**Codex、Cursor 的实验性钩子；没有 OpenClaw 插件，Cursor 尚未实际运行验证。在开发分支 `main` 上，`agentdetox agent inspect`
+  会在各客户端实际存放（或迁移到）的位置查找 Claude Code、Codex、Cursor 和 OpenClaw 的记忆、规则与技能文件，
+  并把被标记的内容记录为审核条目，因此无需任何钩子即可使用 `clean` 和 `restore`。它检查的是文件本身，
+  不代表客户端一定会触发钩子，也不判断记忆内容是否属实。[集成矩阵（英文）](docs/user-guide.md#other-agents)。
 - **矛盾检测：**可选本地 NLI，因仍有误报，默认在后台记录。[配置与限制（英文）](docs/user-guide.md#contradiction-detection-experimental)。
 - **已有记忆库（开发分支 `main`）：**`agentdetox library scan <文件夹>` 为你指定的文件夹建立清单，
   用逐文件规则检查其中的文本文件，中断后可继续，且从不把文件报告为“干净”；`clean M<ID>` 删除经审核的行并保留备份，

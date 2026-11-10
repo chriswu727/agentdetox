@@ -27,7 +27,7 @@ from . import (
 from .agentscan import consistency_findings, scan_context
 from .allowlist import finding_flag
 from .consistency import NLI, NLI_MODEL
-from .context import KINDS, PROFILES, discover, display_path, short_path, watched_roots
+from .context import KINDS, PROFILES, discover, display_path, short_path, survey, watched_roots
 from .corpus import load_corpus
 from .entrypoint import _utf8_output
 from .findings import ID_LENGTH, SEVERITY_ORDER, at_least, finding_id, printable
@@ -35,6 +35,7 @@ from .hooks import main_hook
 from .install import (
     claude_code_plugin,
     claude_code_settings,
+    codex_hooks,
     cursor_hooks,
     default_settings_path,
     hook_command,
@@ -156,11 +157,15 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--user-only", action="store_true", help="skip project-level files")
         p.add_argument("--format", choices=["text", "json"], default="text")
 
-    a_scan = asub.add_parser("scan", help="scan context files for planted instructions")
+    a_scan = asub.add_parser("scan", help="scan context files for planted instructions (read-only)")
     agent_args(a_scan)
     a_scan.add_argument("--fail-on", choices=["low", "medium", "high", "none"], default="high")
     a_scan.add_argument("--consistency", action="store_true",
                         help="also look for memory entries that contradict each other (needs agentdetox[nli])")
+    a_inspect = asub.add_parser("inspect", help="scan, and record what is flagged or changed as review items "
+                                                "(C ids) that `review` and `clean` take; nothing flagged is trusted")
+    agent_args(a_inspect)
+    a_inspect.add_argument("--fail-on", choices=["low", "medium", "high", "none"], default="high")
     a_snap = asub.add_parser("snapshot", help="record recovery checkpoints for current context files")
     agent_args(a_snap)
     a_snap.add_argument("--reset", action="store_true",
@@ -426,14 +431,21 @@ def _install(args) -> int:
         return 0
     command = hook_command(args.agent_name)
     if args.agent_name == "cursor":
-        print(f"# Experimental. Add to {target} (merge with existing hooks):")
+        print(f"# Experimental, built from Cursor's hooks documentation and not yet verified on a real install.\n"
+              f"# Merge into {target}:")
         print(json.dumps(cursor_hooks(command), indent=2))
+        print("# Cursor does not enforce \"ask\" from preToolUse, so AgentDetox blocks or records there. If Cursor "
+              "also loads\n# Claude Code's hooks (Settings, Third-Party Imports), AgentDetox's hooks in "
+              "~/.claude/settings.json run in Cursor too.")
     else:
-        print(f"# Experimental. Register this command for Codex's SessionStart, PreToolUse "
-              f"(matcher apply_patch|shell) and PostToolUse hooks in {target}:\n{command}")
+        print(f"# Experimental. Merge into {target}:")
+        print(json.dumps(codex_hooks(command), indent=2))
+        print("# Codex runs a hook only after you review and trust it: open /hooks in Codex. A hook whose command "
+              "changes\n# (an upgrade that moves agentdetox) is skipped until it is trusted again. Codex cannot "
+              "ask from a hook, so\n# AgentDetox blocks or records there.")
     if args.apply:
-        print("\n--apply is only supported for claude-code until these hook formats are verified on real installs.",
-              file=sys.stderr)
+        print("\n--apply is only supported for claude-code until installing these hooks is verified on real "
+              "installs.", file=sys.stderr)
         return 2
     return 0
 
@@ -568,7 +580,10 @@ def _agent_command(args) -> int:
         return 0
 
     project = None if args.user_only else args.project.expanduser().absolute()
-    files = discover(args.agent, project)
+    if args.agent_command == "inspect":
+        return _inspect(args, project)
+    found = survey(args.agent, project)
+    files = found.files
     roots = watched_roots(project)
 
     if args.agent_command == "snapshot":
@@ -582,46 +597,114 @@ def _agent_command(args) -> int:
         n = snapshot([cf for cf in files if str(cf.path) not in flagged], roots)
         print(f"snapshot of {n} context file(s) saved to {store_dir()}")
         if flagged:
-            print(f"left out {len(flagged)} file(s) with high-severity findings; review them with "
-                  "`agentdetox agent scan`, or `agentdetox allow <id>` if they are fine:")
+            print(f"left out {len(flagged)} file(s) with high-severity findings; record them for review and cleanup "
+                  "with `agentdetox agent inspect`, or `agentdetox allow <id>` if they are fine:")
             for path in sorted(flagged):
                 print(f"  {path}")
+        for problem in found.problems:
+            print(f"not resolved: {problem}", file=sys.stderr)
         return 0
 
     if args.agent_command == "scan":
-        found = scan_context(files)
+        hits = []
+        for cf in files:
+            try:
+                hits += scan_context([cf])
+            except OSError as error:
+                found.unread.append(f"{cf.path} could not be read ({type(error).__name__})")
         if args.consistency:
             nli = NLI()
             if not nli.available():
                 print("contradiction check skipped: install 'agentdetox[nli]' and run `agentdetox fetch-models`",
                       file=sys.stderr)
             else:
-                found += consistency_findings(files, project, nli)
-        findings = allowlist.unsuppressed(found)
+                hits += consistency_findings(files, project, nli)
+        findings = allowlist.unsuppressed(hits)
         header = f"agentdetox {__version__}: scanned {len(files)} context file(s)"
-        _print_findings(findings, header, args.format, len(found) - len(findings),
-                        extra={"files": [str(f.path) for f in files]})
+        _print_findings(findings, header, args.format, len(hits) - len(findings),
+                        extra={"files": [str(f.path) for f in files]}, found=found)
     else:
-        changes, found = verify(files, roots)
-        findings = allowlist.unsuppressed(found)
+        changes, hits = verify(files, roots)
+        findings = allowlist.unsuppressed(hits)
         header = f"agentdetox {__version__}: {len(changes)} context file(s) changed since snapshot"
         for c in changes:
             header += f"\n  {c.status:<8} {c.kind:<12} {c.path}"
-        _print_findings(findings, header, args.format, len(found) - len(findings),
-                        extra={"changes": [{"path": c.path, "status": c.status, "kind": c.kind} for c in changes]})
-    if args.fail_on != "none" and any(at_least(f.severity, args.fail_on) for f in findings):
+        _print_findings(findings, header, args.format, len(hits) - len(findings),
+                        extra={"changes": [{"path": c.path, "status": c.status, "kind": c.kind} for c in changes]},
+                        found=found)
+    if args.fail_on != "none" and (found.problems or any(at_least(f.severity, args.fail_on) for f in findings)):
         return 1
     return 0
 
 
-def _print_findings(findings, header: str, fmt: str, allowed: int, extra: dict) -> None:
+def _inspect(args, project: Path | None) -> int:
+    from . import inspection
+
+    result = inspection.run(args.agent, project)
+    found = result["survey"]
+    items = result["items"]
+    # Incomplete: a folder that was asked for was not looked in, or a file found was not read.
+    incomplete = bool(found.problems or result["unread"])
+    if args.format == "json":
+        print(json.dumps({"version": __version__, "files": result["files"], "checkpointed": result["trusted"],
+                          "complete": not incomplete, "items": items, "unread": result["unread"],
+                          "coverage": inspection.coverage(found), "problems": found.problems},
+                         ensure_ascii=False, indent=2))
+    else:
+        print(f"agentdetox {__version__}: inspected {result['files']} context file(s)\n")
+        print("\n".join(inspection.render_coverage(found, short_path)))
+        if result["unread"]:
+            print("Not inspected (found, but not read):")
+            for row in result["unread"]:
+                print(f"  {short_path(row['path'])} ({row['error']})")
+        review_items = [item for item in items if item["state"] == "review"]
+        if review_items:
+            print("\nNeeds review (each id is bound to the exact version found):")
+        for item in review_items:
+            worst = "HIGH" if any(f["severity"] == "high" for f in item["findings"]) else "MEDIUM"
+            print(f"  {item['changes'][0]:<6} {worst:<6} {display_path(item['path'])}  ({item['agent']} {item['kind']})")
+            for f in item["findings"]:
+                line = f"line {f['line']}: " if f["line"] else ""
+                print(f"         {f['id']} {line}{printable(f['reason'])}")
+        others = [item for item in items if item["state"] != "review"]
+        if others:
+            print("\nRecorded, with nothing flagged:")
+            for item in others:
+                print(f"  {item['changes'][0]:<6} {item['state']:<8} {display_path(item['path'])}")
+        print(f"\n{result['trusted']} file(s) have a recovery checkpoint of the version inspected. A checkpoint is "
+              "something to restore to, not an acceptance: a file with a clear-cut (high) finding gets none, and a "
+              "file with only lesser findings gets one while those findings stay open for review. Nothing was "
+              "allowed.")
+        if review_items:
+            first = review_items[0]["changes"][0]
+            print(f"Next: `agentdetox review {first}` shows a record; `agentdetox clean {first}` lists its lines, and "
+                  f"with --lines previews removing the ones you choose.\n"
+                  "A cleanup keeps a backup and can be undone with `agentdetox restore` on the record it prints. "
+                  "Config files are not cleaned line by line.")
+        if incomplete:
+            print("The inspection is incomplete: what is listed as not resolved or not inspected was not looked at"
+                  + ("." if items else ", so finding nothing here does not mean nothing is there."))
+        elif not items:
+            print("Nothing needs review.")
+    severities = [f["severity"] for item in items for f in item["findings"]]
+    if args.fail_on != "none" and (incomplete or any(at_least(sev, args.fail_on) for sev in severities)):
+        return 1
+    return 0
+
+
+def _print_findings(findings, header: str, fmt: str, allowed: int, extra: dict, found=None) -> None:
+    from . import inspection
+
     findings = sorted(findings, key=lambda f: (-SEVERITY_ORDER[f.severity], f.doc_id))
     if fmt == "json":
-        json.dump({"version": __version__, **extra, "allowed": allowed, "findings": [f.to_dict() for f in findings]},
-                  sys.stdout, ensure_ascii=False, indent=2)
+        coverage = {"coverage": inspection.coverage(found), "problems": found.problems} if found is not None else {}
+        json.dump({"version": __version__, **extra, "allowed": allowed, "findings": [f.to_dict() for f in findings],
+                   **coverage}, sys.stdout, ensure_ascii=False, indent=2)
         print()
         return
     print(header + "\n")
+    if found is not None:
+        print("\n".join(inspection.render_coverage(found, short_path)) + "\n")
     for f in findings:
         print(f"{f.severity.upper():<6} {f.detector:<17} {f.source}  [{finding_id(f)}]")
         print(f"       {printable(f.message)}")
@@ -630,8 +713,11 @@ def _print_findings(findings, header: str, fmt: str, allowed: int, extra: dict) 
     counts = Counter(f.severity for f in findings)
     print(f"\n{counts['high']} high, {counts['medium']} medium, {counts['low']} low"
           + (f"; {allowed} allowed and not shown (`agentdetox allow --list`)" if allowed else ""))
+    if found is not None and found.problems:
+        print("The scan is incomplete: the folders listed under \"Not resolved\" were not looked at.")
     if findings:
-        print("False positive? `agentdetox allow <id>` stops it being reported.")
+        print("To review and remove flagged lines: `agentdetox agent inspect` records them as review items for "
+              "`agentdetox clean`.\nFalse positive? `agentdetox allow <id>` stops it being reported.")
 
 
 def _print_scan(result, fmt: str) -> None:

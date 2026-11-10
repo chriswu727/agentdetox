@@ -1,0 +1,99 @@
+{
+  "scope": "Actual Codex CLI with isolated profile and deterministic loopback Responses fixture; no model inference. Vetted fixture hooks bypass trust only in that temporary profile. The fixed config-patch cases disable the native sandbox to distinguish AgentDetox decisions from Codex protection of .codex/. Other cases use workspace-write. Installer/trust UI and real model behavior are not tested.",
+  "client": "codex-cli 0.167.0-alpha.3.2",
+  "model_metadata": "gpt-6.1-sol",
+  "model_subscription_calls": 0,
+  "passed": true,
+  "cases": [
+    {
+      "case": "benign",
+      "passed": true,
+      "checks": {
+        "client_completed": true,
+        "expected_file_bytes": true,
+        "hook_execution_healthy": true,
+        "decision": true,
+        "native_event_sequence": true,
+        "canonical_tool_name": true
+      }
+    },
+    {
+      "case": "poison",
+      "passed": true,
+      "checks": {
+        "client_completed": true,
+        "expected_file_bytes": true,
+        "hook_execution_healthy": true,
+        "decision": true,
+        "native_event_sequence": true,
+        "canonical_tool_name": true
+      }
+    },
+    {
+      "case": "move",
+      "passed": true,
+      "checks": {
+        "client_completed": true,
+        "expected_file_bytes": true,
+        "hook_execution_healthy": true,
+        "decision": true,
+        "native_event_sequence": true,
+        "canonical_tool_name": true
+      }
+    },
+    {
+      "case": "move-existing",
+      "passed": true,
+      "checks": {
+        "client_completed": true,
+        "expected_file_bytes": true,
+        "hook_execution_healthy": true,
+        "decision": true,
+        "native_event_sequence": true,
+        "canonical_tool_name": true
+      }
+    },
+    {
+      "case": "shell",
+      "passed": true,
+      "checks": {
+        "client_completed": true,
+        "expected_file_bytes": true,
+        "hook_execution_healthy": true,
+        "decision": true,
+        "native_event_sequence": true,
+        "canonical_tool_name": true,
+        "post_notice": true,
+        "precise_cleanup": true,
+        "native_reload": true,
+        "cleanup_undo": true
+      }
+    },
+    {
+      "case": "model",
+      "passed": true,
+      "checks": {
+        "client_completed": true,
+        "expected_file_bytes": true,
+        "hook_execution_healthy": true,
+        "decision": true,
+        "native_event_sequence": true,
+        "canonical_tool_name": true
+      }
+    },
+    {
+      "case": "delete",
+      "passed": true,
+      "checks": {
+        "client_completed": true,
+        "expected_file_bytes": true,
+        "hook_execution_healthy": true,
+        "decision": true,
+        "native_event_sequence": true,
+        "canonical_tool_name": true
+      }
+    }
+  ],
+  "source_sha256": "4bc143c1280a5508ec04faadbcb77856c5c2052fc9fc652e065fa52386fd71a7",
+  "source_hash_method": "SHA256 of sorted src/agentdetox/*.py relative path, NUL, bytes, NUL"
+}

@@ -1,5 +1,14 @@
 # Hook latency
 
+## Cross-client disinfection, 2026-11-10
+
+The [complete report](results/hooks-clients-2026-11-10.json) measures the unreleased cross-client
+change built on `928adad`: **12/12 original budgets pass**, with 100 samples per case and no
+concurrent builds or test runs. Ordinary Bash pre/post P95 is 118.4 ms; startup with 1,000
+unchanged files is 125.5 ms; the many-file Bash pair is 219.5 ms. See
+[validation and limits](../docs/client-validation.md). This is not a paired comparison and
+does not resolve the Windows failures below or measure model inference or complete client startup.
+
 ## Scoped triage and dynamic trust guard, 2026-11-10
 
 The [complete report](results/hooks-triage-2026-11-10.json) measures runtime `6d5a761` after

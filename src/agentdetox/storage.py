@@ -251,6 +251,17 @@ def changes(file: str | None = None, limit: int | None = None) -> list[dict] | N
                 for r in reversed(db.execute(query, args).fetchall())]
 
 
+def known_under(folder: str) -> list[str]:
+    """Paths under `folder` that AgentDetox holds a version of, checkpointed or only recorded."""
+    with connection() as db:
+        if db is None:
+            return []
+        prefix = folder.rstrip(os.sep) + os.sep
+        rows = db.execute('SELECT path FROM files WHERE substr(path, 1, ?)=? AND observed_hash IS NOT NULL ORDER BY path',
+                          (len(prefix), prefix))
+        return [row[0] for row in rows]
+
+
 def append_event(db, event: dict) -> None:
     db.execute('INSERT INTO events(ts, event, data) VALUES (?, ?, ?)',
                (event.get('ts', ''), event.get('event', ''), json.dumps(event, ensure_ascii=False)))

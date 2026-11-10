@@ -24,12 +24,14 @@ Protection for the memory, instructions, skills and config your coding agent tru
 A poisoned page can become tomorrow's memory. An install script can change `CLAUDE.md` while
 your agent is busy elsewhere. AgentDetox checks writes to persistent context, records changes
 with source evidence, and lets you remove selected added lines or restore an earlier version,
-with a backup either way.
+with a backup either way. A cleanup changes the file, not what a running session has already read:
+start a new session in that client afterwards.
 
 **0.4.1 is published** on [PyPI](https://pypi.org/project/agentdetox/0.4.1/) and
 [GitHub](https://github.com/chriswu727/agentdetox/releases/tag/v0.4.1).
 The project is in **preview**: Claude Code is supported; Codex and Cursor hooks are experimental;
-OpenClaw has tamper detection only. Development supports native Windows with Python 3.12 and
+OpenClaw has no hook of its own, so nothing is checked as it writes; its files are checked from the command
+line and at the session start of the other clients. Development supports native Windows with Python 3.12 and
 Git Bash, alongside macOS/Linux. Windows offline validation covers the installed-wheel lifecycle;
 real-client and sustained daily-use validation remain separate. See [Windows evidence](docs/windows-validation.md).
 Native Windows latency measurements still exceed several existing budgets; the
@@ -188,7 +190,11 @@ store, including `objects/`, and review retention before deleting history.
 
 ## More workflows
 
-- **Other agents:** experimental Codex and Cursor hooks; OpenClaw tamper detection.
+- **Other agents:** experimental Codex and Cursor hooks; no OpenClaw plugin, and Cursor has not been run. On development `main`,
+  `agentdetox agent inspect` finds the memory, rules and skill files of Claude Code, Codex, Cursor and
+  OpenClaw where each client keeps or relocates them and records what is flagged as review items, so
+  `clean` and `restore` work without any hook. It checks files, not whether a client delivers hook
+  events or whether remembered text is true.
   [Integration matrix](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#other-agents).
 - **Contradiction checks:** optional local NLI, recorded in the background by default because of
   false positives. [Setup and limits](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#contradiction-detection-experimental).

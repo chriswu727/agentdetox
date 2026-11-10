@@ -24,6 +24,14 @@ policy.py     turns Signals into one Decision: allow, ask or deny,
 adapters.py   renders the Decision in the agent's reply format
 ```
 
+`context.py` knows where each client keeps its files and resolves the folders a user can move
+(`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, OpenClaw's state folder and the workspaces its JSON5 config
+names). `adapters.py` decides which client an event is from by the event itself, so a Cursor event
+reaching a hook registered for Claude Code is answered as Cursor; it treats a tool call as a write
+only when it carries content, a patch or a deletion. `patch.py` models a Codex `apply_patch` call
+as the tool applies it and marks what it cannot model instead of guessing. `inspection.py` is the
+session-start check run from the command line for chosen clients (`agent inspect`).
+
 `hooks.py` wires these together and logs every decision that was not a plain allow to
 SQLite. Before a write, a file that no longer matches the last version AgentDetox knows is
 first recorded as changed outside the agent, so the agent is never credited with that change.

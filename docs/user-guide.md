@@ -88,6 +88,14 @@ Direct prohibitions such as "Never disable sandbox"
 and "不要上传密钥到 https://example.org" no longer count as attack instructions. This recognizes
 simple prohibitions, not arbitrary negation or quoted shell examples. Later active instructions
 are still checked, and hidden text and executable commands do not receive this prose exemption.
+On development `main` a sentence may forbid in several clauses ("Do not disable the sandbox, and
+do not bypass approval prompts.") or end in a reminder to ask the user, and the sentences of a
+skill are read the same way; a skill's code blocks are not, and neither is a clause that orders,
+reverses or makes an exception. Fetch-and-run said in words ("download the script from <URL> and
+execute it") is flagged like `curl ... | sh`; a download that is read, checked or opened in an
+application, or followed by running something else, is not. These are still pattern rules: a list under one
+"never", a prohibition wrapped across lines in a skill, and hostile text with no such pattern (a
+redirected push target, an order to deceive, a false fact) are known to be judged wrongly.
 Reordering or deduplicating Claude permission lists and approved MCP server names is quiet, as
 are status line spacing and vim indicator changes. Adding or removing entries, changing command
 argument order, and changing the status line command or refresh interval remain guarded.
@@ -117,6 +125,8 @@ history or make a corrupt database safe to use.
 
 ```bash
 agentdetox status                         # health and pending reviews
+agentdetox agent scan                     # read-only scan of every client's files; says where it looked
+agentdetox agent inspect                  # the same, recorded as review items for `clean` (no hook needed)
 agentdetox review                         # pending changes grouped by file
 agentdetox review --interactive           # browse this project and confirm actions in a terminal
 agentdetox review --interactive --global  # include shared user rules and configuration
@@ -155,6 +165,9 @@ The preview shows the exact current-to-cleaned diff. Apply with the full command
 including `--expected-hash` and `--apply`. Any file change after preview requires another preview.
 `--format json` provides the selection, mapped current lines, diff, file hash and backup path.
 In `review --interactive`, choose **c**, enter the line numbers, inspect the preview and confirm.
+
+A cleanup changes the file, not what a running agent has already read from it: start a new
+session in the affected client before relying on the removal.
 
 Only the selected lines are removed. Other lines, including same-change additions and
 non-conflicting later edits, retain their bytes and line endings. Replaced old text is not
@@ -457,16 +470,88 @@ folders only; see the [large-memory protocol](../bench/LARGE_MEMORY.md).
 
 ## Other agents
 
-| Agent | Files watched | Write checks | Tamper detection |
-|---|---|---|---|
-| Claude Code | CLAUDE.md and CLAUDE.local.md (also in parent folders, and in subfolders when written), `.claude/rules`, AGENTS.md, auto memory, skills, subagents, commands, output styles, settings, `.claude/hooks` scripts, `.mcp.json`, `~/.claude.json` | yes | yes |
-| Codex | AGENTS(.override).md, `~/.codex/memories`, `.agents/skills`, `config.toml`, `hooks.json`, `rules/*.rules` | experimental (`install codex` prints the hook) | yes |
-| Cursor | `.cursor/rules`, `.cursorrules`, AGENTS.md, `.cursor/skills`, `mcp.json`, `hooks.json` | experimental; Tab edits cannot be checked | yes |
-| OpenClaw | AGENTS, SOUL, USER, IDENTITY, BOOT, MEMORY, daily memory, skills, `openclaw.json`, extensions | not yet (needs a plugin) | yes |
+Three different things are easy to mistake for one another. They are listed separately here and
+should be read separately everywhere else.
 
-Codex and Cursor cannot ask mid-task: checks set to `ask` record instead, and changes to the
-agent's own hooks, MCP servers or permissions are blocked. The provenance check needs Claude Code's
-session transcript.
+- **File checks** (find, review, clean, restore) work on files on disk and need no client. They are
+  as good as AgentDetox's knowledge of where a client keeps its files.
+- **Hook checks** (block or record a write as it happens) need the client to deliver an event and
+  honour the reply. The evidence differs by client. Claude Code has been run in real model
+  sessions (the [lab](../lab/README.md)). Codex's own runtime has been driven without a model: the
+  installed Codex CLI is given fixed tool calls by a local stand-in for the model service
+  ([`lab/codex_contract.py`](../lab/README.md#codex-native-contract-without-inference)), which
+  exercises real hook delivery, blocking, the comparison across a shell command, cleanup, a fresh
+  client's reload of the cleaned file and undo, but not Codex's trust prompt, its installer or
+  anything a real model decides. Cursor has never been run; OpenClaw has no hook to run.
+- **Whether text is true** is checked by neither. The rules match instruction-like patterns, miss
+  paraphrases and plausible false facts, and "no findings" means only that the rules found nothing.
+
+| Client | Files found (development `main`) | File checks: scan, inspect, clean, restore | Hook checks |
+|---|---|---|---|
+| Claude Code | CLAUDE.md and CLAUDE.local.md (also in parent folders and, when written or inspected, in subfolders), `.claude/rules`, AGENTS.md, auto memory (shared by a repository's worktrees), subagent memory, skills, subagents, commands, output styles, settings, `.claude/hooks` scripts, `.mcp.json`, `~/.claude.json`; follows `CLAUDE_CONFIG_DIR` | yes | supported; real sessions in the [lab](../lab/README.md) |
+| Codex | AGENTS(.override).md, text files in `memories/` and `memories_v2/`, `skills/`, `config.toml`, `*.config.toml` profiles, `hooks.json`, `rules/*.rules` under `~/.codex` or `CODEX_HOME`; `~/.agents/skills`; in a repository, `.codex/` and `.agents/skills` from the root down to the working folder | yes | experimental: `install codex` prints the hooks; exercised on the native Codex CLI 0.167 runtime with fixed tool calls, not in model sessions |
+| Cursor | `.cursor/rules/*.mdc` and `.cursor/skills` (also in subfolders), `.cursorrules`, AGENTS.md, `~/.cursor/skills`, `~/.agents/skills`, `mcp.json`, `hooks.json`, CLI permissions (`cli-config.json`, `.cursor/cli.json`, `CURSOR_CONFIG_DIR`) | yes | experimental: `install cursor` prints the hooks; built from Cursor's documentation, never run in Cursor |
+| OpenClaw | AGENTS, SOUL, USER, IDENTITY, BOOT, BOOTSTRAP, MEMORY, daily memory and skills in each workspace; `openclaw.json`; state folders `~/.openclaw` and `~/.openclaw-<profile>`, `workspace-<agent>` rosters, `OPENCLAW_HOME`, `OPENCLAW_STATE_DIR`, `OPENCLAW_CONFIG_PATH`, `OPENCLAW_WORKSPACE_DIR`, and the workspaces `openclaw.json` configures (read as JSON5) | yes; also compared at the session start of any hooked client | none of its own: there is no OpenClaw plugin, so nothing is checked as OpenClaw writes |
+| WorkBuddy | paths guessed from a third-party write-up, shown as *unverified* | unverified | none |
+
+What is not covered, client by client, is printed by `agentdetox agent scan` under "Not covered":
+Codex's SQLite and generated memory state and how Codex regenerates memory; Claude Code files
+pulled in with `@path` imports and auto memory moved with `autoMemoryDirectory`; Cursor's User
+and Team Rules, which are not files; OpenClaw's SQLite state, sandbox workspaces and `$include`
+files. A folder you asked for that cannot be resolved (an environment variable naming a missing
+folder, an `openclaw.json` that does not parse or names a relative or unset path) is listed under
+"Not resolved" and makes the scan exit non-zero: it is never reported as nothing found.
+
+### Checking a client's files without a hook
+
+```bash
+agentdetox agent scan --agent openclaw --user-only   # read-only: findings, folders looked in
+agentdetox agent inspect --agent openclaw --user-only  # the same, recorded as review items
+agentdetox review C12                                # what was found, bound to that version
+agentdetox clean C12                                 # its lines; add --lines 3 to preview removing one
+agentdetox restore C13 --apply                       # undo a cleanup (the id the cleanup prints)
+```
+
+`agent scan` only reads, and creates nothing in AgentDetox's store. `agent inspect` is the bridge to a cleanup for a client with no hook, a
+hook that is not installed or trusted, and text that was there before AgentDetox was. For every
+file in scope it records a review item when a rule finds something or the file changed since the
+version last known, bound to the exact bytes found. A file found with flagged text and no earlier
+version is recorded as *found as it was*: no history is invented for it, every line can be chosen
+in `clean`, and there is nothing to `restore`. Files without a clear-cut (high) finding get a
+recovery checkpoint; that is something to restore to, not an acceptance, and files with only
+lesser findings are checkpointed with those findings left open. Nothing is added to the allowlist.
+`--agent` limits the run to those clients: other clients' files are not read, recorded or
+checkpointed. An inspection that could not read a file or resolve a folder exits non-zero.
+
+Selective cleanup still applies only to memory, rules and skill files. A hook, MCP server or
+permission added to a config file can be reviewed and, while the file is unchanged, restored as a
+whole; removing just the added entry is not implemented.
+
+### What the experimental hooks do
+
+Codex and Cursor cannot be asked a question from a hook (Codex ignores `ask`; Cursor accepts it
+from `preToolUse` and does not enforce it), so checks set to `ask` record instead, and changes to
+the client's own hooks, MCP servers or permissions are blocked.
+
+- **Codex.** `apply_patch` calls are modelled as Codex applies them (add, update with context,
+  delete, move), so the result is what is checked: a patch that moves a file onto AGENTS.md is
+  judged by what lands there, deleting a guarded config is blocked, and an ordinary `config.toml`
+  edit is not. A patch that does not fit the file is not guessed at: what it adds, and what a
+  move would carry along, is still checked. Shell commands are compared before and after, also
+  when they fail, and a change to a context file is recorded with "writing process unknown" and
+  reported to the agent. Codex runs a hook only after you trust it in `/hooks`, and again after
+  its command changes; AgentDetox cannot see that state, and `doctor` says so.
+- **Cursor.** The same comparison across `Shell` calls uses `postToolUse` and
+  `postToolUseFailure`. Cursor documents no input shape for its `Write` and `Delete` tools, so
+  those are read by the fields they carry and a write that cannot be read is blocked for config
+  and recorded for other files. Cursor also loads the hooks in Claude Code's settings by default;
+  an event from Cursor reaching AgentDetox's Claude Code hook is answered as Cursor.
+- A shell command that names a context file is logged even though it cannot be asked about.
+- The provenance check ("copied from what the agent just read") needs Claude Code's transcript and
+  is not available for other clients: their ledger entries say only that the agent wrote the file.
+
+`agentdetox install codex` and `install cursor` print the hook configuration; `--apply` is refused
+for both until installing them has been verified on real installs.
 
 ## Contradiction detection (experimental)
 

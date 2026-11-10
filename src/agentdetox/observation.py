@@ -14,7 +14,7 @@ from .agentscan import scan_text
 from .context import ContextFile, discover_session, short_path, watched_roots
 from .engine import _added_text
 from .findings import Finding, finding_id, printable
-from .integrity import StoreError, _config_changes, object_text, snapshot, store_lock, store_object
+from .integrity import StoreError, _config_changes, object_text, snapshot, store_dir, store_lock, store_object
 from .persistence import WHOLE_FILE, guarded_sections, leaves
 
 MAX_AGE = 24 * 3600
@@ -46,7 +46,8 @@ def start(agent: str, session: str, tool_id: str, project: Path) -> None:
                        (run_id, str(cf.path), digest, cf.kind, cf.scope, mode))
 
 
-def finish(agent: str, session: str, tool_id: str, project: Path, *, failed: bool = False, command: str = '') -> str:
+def finish(agent: str, session: str, tool_id: str, project: Path, *, failed: bool = False, command: str = '',
+           tool: str = 'Bash') -> str:
     run_id = _key(agent, session, tool_id)
     changes: list[str] = []
     flagged: list[tuple[str, str]] = []  # (change id, what was found)
@@ -84,16 +85,30 @@ def finish(agent: str, session: str, tool_id: str, project: Path, *, failed: boo
             if cf.kind == 'config' and previous and data is not None:
                 if guarded_sections(path, old) == guarded_sections(path, text):
                     continue
-            if cf.kind == 'config' and data is not None and _approval(path, old, text, command):
+            # Only Claude Code's saved permission rules are recognised; another agent's
+            # approval file changing is recorded like any other change.
+            if (agent == 'claude-code' and cf.kind == 'config' and data is not None
+                    and _approval(path, old, text, command)):
                 ledger.record(path, 'external', latest[0].after if latest else before_hash, data, agent=agent,
-                              session=session, tool='Bash', method='before-after',
+                              session=session, tool=tool, method='before-after',
                               before_mode=previous['mode'] if previous else None,
                               attribution='permission rule for this command, as the agent saves it when the user '
                                           'approves the command')
                 continue
             findings = _findings(cf, old, text, previous is not None, data is None)
-            entry = ledger.record(path, 'external', latest[0].after if latest else before_hash, data,
-                                  findings=findings, agent=agent, session=session, tool='Bash', method='before-after',
+            base = latest[0].after if latest else before_hash
+            if latest and previous and before_hash != base:
+                # The file had already changed, outside any recorded write, before this tool ran.
+                # That version is kept as its own step: it is what a recovery of this tool's
+                # change must give back, and its content is not this tool's doing.
+                earlier = object_text(base) if base else ''
+                ledger.record(path, 'external', base, (store_dir() / 'objects' / previous['digest']).read_bytes(),
+                              findings=_findings(cf, earlier, old, base is not None, False), agent=agent,
+                              session=session, method='before-after', before_mode=previous['mode'],
+                              attribution=f'found changed before shell tool {tool_id} ran; writing process unknown')
+                base = before_hash
+            entry = ledger.record(path, 'external', base, data,
+                                  findings=findings, agent=agent, session=session, tool=tool, method='before-after',
                                   before_mode=previous['mode'] if previous else None,
                                   attribution=f'observed across shell tool {tool_id}; writing process unknown')
             if entry is None:

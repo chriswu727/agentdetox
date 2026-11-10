@@ -7,6 +7,9 @@ log it. The user's settings and what each agent can do come in here, not in the 
   permissions, asks where the agent can ask and is blocked where it cannot.
 - Suspicious, copied and contradicting writes follow the user's settings. "ask" falls
   back to recording on agents that cannot ask.
+- A shell command that writes agent context, and an edit tool removing a memory, rules or
+  skill file, ask where the agent can ask and are recorded where it cannot. A write whose
+  result could not be worked out is recorded.
 """
 
 from __future__ import annotations
@@ -15,7 +18,19 @@ import os
 from dataclasses import dataclass, field
 
 from .allowlist import Flag
-from .engine import CONTRADICTION, COPIED, GUARDRAILS, OWN_STATE, PLANTED, SHELL_WRITE, SUSPICIOUS, USER_WRITTEN, Signal
+from .engine import (
+    CONTRADICTION,
+    COPIED,
+    DELETION,
+    GUARDRAILS,
+    OWN_STATE,
+    PLANTED,
+    SHELL_WRITE,
+    SUSPICIOUS,
+    UNREAD,
+    USER_WRITTEN,
+    Signal,
+)
 
 _DENY_HINT = {OWN_STATE: "Make this change yourself.",
               GUARDRAILS: "Make this change yourself, or set AGENTDETOX_ALLOW_CONFIG_WRITES=1."}
@@ -55,9 +70,13 @@ def decide(signals: list[Signal], can_ask: bool, modes: dict[str, str]) -> Decis
     asked: list[str] = []
     recorded: list[str] = []
     for s in signals:
-        if s.check == SHELL_WRITE:
+        if s.check in (SHELL_WRITE, DELETION):
             if can_ask:
-                asked.append(s.reason)
+                asked.append(f"{s.reason} Approve only if you expected it.")
+            else:
+                recorded.append(s.reason)
+        elif s.check == UNREAD:
+            recorded.append(s.reason)
         elif s.check in modes:
             (asked if modes[s.check] == "ask" and can_ask else recorded).append(s.reason)
     if asked:
