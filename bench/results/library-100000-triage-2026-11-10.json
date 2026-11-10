@@ -1,0 +1,324 @@
+{
+  "schema": 1,
+  "scope": "synthetic end-to-end library inspection through the library module, in one process",
+  "platform": "macOS-15.7.4-arm64-arm-64bit",
+  "python": "3.12.13",
+  "files": 100000,
+  "projects": 10,
+  "minimum_file_bytes": 4096,
+  "corpus_bytes": 418827640,
+  "corpus_bytes_with_extras": 423827710,
+  "corpus_sha256": "43445223352a622b762ce7d77f6c03efb22483382dcfddb6d33e7447d782ee69",
+  "generation_seconds": 11.430040792096406,
+  "detector": "02a5297f5d34aed7",
+  "phases": [
+    {
+      "label": "full first scan",
+      "state": "completed",
+      "run": 1,
+      "resumed": false,
+      "seconds": 316.26288458309136,
+      "cpu_seconds": 302.83912399999997,
+      "rule_scans": 100000,
+      "files_per_second": 316.2242706153668,
+      "peak_rss_bytes": 37814272,
+      "candidates": 100010,
+      "inspected": 100000,
+      "suspicious": 15000,
+      "high": 15000,
+      "low_only": 0,
+      "no_findings": 85000,
+      "stale": 0,
+      "queued": 0,
+      "uninspected": 10,
+      "failed": 0,
+      "missing": 0,
+      "excluded": 5,
+      "links": 5,
+      "uninspected_reasons": {
+        "not-utf8": 5,
+        "too-large": 5
+      },
+      "failed_reasons": {}
+    },
+    {
+      "label": "unchanged incremental",
+      "state": "completed",
+      "run": 2,
+      "resumed": false,
+      "seconds": 15.330009624827653,
+      "cpu_seconds": 5.589314000000002,
+      "rule_scans": 0,
+      "files_per_second": 6523.805427886309,
+      "peak_rss_bytes": 42369024,
+      "candidates": 100010,
+      "inspected": 100000,
+      "suspicious": 15000,
+      "high": 15000,
+      "low_only": 0,
+      "no_findings": 85000,
+      "stale": 0,
+      "queued": 0,
+      "uninspected": 10,
+      "failed": 0,
+      "missing": 0,
+      "excluded": 5,
+      "links": 5,
+      "uninspected_reasons": {
+        "not-utf8": 5,
+        "too-large": 5
+      },
+      "failed_reasons": {}
+    },
+    {
+      "label": "incremental, 1% of files appended to",
+      "state": "completed",
+      "run": 3,
+      "resumed": false,
+      "seconds": 17.509778583189473,
+      "cpu_seconds": 8.531229999999994,
+      "rule_scans": 1000,
+      "files_per_second": 5711.665600158765,
+      "peak_rss_bytes": 46759936,
+      "candidates": 100010,
+      "inspected": 100000,
+      "suspicious": 15000,
+      "high": 15000,
+      "low_only": 0,
+      "no_findings": 85000,
+      "stale": 0,
+      "queued": 0,
+      "uninspected": 10,
+      "failed": 0,
+      "missing": 0,
+      "excluded": 5,
+      "links": 5,
+      "uninspected_reasons": {
+        "not-utf8": 5,
+        "too-large": 5
+      },
+      "failed_reasons": {}
+    },
+    {
+      "label": "incremental with unreadable and deleted files",
+      "state": "completed",
+      "run": 4,
+      "resumed": false,
+      "seconds": 14.720221958123147,
+      "cpu_seconds": 5.46347099999997,
+      "rule_scans": 0,
+      "files_per_second": 6793.715494542094,
+      "peak_rss_bytes": 46759936,
+      "candidates": 100005,
+      "inspected": 99990,
+      "suspicious": 15000,
+      "high": 15000,
+      "low_only": 0,
+      "no_findings": 84990,
+      "stale": 0,
+      "queued": 0,
+      "uninspected": 10,
+      "failed": 5,
+      "missing": 5,
+      "excluded": 5,
+      "links": 5,
+      "uninspected_reasons": {
+        "not-utf8": 5,
+        "too-large": 5
+      },
+      "failed_reasons": {
+        "unreadable": 5
+      }
+    },
+    {
+      "label": "full scan cancelled half-way",
+      "state": "cancelled",
+      "run": 5,
+      "resumed": false,
+      "seconds": 157.86370391701348,
+      "cpu_seconds": 150.82663399999996,
+      "rule_scans": 49990,
+      "files_per_second": 633.489507205349,
+      "peak_rss_bytes": 46759936,
+      "candidates": 100005,
+      "inspected": 99990,
+      "suspicious": 15000,
+      "high": 15000,
+      "low_only": 0,
+      "no_findings": 84990,
+      "stale": 50000,
+      "queued": 0,
+      "uninspected": 10,
+      "failed": 5,
+      "missing": 0,
+      "excluded": 5,
+      "links": 5,
+      "uninspected_reasons": {
+        "not-utf8": 5,
+        "too-large": 5
+      },
+      "failed_reasons": {
+        "unreadable": 5
+      },
+      "seconds_from_request_to_stop": 0.00042574992403388023
+    },
+    {
+      "label": "resumed to completion",
+      "state": "completed",
+      "run": 5,
+      "resumed": true,
+      "seconds": 159.82243050006218,
+      "cpu_seconds": 152.49271600000003,
+      "rule_scans": 50005,
+      "files_per_second": 625.725686232516,
+      "peak_rss_bytes": 46759936,
+      "candidates": 100005,
+      "inspected": 99995,
+      "suspicious": 15000,
+      "high": 15000,
+      "low_only": 0,
+      "no_findings": 84995,
+      "stale": 0,
+      "queued": 0,
+      "uninspected": 10,
+      "failed": 0,
+      "missing": 0,
+      "excluded": 5,
+      "links": 5,
+      "uninspected_reasons": {
+        "not-utf8": 5,
+        "too-large": 5
+      },
+      "failed_reasons": {}
+    }
+  ],
+  "families": {
+    "wrapped-exfil": {
+      "total": 5000,
+      "high": 5000,
+      "expected_high": 5000,
+      "known_gap": 0,
+      "regression": 0,
+      "known_miss": 0
+    },
+    "guardrail-zh": {
+      "total": 5000,
+      "high": 5000,
+      "expected_high": 5000,
+      "known_gap": 0,
+      "regression": 0,
+      "known_miss": 0
+    },
+    "private-key": {
+      "total": 5000,
+      "high": 5000,
+      "expected_high": 5000,
+      "known_gap": 0,
+      "regression": 0,
+      "known_miss": 0
+    },
+    "public-key": {
+      "total": 5000,
+      "high": 0,
+      "expected_high": 0,
+      "known_gap": 0,
+      "regression": 0,
+      "known_miss": 0
+    },
+    "redaction": {
+      "total": 5000,
+      "high": 0,
+      "expected_high": 0,
+      "known_gap": 0,
+      "regression": 0,
+      "known_miss": 0
+    },
+    "unsupported-fact": {
+      "total": 5000,
+      "high": 0,
+      "expected_high": 5000,
+      "known_gap": 5000,
+      "regression": 0,
+      "known_miss": 5000
+    },
+    "normal": {
+      "total": 69995,
+      "high": 0,
+      "expected_high": 0,
+      "known_gap": 0,
+      "regression": 0,
+      "known_miss": 0
+    }
+  },
+  "known_semantic_misses": 5000,
+  "inventory_bytes": 37834752,
+  "inventory_bytes_per_file": 378.34752,
+  "content_copy_bytes": 0,
+  "process_peak_rss_bytes": 46759936,
+  "checks": {
+    "first scan inspects every candidate that can be inspected": true,
+    "unchanged incremental runs no rule scan": true,
+    "changed incremental rescans exactly the changed files": true,
+    "unreadable files are failed and deleted files missing, none inspected": true,
+    "a cancelled run is resumed, not restarted, and ends with full coverage": true,
+    "no content copies and no hook store": true,
+    "known rule families are detected (acknowledged semantic misses excluded)": true
+  },
+  "passed": true,
+  "exclusions": [
+    "hook latency while scanning",
+    "the detached worker and process kills (covered by tests)",
+    "cleanup",
+    "NLI and semantic detection",
+    "real-world accuracy or false-positive rates",
+    "production support at this scale",
+    "filesystems other than the one measured"
+  ],
+  "triage": {
+    "selected_files": 100,
+    "scope": "after the six scan phases, in the same synthetic inventory",
+    "timings": {
+      "review_and_dismiss_100_files": {
+        "seconds": 0.12271054205484688,
+        "cpu_seconds": 0.10702400000002399
+      },
+      "status_with_dismissals": {
+        "seconds": 0.050047249998897314,
+        "cpu_seconds": 0.049028999999904954
+      },
+      "dismissed_page_20": {
+        "seconds": 0.03233766695484519,
+        "cpu_seconds": 0.03233299999999417
+      },
+      "suspicious_page_20": {
+        "seconds": 0.033685874892398715,
+        "cpu_seconds": 0.03368199999999888
+      },
+      "review_one_dismissed_file": {
+        "seconds": 0.0004442920908331871,
+        "cpu_seconds": 0.00044400000001587614
+      },
+      "reopen_100_files": {
+        "seconds": 0.04587658285163343,
+        "cpu_seconds": 0.042803999999932785
+      }
+    },
+    "checks": {
+      "only selected files leave the suspicious queue": true,
+      "dismissed files remain counted and reviewable": true,
+      "dismissal does not create no-finding verdicts": true,
+      "reopen restores the suspicious queue": true,
+      "global allowlist and hook store are untouched": true
+    },
+    "passed": true,
+    "exclusions": [
+      "CLI startup",
+      "real-world false positives",
+      "concurrent triage latency"
+    ],
+    "inventory_bytes_after_reopen": 37851136,
+    "peak_rss_bytes": 46759936
+  },
+  "source_commit": "6d5a761f06c8d80d90d9e310e4cd09592c3bb48e",
+  "command": ".venv/bin/python -m bench.library_triage_eval --files 100000 --minimum-bytes 4096 --output bench/results/library-100000-triage-2026-11-10.json"
+}

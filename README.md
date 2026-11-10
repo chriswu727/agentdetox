@@ -159,10 +159,15 @@ which remain visible in `doctor` and `status`. Code running as your user can alt
   Guardrail success and user-task completion are reported separately.
   [Recorded results](https://github.com/chriswu727/agentdetox/blob/main/lab/results/latest.md).
 - **Development latency, 2026-11-10:** 100 samples per case on one Mac, no NLI inference.
-  All 12 original budgets passed both idle and during a library scan. Under that scan load,
-  Bash pre/post P95 was **112.6 ms**; startup with 1,000 unchanged files **135.4 ms**;
-  four concurrent writes plus a Bash pre/post pair **306.4 ms**. Earlier failures remain retained.
-  [Method, raw data and limits](https://github.com/chriswu727/agentdetox/blob/main/bench/LARGE_MEMORY.md#hook-latency-during-inspection).
+  The latest idle-library run passed all 12 original budgets: Bash pre/post P95 **110.3 ms**;
+  startup with 1,000 unchanged files **123.0 ms**; four concurrent writes plus a Bash pair
+  **273.4 ms**. Earlier scan-load measurements and Windows budget failures remain retained.
+  [Method, raw data and limits](https://github.com/chriswu727/agentdetox/blob/main/bench/HOOK_LATENCY.md).
+- **100k synthetic inventory, 2026-11-10:** full/incremental inspection, cancellation/resumption
+  and scoped dismissal/reopening passed. About 419 MB of notes took **316 s** for first inspection,
+  **15.3 s** unchanged, with **46.8 MB** process peak RSS. Known semantic misses remain explicit;
+  these are local module measurements, not production-support or real-world accuracy claims.
+  [Protocol and raw report](https://github.com/chriswu727/agentdetox/blob/main/bench/LARGE_MEMORY.md#100k-completion-and-scoped-triage).
 
 Source matching is evidence of copied text, not proof of malicious intent or human authorship.
 An empty rescan does not certify a file as safe.
