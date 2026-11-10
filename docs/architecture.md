@@ -57,6 +57,16 @@ Optional contradiction record jobs carry the observed bytes to the worker. Relat
 candidate selection and inference happen there; findings attach to the matching recorded hash,
 even if the file was edited again before the job ran. Related context is read at processing time.
 
+On development `main`, `background.py` persists jobs before waking the worker. Files are private,
+written through a temporary file, flushed and atomically renamed. Directory sync is used where
+supported; hardware power-loss durability is not certified. The process holding the daemon lock
+owns execution. Attempts are persisted before work; successful processing removes the job and
+failure retains it with bounded retries. Missing models leave waiting work rather than a false
+success. A restart adopts legacy jobs and drains the saved queue. Delivery is at least once:
+diagnostic contradiction events can repeat after a crash, while ledger findings are upserted.
+`doctor`/`status` expose failed, waiting and stalled work. Explicit retry restarts a worker that
+left an I/O-blocked job queued. This protects queued checks; it is not yet a large-library scan scheduler.
+
 ## Modules
 
 | Module | Role |
@@ -74,6 +84,7 @@ even if the file was edited again before the job ran. Related context is read at
 | `provenance.py` | Reading the session transcript: copied text, and text the user wrote |
 | `consistency.py` | Splitting memory into statements and finding contradictions with an NLI model |
 | `daemon.py` | The model server (Unix socket), or a job queue where there is none (Windows) |
+| `background.py` | Durable job files, attempts, retention and background health |
 | `integrity.py` | Snapshot store: baseline, content-addressed copies, verify, restore, quarantine, locking |
 | `storage.py` | SQLite schema, transactional legacy migration, indexed metadata and references |
 | `review.py` | Diff, exact-version accept, finding dismissal, recovery journal and retention |

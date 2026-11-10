@@ -1,3 +1,4 @@
+import errno
 import json
 import os
 import shutil
@@ -704,3 +705,57 @@ def test_daemon_retry_command(memory, no_server, fast_retries, capsys):
     assert "1 failed check(s) queued again" in capsys.readouterr().out and no_server == [None]
     assert daemon.serve(nli_factory=FakeNLI) == 0
     assert len(contradictions()) == 1 and pending_jobs() == []
+
+
+@posix_only
+def test_directory_sync_failure_does_not_acknowledge_submission(memory, no_server, monkeypatch):
+    original = os.fsync
+
+    def sync(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError(errno.EIO, 'directory sync failed')
+        original(fd)
+
+    monkeypatch.setattr(os, 'fsync', sync)
+    with pytest.raises(OSError, match='directory sync failed'):
+        daemon.submit(job_for(memory))
+    assert no_server == []
+    assert len(background.queued()) == 1
+
+
+def test_retry_does_not_claim_a_corrupt_failed_job_disappeared(memory, no_server, capsys):
+    private_dir(background.queue_dir()).joinpath('broken.failed').write_text('invalid JSON')
+    assert main(['daemon', 'retry']) == 1
+    assert '1 failed check(s) could not be retried' in capsys.readouterr().out
+    assert len(background.failed()) == 1 and no_server == []
+
+
+@posix_only
+def test_manual_retry_restarts_a_worker_that_left_an_io_error_queued(memory, monkeypatch):
+    original = background.claim
+    calls = []
+
+    def unavailable(*args):
+        calls.append(1)
+        raise PermissionError('temporarily locked')
+
+    monkeypatch.setattr(background, 'claim', unavailable)
+    t, _ = start()
+    try:
+        daemon.submit(job_for(memory))
+        assert wait_for(lambda: calls)
+        monkeypatch.setattr(background, 'claim', original)
+        spawned = []
+        monkeypatch.setattr(daemon, '_spawn', spawned.append)
+        assert daemon.retry() == (0, 1)
+        t.join(5)
+        assert not t.is_alive() and spawned == [None]
+    finally:
+        daemon.stop()
+        t.join(5)
+    t, _ = start()
+    try:
+        assert wait_for(lambda: not background.queued()) and len(contradictions()) == 1
+    finally:
+        daemon.stop()
+        t.join(5)

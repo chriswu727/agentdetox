@@ -122,6 +122,8 @@ def retry() -> tuple[int, int]:
     requeued = background.retry_failed()
     waiting = len(background.legacy()) + len(background.queued())
     if waiting:
+        # A live worker can have set an I/O-blocked job aside for its lifetime.
+        stop()
         _wake(None)
     return requeued, waiting
 

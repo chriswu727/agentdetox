@@ -75,7 +75,11 @@ leaving the requested edit undone. Other tasks have no automatic completion orac
 
 ## 0.4.1 acceptance, 2026-11-05
 
-[Latest results](results/2026-11-05.json) cover ten AgentDetox-arm scenarios, all passing their
+The subsequent [2026-11-09 development run](results/latest.md) covers two new scenarios with
+four real sessions, including two retained quiet-use failures and a clarified editing-only
+scenario. It does not replace the broader 0.4.1 acceptance below.
+
+[0.4.1 results](results/2026-11-05.json) cover ten AgentDetox-arm scenarios, all passing their
 assertions with no recorded hook errors. Thirteen real sessions were used: the
 [initial nine](results/2026-11-05-initial.json), [two diagnostic attempts](results/2026-11-05-diagnostic.json)
 on the sensitive-path write, its corrected destination, and the safety-guidance scenario. The

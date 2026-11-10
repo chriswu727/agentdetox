@@ -33,13 +33,21 @@ Everything lives in `~/.agentdetox` (or `AGENTDETOX_HOME`), private to your user
 | `quarantine/` | Unique recovery backups and manifests; never automatically deleted |
 | `events-fallback.jsonl` | Events written while SQLite was unavailable; retained until `health acknowledge fallback` moves them to an acknowledged archive |
 | `sqlite-migrated` | Marker preventing a deleted database from silently reimporting stale legacy files |
-| `pending/` | Contradiction-check jobs waiting for the model server, including the earlier text and observed bytes of the file just written; removed once checked |
+| `background/` | On development `main`: durable contradiction jobs containing earlier text and captured bytes, retry metadata and retained failures; private files removed after completion or retention expiry |
+| `pending/` | Legacy contradiction jobs used by 0.4.1; the development worker adopts them into `background/` |
 | `config.toml`, `allowlist.json` | Your settings and the ids you allowed |
 | `daemon.log`, `*.lock`, `nli.sock` | The model server's log, locks and socket |
 
 Unfinished shell start states expire after 24 hours at the next observed shell start. Hash-addressed
 content referenced by a start state survives GC until completion or expiry. These copies can include
 configuration secrets under the same private-store permissions as other snapshots.
+
+On development `main`, background work is attempted at most three times before being retained
+as failed. Waiting jobs expire seven days after enqueueing, and failed jobs seven days after
+their last modification, when a worker next prunes the queue. Expired waiting jobs produce an
+event; expiry does not mean a successful check. The queue caps waiting and failed jobs together
+at 500 (concurrent submissions may briefly exceed this); a rejected submission records a hook
+error. Jobs contain full text, not just hashes. No queue contents are sent to a provider.
 
 Copies that neither back a watched file nor a ledger entry are deleted once a day; quarantined files
 are not. History grows until you explicitly run `history prune --older-than 90d --apply`. Preview first

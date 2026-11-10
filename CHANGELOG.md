@@ -7,6 +7,10 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ### Changed
 
+- Persist background contradiction jobs before waking the worker; recover after crashes and
+  upgrades, retry up to three attempts, and retain failed jobs. Distinguish missing models,
+  stalled queues and failures in doctor/status. Add `daemon retry`, seven-day retention and
+  a visible 500-job queue limit. Explicit retry restarts workers after transient queue I/O errors.
 - Add native Windows development check/update entry points while preserving Bash wrappers;
   make optional NLI dependencies explicit with `update.py --nli`.
 - Gate Windows CI on lint, types, tests, offline galleries, distributions and the installed

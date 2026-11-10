@@ -9,7 +9,20 @@ from collections import Counter
 from dataclasses import asdict
 from pathlib import Path
 
-from . import __version__, allowlist, daemon, demo, doctor, events, ledger, review, settings, status, storage
+from . import (
+    __version__,
+    allowlist,
+    background,
+    daemon,
+    demo,
+    doctor,
+    events,
+    ledger,
+    review,
+    settings,
+    status,
+    storage,
+)
 from .agentscan import consistency_findings, scan_context
 from .allowlist import finding_flag
 from .consistency import NLI, NLI_MODEL
@@ -387,6 +400,11 @@ def _install(args) -> int:
 def _daemon_command(action: str) -> int:
     if action == "retry":
         requeued, waiting = daemon.retry()
+        remaining = len(background.failed())
+        if remaining:
+            print(f"{requeued} failed check(s) queued again; {remaining} failed check(s) could not be retried. "
+                  "Inspect `agentdetox doctor` and the retained queue files.")
+            return 1
         print(f"{requeued} failed check(s) queued again; the background worker now has {waiting} check(s) to run"
               if waiting else "no background checks are waiting or failed")
         return 0

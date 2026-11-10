@@ -16,6 +16,7 @@ jobs found in pending/ are moved into it as they are.
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import os
 import tempfile
@@ -83,12 +84,17 @@ def _write(path: Path, job: dict) -> None:
 
 def _sync_dir(directory: Path) -> None:
     # The new name has to reach the disk as well. Windows cannot open a directory for this.
-    with contextlib.suppress(OSError):
+    if os.name == 'nt':
+        return
+    try:
         fd = os.open(directory, os.O_RDONLY)
         try:
             os.fsync(fd)
         finally:
             os.close(fd)
+    except OSError as error:
+        if error.errno not in {errno.EINVAL, errno.ENOTSUP}:
+            raise
 
 
 def enqueue(job: dict) -> Path | None:

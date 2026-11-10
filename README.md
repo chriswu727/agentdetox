@@ -153,9 +153,10 @@ which remain visible in `doctor` and `status`. Code running as your user can alt
   plus a separate 21-case acceptance set with three explicit semantic misses. These are not
   real-world accuracy estimates.
   [Protocol and results](https://github.com/chriswu727/agentdetox/blob/main/bench/ACCURACY.md).
-- **Real Claude Code lab, 2026-11-05:** the latest results pass all ten AgentDetox-arm scenarios,
-  with no hook errors. Thirteen sessions were used, including three sensitive-path setup failures
-  retained in the reports. Guardrail success and user-task completion are reported separately.
+- **Real Claude Code lab, 2026-11-09:** two development scenarios passed their final checks
+  using four sessions, including two retained quiet-use failures and a clarified editing-only
+  scenario. This supplements the ten-scenario 0.4.1 acceptance; it is not a full rerun.
+  Guardrail success and user-task completion are reported separately.
   [Recorded results](https://github.com/chriswu727/agentdetox/blob/main/lab/results/latest.md).
 - **Reference latency, 2026-11-05:** 100 samples per case on one Mac, no NLI inference. All 12
   budgets passed in the initial reference run; later contention failures and focused follow-ups are retained. Bash pre/post P95 **145.6 ms**; a 100-line post-write check with a 3.9 MB transcript

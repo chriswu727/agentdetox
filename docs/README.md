@@ -32,7 +32,7 @@ not silently refreshed to describe current code.
 | [Memory benchmark v0](../bench/MEMORY_BENCHMARK.md) | Historical public-data detector comparison and synthetic transcript evaluation |
 | [Knowledge-base benchmark](../bench/KB_BENCHMARK.md) | Historical scanner comparison on public RAG data |
 | [Real-agent lab](../lab/README.md) | Protocol, authorization, costs and outcome definitions |
-| [Latest recorded lab run](../lab/results/latest.md) | 2026-11-02, 16 real Claude Code sessions; not a new run for this documentation update |
+| [Latest recorded lab run](../lab/results/latest.md) | 2026-11-09 development checks: two scenarios, four sessions, two retained failures |
 
 ## Develop and contribute
 

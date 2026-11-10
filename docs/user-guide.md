@@ -294,6 +294,18 @@ changed memory write queues work for a background worker, which loads the model 
 opt-in judge; no replacement is implemented or committed for a release. Measurements:
 [bench/MEMORY_BENCHMARK.md](https://github.com/chriswu727/agentdetox/blob/main/bench/MEMORY_BENCHMARK.md).
 
+### Background work on development main
+
+On development `main` (after 0.4.1), background contradiction work survives worker crashes.
+`agentdetox doctor` and `agentdetox status` distinguish failed checks, work waiting for a model,
+and work stalled for more than ten minutes. Failed work gets at most three automatic attempts,
+with 5-second and 60-second retry delays, and remains available for inspection for seven days.
+After fixing the reported cause, run `agentdetox daemon retry`. It restarts a resident worker
+when necessary; corrupt retained jobs remain visible and cause retry to exit unsuccessfully.
+If the model is missing, fetch it first or explicitly turn contradiction checks off. Turning
+the check off stops new submissions; it does not certify previously queued versions as clean.
+`daemon stop` leaves queued work on disk. Expired work is reported, not counted as checked.
+
 ## Also: scanning a RAG knowledge base
 
 ```bash
