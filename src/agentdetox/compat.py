@@ -15,11 +15,11 @@ from types import ModuleType
 
 fcntl: ModuleType | None
 try:
-    # The Windows typeshed stub does not expose POSIX flock attributes.
+    # Host-specific typeshed stubs omit the other platform's lock attributes.
     fcntl = import_module('fcntl')
 except ImportError:
     fcntl = None
-    import msvcrt
+    msvcrt = import_module('msvcrt')
 
 WINDOWS = os.name == "nt"
 
