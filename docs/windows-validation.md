@@ -13,6 +13,9 @@ was overwritten. No model dependencies or weights were installed.
 - Git for Windows 2.55.0 (`C:\Program Files\Git\cmd\git.exe`), Git Bash 5.3.15
   (`C:\Program Files\Git\bin\bash.exe`), uv 0.13.6, CPython 3.12.16 managed by uv.
 - Development interpreter: `C:\src\agentdetox\.venv\Scripts\python.exe`.
+- The candidate CLI is installed through uv at `C:\Users\yichen\.local\bin\agentdetox.exe`;
+  `uv tool update-shell` added that directory to the user PATH. Open a new terminal to use it.
+  This package installation did not register real user hooks.
 - Independent Claude CLI 2.1.317 installed through WinGet; the existing desktop Code
   process uses 2.1.321. Both independently launched executables reported no CLI login.
   The running desktop session was separately confirmed as `entrypoint=claude-desktop`;
@@ -39,7 +42,7 @@ was overwritten. No model dependencies or weights were installed.
   Fixture SHA-256 remains `139150fbd834a3a6465fefc79575f51a0d41079d86826111ec42735e7fbfa2cc`,
   identical to the committed fixture and November 5 report. This is regression evidence,
   not real-world accuracy or comprehensive protection.
-- [Built-wheel lifecycle](../bench/results/journey-windows-final-2026-11-09.json): new environment
+- [Built-wheel lifecycle after the final runtime fix](../bench/results/journey-windows-runtime-2026-11-09.json): new environment
   outside the checkout, spaces and Chinese characters in paths, preview/install/mixed-hook
   upgrade/reinstall/doctor, registered commands through Git Bash, plugin shell forwarding,
   quiet benign use, denied attack, external detection, review, stale refusal, byte-exact recovery,
