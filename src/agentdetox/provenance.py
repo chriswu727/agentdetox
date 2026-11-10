@@ -38,7 +38,8 @@ _TOKEN_RE = re.compile(r"[a-z0-9_]+|[一-鿿]")
 _FRONTMATTER_RE = re.compile(r"\A---\n.*?\n---\n", re.S)
 _REMEMBER_RE = re.compile(
     r"\b(remember|memori[sz]e|keep in mind|note (this|that|it) down|make a note|take note"
-    r"|(save|store|add|write|put|record|update)\b[^.\n]{0,80}\b(memory|memories|notes?|claude\.md)\b)"
+    r"|(save|store|add|write|put|record)\b[^.\n]{0,80}\b(memory|memories|notes?|claude\.md)\b"
+    r"|update\s+(?:(?:the|my|our)\s+)?(?:memory|memories|notes?|claude\.md)\b)"
     r"|记住|记下|记一下|记得|存到记忆|保存到记忆|写进记忆|加到记忆|备忘",
     re.I,
 )
