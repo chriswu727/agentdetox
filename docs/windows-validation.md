@@ -97,6 +97,26 @@ records ordinary Bash pre P95 199.2 → 187.1 ms and the 1000-active-file Bash p
 778.8 → 645.8 ms. Both remain above their unchanged budgets. See
 [measurement details](../bench/HOOK_LATENCY.md) for the comparison method and limits.
 
+[CI for runtime commit 4ed9336](https://github.com/chriswu727/agentdetox/actions/runs/42738843259)
+passes all four jobs: native Windows, macOS Python 3.12, Linux Python 3.11 and 3.12, including
+offline galleries and installed-wheel lifecycle checks.
+
+The complete local [100-sample rerun](../bench/results/hooks-windows-io-2026-11-09.json)
+still passes 5/12 budgets and fails 7/12. Concurrent evidence/health assertions pass. The
+full table and all 1,200 samples are retained; no thresholds or budgets were relaxed.
+
+The same runtime also passes the local demo, the [45-case gallery](../bench/results/accuracy-windows-io-2026-11-09.json),
+the [frozen 21-case gallery](../bench/results/acceptance-windows-io-2026-11-09.json),
+and [installed-wheel lifecycle](../bench/results/journey-windows-io-2026-11-09.json), including
+real registered Git Bash commands, plugin forwarding, recovery and selective cleanup.
+Known semantic misses remain; all 45 and 21 restores are byte-exact and the frozen fixture
+hash is unchanged. Wheel/sdist build, strict twine checks and distribution-content checks pass.
+The wheel SHA-256 is `496a32254ef7c361b0db3879972190210fadcdfbc362f3762dcbd3e6c47dc41c`.
+The host's installed candidate CLI was updated from this wheel with the existing NumPy
+2.5.4 constraint; only AgentDetox was reinstalled. No real user hooks were registered.
+The installed executable's demo passes, and all 38 installed Python source files match both
+the checked wheel and this checkout byte-for-byte.
+
 ## Real Claude usage and remaining limits
 
 The prior authorization was 20 real acceptance sessions, with 13 already used on November 5

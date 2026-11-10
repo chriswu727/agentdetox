@@ -33,6 +33,35 @@ Reproduce against a chosen baseline with:
 The earlier Windows startup-only comparison below uses a different fixture and is not a
 direct numerical baseline for this run. All earlier failures remain retained.
 
+### Complete follow-up suite
+
+The [full rerun](results/hooks-windows-io-2026-11-09.json) uses the runtime in `4ed9336`,
+100 samples per case and the original fixture/budgets. It still **passes 5/12 and fails 7/12**.
+All 1,200 timings are retained. It ran after the paired comparison, without concurrent local
+test/build runs. The older full suite was measured at a different time and load, so use the
+alternating comparison above for the evidence of improvement, not differences between full runs.
+
+| Case | P50 ms | P95 ms | Budget ms | Result |
+|---|---:|---:|---:|---|
+| Ordinary Bash pre | 183.1 | 190.2 | 100 | fail |
+| Ordinary Bash pre + post | 367.7 | 400.7 | 200 | fail |
+| Protected Edit pre, 50k history | 164.8 | 185.4 | 120 | fail |
+| Protected Write pre, repeated large transcript | 177.1 | 185.1 | 200 | pass |
+| Protected Write post, 100 lines, repeated transcript | 212.5 | 225.3 | 500 | pass |
+| Protected Write pre, 29 distinct large sources | 215.3 | 229.0 | 200 | fail |
+| Protected Write post, 100 lines, 29 sources | 295.0 | 317.8 | 500 | pass |
+| Four concurrent Write posts plus Bash pre/post | 486.7 | 552.6 | 1000 | pass |
+| SessionStart, 1000 unchanged files | 337.5 | 350.8 | 250 | fail |
+| SessionStart, 100 changed / 1000 files | 1197.0 | 1264.7 | 1000 | fail |
+| Bash pair, 1000 active + 1000 unrelated memory files | 613.8 | 675.6 | 350 | fail |
+| NLI queue frontend, no inference | 210.5 | 221.6 | 250 | pass |
+
+The concurrent case retained all four changes without `hook_error` or `shell_unobserved`.
+NLI remains a fake frontend queue, not a model/inference measurement. Real-client overhead,
+peak process memory, sustained CPU usage and long-term store growth remain unmeasured.
+Startup and many-file checks still need work; these bounded changes do not establish a
+completed native Windows performance acceptance.
+
 ## Native Windows development measurement, 2026-11-09
 
 The [first native Windows suite](results/hooks-windows-2026-11-09.json) used Windows 11
