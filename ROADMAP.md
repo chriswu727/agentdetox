@@ -103,11 +103,12 @@ The agreed delivery sequence is:
    reviewed cleanup. Start with files; database/vector adapters require separate validation.
    On development `main`: `agentdetox library` inspects an explicitly chosen folder of UTF-8
    memory files with a durable inventory, content-hash incremental runs, cancellation and
-   resumption, a detached worker, and exact-version cleanup through the existing journal and
-   quarantine. Synthetic 1k/10k full and incremental inspection contracts and all original
-   hook latency budgets during a continuously active scan passed on the development Mac;
-   raw evidence is in the large-memory protocol. Not done: a completed 100k inspection,
-   real-library false-positive review, per-file dismissal, applying cleanup on Windows,
+   resumption, a detached worker, exact-version cleanup through the existing journal and
+   quarantine, and dismissal of a finding for one file's exact bytes and detector. Dismissals
+   deliberately expire on a detector change. Synthetic 1k/10k/100k inspection contracts,
+   100k scoped-triage checks and the recorded hook budget gate during an active scan passed
+   on the development Mac; raw evidence is in the large-memory protocol. Not done:
+   real-library false-positive review, applying cleanup on Windows,
    context-dependent checks (contradictions, duplicates, attribution) and any adapter.
 3. Validate sustained maintainer use and release a scoped stable capability. Thirty qualifying
    active days is a proposed gate, not a claim already achieved or a reason to recruit users.

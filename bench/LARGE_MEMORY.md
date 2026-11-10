@@ -52,7 +52,7 @@ continued to full coverage rather than restarted.
 
 It does **not** measure hooks while a scan runs, the detached worker, process kills (covered
 by tests, not timed), cleanup, real libraries or any false-positive rate, and it runs on one
-filesystem. The full 100k tier has not been run.
+filesystem. A subsequent 100k inventory run is recorded below.
 
 On 2026-11-10, runtime `eae840a` passed all seven harness contracts in separate processes on
 the development Mac, without concurrent tests or benchmarks. Raw reports retain CPU time,
@@ -71,6 +71,49 @@ store. Injected cancellation is acknowledged in 1.29 ms and 0.45 ms, respectivel
 resume to complete coverage. Those cancellation times measure the harness callback, not CLI
 startup or a user command round trip. The 50 and 500 seeded unsupported-fact cases remain
 explicit known semantic misses. This is inventory evidence, not a real-world accuracy estimate.
+
+### 100k completion and scoped triage
+
+The [100k baseline](results/library-100000-before-triage-2026-11-10.json) on runtime `a678976`
+completed all six phases and passed all seven inventory contracts. Its 100,000 synthetic
+notes total 418,827,640 bytes. First inspection took 318.946 s, unchanged incremental inspection
+14.491 s, and inspection after 1% changed 17.106 s. Process peak RSS was 45.3 MB and the inventory
+occupied 37.83 MB. No content was copied into the store. The 5,000 seeded unsupported-fact cases
+remain known misses; the fixture does not estimate real-world recall or false-positive rates.
+
+The scoped-triage harness repeats those six phases, then reviews and dismisses findings in the
+first 100 high-severity files, measures status and pagination, and reopens those decisions:
+
+```bash
+.venv/bin/python -m bench.library_triage_eval --files 100000 --minimum-bytes 4096 --output /tmp/library-triage-100000.json
+```
+
+Its additional checks require that only those files leave the suspicious queue, their evidence
+remains reviewable, dismissal does not increase the no-finding count, reopening restores the
+queue, and neither the global allowlist nor the hook store changes. Timings include bounded
+file rechecks but exclude CLI startup. These operations follow scanning, so their file reads
+are warm. The report includes CPU time, overall peak RSS and inventory size after reopening.
+
+Runtime `6d5a761` passed all seven inspection and five scoped-triage checks in the
+[100k triage report](results/library-100000-triage-2026-11-10.json). First inspection took
+316.263 s, unchanged incremental inspection 15.330 s, and inspection after 1% changed 17.510 s.
+Overall process peak RSS was 46.8 MB; the inventory occupied 37.85 MB after reopening. The
+5,000 known semantic misses remain. As with the baseline, no content copies or hook database
+were created. The following are individual warm measurements through the library API, not
+CLI latency distributions or performance guarantees:
+
+| Operation in the 100k inventory | Elapsed |
+|---|---:|
+| Review and dismiss all stored findings in 100 files | 122.7 ms |
+| Status with those dismissals present | 50.0 ms |
+| First 20 dismissed files | 32.3 ms |
+| First 20 suspicious files | 33.7 ms |
+| Reopen the 100 files | 45.9 ms |
+
+The baseline and candidate ran sequentially, with no concurrent local tests, builds or other
+benchmarks. Small timing differences between these single runs do not establish a speedup or
+regression. The completed synthetic tier does not validate arbitrary real libraries, semantic
+truth, longer-file distributions, other filesystems or production-scale support.
 
 ### Hook latency during inspection
 
@@ -107,7 +150,8 @@ All per-case samples, original budgets and worker-progress evidence are in the r
 The first Mac baseline on runtime `6339eef` is retained in the
 [1k report](results/scale-1000-2026-11-09.json) and
 [10k report](results/scale-10000-2026-11-09.json). Both regression gates pass; their 50 and 500
-seeded unsupported-fact cases remain known misses. The 100k tier has not been measured.
+seeded unsupported-fact cases remain known misses. That earlier rule-only baseline did not run
+the 100k tier; the inventory completion measurement is recorded separately above.
 
 | Files | Total bytes | Full rule scan | Process peak RSS |
 |---|---:|---:|---:|

@@ -1,5 +1,15 @@
 # Hook latency
 
+## Scoped triage and dynamic trust guard, 2026-11-10
+
+The [complete report](results/hooks-triage-2026-11-10.json) measures runtime `6d5a761` after
+version-scoped library triage and the dynamic-argument trust guard: **12/12 original budgets
+pass**, with 100 samples per case on the development Mac. Ordinary Bash pre/post P95 is
+110.3 ms; startup with 1,000 unchanged files is 123.0 ms; four concurrent protected writes
+plus Bash pre/post is 273.4 ms. No tests, builds or other benchmarks ran alongside it.
+This is an idle-library gate, distinct from the earlier scan-load run below. It excludes
+NLI inference and complete client startup, and does not resolve the Windows failures below.
+
 ## Library scan load on Mac, 2026-11-10
 
 Runtime `eae840a` passed **12/12 original budgets** with 100 samples per case both

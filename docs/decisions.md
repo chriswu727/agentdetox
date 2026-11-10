@@ -195,4 +195,35 @@ and session start does not read the inventory, so historical findings never inte
 session. Trade-offs: an unchanged library still costs a full read per scan; false positives
 are silenced with the global allowlist because there is no per-file dismissal; rules that
 need context (contradictions, duplicates, source attribution) do not run; applying a cleanup
-is refused on Windows, where the folder cannot be held open.
+is refused on Windows, where the folder cannot be held open. (Per-file dismissal was added
+later: ADR 21.)
+
+## ADR 21: A library dismissal is a decision about one file at one version
+
+The only way to silence a false positive in an inspected library was the global allowlist,
+which also silences the same text in every other file, in write checks and in later versions.
+A dismissal instead names one stored finding of one file and is bound to the content hash and
+detector that were reviewed. It lives in the library inventory, so hooks never see it, and it
+hides the finding from the open queue only: the row, its excerpt, the date and the user's note
+stay visible, and status counts dismissed findings and files apart from files without
+findings. Recording one requires the review hash (library folder, file, content hash,
+detector) from `library review`, a conclusion that is current, and the same bytes on disk,
+read again inside the transaction that records the decision.
+
+Chosen: the decision ends when the inventory records any other version of the file, including
+a return to the earlier bytes after an intermediate version, and a detector change such as an
+upgrade. Rescans of the same bytes by the same detector keep it. Not chosen: keeping it across
+detector changes or re-applying it whenever the same bytes reappear. Both would be friendlier
+(a branch switch and back, or an upgrade, loses triage work) but let a decision made about one
+conclusion suppress a later one the user never looked at; `allow` remains the lasting
+exception. Validity is also enforced when reading, by joining on hash and detector, rather
+than only by deleting on write, because a scan worker of the previous inventory version can
+still be writing after an upgrade and knows nothing of the table. For the same reason the
+upgrade only adds a table.
+
+Trade-offs: a dismissed first match of a rule leaves later matches of that rule in the file
+unlisted, as allowlisting does; findings beyond the 50 stored per file cannot be dismissed, so
+such a file stays suspicious; no history of ended dismissals is kept; nothing is written to
+the event log, because that would take the store lock hooks wait on; and since the inspection
+code is part of the detector id, conclusions from the build before this one are stale after
+upgrading and must be scanned before anything in them can be dismissed.

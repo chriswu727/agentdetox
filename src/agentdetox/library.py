@@ -14,6 +14,10 @@ A run is durable. Folders still to list and files still to verify are rows, so a
 process loses at most the batch in hand, and relisting or rereading is idempotent. One
 runner at a time holds library.lock. Whether a file changed is decided by reading and
 hashing it on every run; modification times are never trusted.
+
+A finding can be dismissed for one file at the exact bytes and detector that were reviewed
+(see dismiss). That is a row beside the finding in this inventory, never an entry in the
+allowlist that hooks and other files are checked against.
 """
 
 from __future__ import annotations
@@ -40,7 +44,7 @@ from .findings import SEVERITY_ORDER, finding_id, printable
 from .hidden import normalize
 from .integrity import StoreError, private_dir, store_dir, write_private
 
-VERSION = 1
+VERSION = 2
 SUFFIXES = (".md", ".markdown", ".mdc", ".txt")
 # What is read and how it is judged, besides the rules themselves. A change makes earlier
 # conclusions stale and an unfinished run unresumable.
@@ -59,8 +63,10 @@ CANCEL_POLL = 0.25
 START_TIMEOUT = 15.0
 # How long a scan waits for the runner lock: a status check holds it for an instant.
 LOCK_PATIENCE = 1.0
-STATES = ("suspicious", "low", "stale", "queued", "uninspected", "failed", "missing", "inspected")
+NOTE_CHARS = 200
+STATES = ("suspicious", "low", "dismissed", "stale", "queued", "uninspected", "failed", "missing", "inspected")
 
+# The layout of version 1. It is never rewritten: see _UPGRADES.
 _SCHEMA = (
     """CREATE TABLE roots (id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT NOT NULL UNIQUE,
        dev TEXT NOT NULL, ino TEXT NOT NULL, created TEXT NOT NULL)""",
@@ -89,6 +95,18 @@ _SCHEMA = (
        message TEXT NOT NULL, evidence TEXT NOT NULL, lines TEXT NOT NULL DEFAULT '',
        PRIMARY KEY(file_id, flag_id)) WITHOUT ROWID""",
 )
+# What each later version adds, in order: to a new inventory after _SCHEMA, to an older one
+# in the transaction that upgrades it. Additions only. A scan worker of an older version
+# that was running during the upgrade keeps writing the tables it knows and none of these,
+# so nothing here may rely on every writer maintaining it: a dismissal names the bytes and
+# detector it was made for, and counts only while the finding stored for its file is of
+# that version.
+_UPGRADES: dict[int, tuple[str, ...]] = {
+    2: ("""CREATE TABLE dismissals (file_id INTEGER NOT NULL REFERENCES files(id), flag_id TEXT NOT NULL,
+           sha256 TEXT NOT NULL, detector TEXT NOT NULL, created TEXT NOT NULL, note TEXT NOT NULL DEFAULT '',
+           PRIMARY KEY(file_id, flag_id)) WITHOUT ROWID""",),
+}
+_NEWER = "The library inventory was written by a newer AgentDetox; upgrade before opening it"
 
 _REASONS = {
     "too-large": f"larger than {MAX_BYTES // 1000:,} kB", "not-utf8": "not UTF-8 text", "binary": "binary content",
@@ -145,7 +163,9 @@ def detector_id() -> str:
 @contextlib.contextmanager
 def connect(*, write: bool = False) -> Iterator[sqlite3.Connection | None]:
     """The inventory database; None for a reader when there is none yet. Statements run in
-    explicit transactions (see _tx), never under the store lock."""
+    explicit transactions (see _tx), never under the store lock. An inventory of an earlier
+    version is brought to this one first, for a reader too: everything recorded stays, so no
+    new scan is needed, and a reader that cannot upgrade it says so instead of guessing."""
     path = db_path()
     existed = marker_path().exists()
     if not path.exists():
@@ -165,19 +185,23 @@ def connect(*, write: bool = False) -> Iterator[sqlite3.Connection | None]:
         db.row_factory = sqlite3.Row
         version = db.execute("PRAGMA user_version").fetchone()[0]
         if version > VERSION:
-            raise StoreError("The library inventory was written by a newer AgentDetox; upgrade before opening it")
+            raise StoreError(_NEWER)
         if version == 0:
             if existed:
                 raise _lost()
             if not write:
                 yield None
                 return
-            db.execute("BEGIN IMMEDIATE")
-            if db.execute("PRAGMA user_version").fetchone()[0] == 0:
-                for statement in _SCHEMA:
-                    db.execute(statement)
-                db.execute(f"PRAGMA user_version={VERSION}")
-            db.execute("COMMIT")
+        if version < VERSION and write:
+            _install(db)
+        elif version < VERSION:
+            try:
+                with contextlib.closing(sqlite3.connect(path, timeout=30, isolation_level=None)) as writer:
+                    _install(writer)
+            except sqlite3.Error as e:
+                raise StoreError(f"The library inventory {_shown(path)} has the layout of an earlier AgentDetox "
+                                 f"(version {version}) and could not be upgraded to read it: {e}. Nothing in it was "
+                                 "changed. If the store is read-only, make it writable and run the command again") from e
         if write and not existed:
             write_private(marker_path(), b"1\n")
         yield db
@@ -196,6 +220,24 @@ def _tx(db: sqlite3.Connection) -> Iterator[None]:
         db.execute("ROLLBACK")
         raise
     db.execute("COMMIT")
+
+
+def _install(db: sqlite3.Connection) -> None:
+    """Create the tables of a new inventory, or add what an older one lacks, in one
+    transaction. The version is read again under the write lock, since another process may
+    have done the same meanwhile; a failure leaves the inventory exactly as it was."""
+    with _tx(db):
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        if version > VERSION:
+            raise StoreError(_NEWER)
+        if version == 0:
+            for statement in _SCHEMA:
+                db.execute(statement)
+            version = 1
+        for step in range(version + 1, VERSION + 1):
+            for statement in _UPGRADES[step]:
+                db.execute(statement)
+        db.execute(f"PRAGMA user_version={VERSION}")
 
 
 @contextlib.contextmanager
@@ -415,7 +457,7 @@ def prepare(target: Path | str, *, full: bool = False, restart: bool = False) ->
                     raise
                 handle = _Root(row).open(rebind=True)
                 handle.close()
-                db.execute("DELETE FROM findings WHERE file_id IN (SELECT id FROM files WHERE root_id=?)", (root_id,))
+                _forget(db, "root_id=?", (root_id,))
                 db.execute("DELETE FROM files WHERE root_id=?", (root_id,))
                 db.execute("DELETE FROM dirs WHERE root_id=?", (root_id,))
                 db.execute("UPDATE roots SET dev=?, ino=? WHERE id=?", (*handle.identity, root_id))
@@ -436,8 +478,7 @@ def prepare(target: Path | str, *, full: bool = False, restart: bool = False) ->
             if unfinished is not None:
                 db.execute("UPDATE runs SET state='abandoned', finished=? WHERE id=?", (_now(), unfinished["id"]))
             # What an earlier completed run reported missing has been shown; it is dropped now.
-            db.execute("DELETE FROM findings WHERE file_id IN (SELECT id FROM files WHERE root_id=? "
-                       "AND state='missing')", (root_id,))
+            _forget(db, "root_id=? AND state='missing'", (root_id,))
             db.execute("DELETE FROM files WHERE root_id=? AND state='missing'", (root_id,))
             db.execute("DELETE FROM dirs WHERE root_id=? AND state='missing'", (root_id,))
             mode = "full" if full else "incremental"
@@ -464,6 +505,7 @@ class _Result:
     counts: tuple[int, int, int] = (0, 0, 0)
     truncated: int = 0
     seen: str | None = None          # the version recorded when this file was picked up
+    same: bool = False               # this concludes again about the bytes and detector recorded then
 
 
 def _read(fd: int, limit: int) -> bytes:
@@ -728,8 +770,7 @@ class _Runner:
                            "sha256=NULL, detector=NULL, inspected_run=NULL, cleanup_run=NULL, high=0, medium=0, low=0, "
                            "truncated=0 WHERE root_id=? AND rel=?",
                            (run, run, root, rel))
-                db.execute("DELETE FROM findings WHERE file_id IN (SELECT id FROM files WHERE root_id=? AND rel=?)",
-                           (root, rel))
+                _forget(db, "root_id=? AND rel=?", (root, rel))
                 db.execute("UPDATE dirs SET state='symlink', todo=0, seen_run=?, error=NULL WHERE root_id=? AND rel=?",
                            (run, root, rel))
 
@@ -767,6 +808,10 @@ class _Runner:
     def _examine(self, row) -> _Result:
         result = self._judged(row)
         result.id, result.seen = row["id"], row["sha256"]
+        # A failed read kept the last inspected version and its findings; a file that went
+        # missing or stopped being inspectable did not.
+        result.same = (result.action == "inspected" and row["state"] in ("inspected", "failed")
+                       and row["sha256"] == result.sha256 and row["detector"] == self.detector)
         return result
 
     def _judged(self, row) -> _Result:
@@ -789,6 +834,8 @@ class _Runner:
         bytes, and what this batch read before it is out of date."""
         db, run = self.db, self.run
         with _tx(db):
+            # Most inventories hold no dismissal: one look per batch spares a statement per file.
+            triaged = bool(db.execute("SELECT EXISTS (SELECT 1 FROM dismissals)").fetchone()[0])
             for r in results:
                 if r.action == "verified":
                     db.execute("UPDATE files SET todo=0, verified_run=? WHERE id=? AND todo=1 AND sha256 IS ?",
@@ -807,7 +854,7 @@ class _Runner:
                     (r.state, r.reason, r.sha256, r.size or None, self.detector if inspected else None, run,
                      run if inspected else None, *r.counts, r.truncated, r.id, r.seen)).rowcount
                 if changed:
-                    _replace_findings(db, r, self.detector)
+                    _replace_findings(db, r, self.detector, keep_dismissals=r.same or not triaged)
             db.execute("UPDATE runs SET heartbeat=? WHERE id=?", (_now(), run))
 
     # What a completed listing proves is gone.
@@ -845,13 +892,24 @@ class _Runner:
                 "UPDATE files SET state='missing', reason=NULL, todo=0, verified_run=? WHERE root_id=? AND seen_run<? "
                 "AND state!='missing' AND EXISTS (SELECT 1 FROM dirs p WHERE p.root_id=files.root_id "
                 "AND p.rel=files.parent AND p.listed_run=?)", (run, root, run, run))
-            db.execute("DELETE FROM findings WHERE file_id IN (SELECT id FROM files WHERE root_id=? AND state='missing')",
-                       (root,))
+            _forget(db, "root_id=? AND state='missing'", (root,))
         return True
 
 
-def _replace_findings(db: sqlite3.Connection, result: _Result, detector: str) -> None:
+def _forget(db: sqlite3.Connection, files: str, args: tuple) -> None:
+    """Drop the findings of the file rows `files` selects, and what the user decided about
+    them: the version they described is gone."""
+    for table in ("findings", "dismissals"):
+        db.execute(f"DELETE FROM {table} WHERE file_id IN (SELECT id FROM files WHERE {files})", args)
+
+
+def _replace_findings(db: sqlite3.Connection, result: _Result, detector: str, *, keep_dismissals: bool = False) -> None:
+    """Store what was concluded about a file. A dismissal is a decision about one version:
+    it outlives this only when the caller knows the same bytes were judged again by the same
+    detector, and ends with any other version, even one that repeats the finding."""
     db.execute("DELETE FROM findings WHERE file_id=?", (result.id,))
+    if not keep_dismissals:
+        db.execute("DELETE FROM dismissals WHERE file_id=?", (result.id,))
     db.executemany("INSERT INTO findings(file_id, flag_id, sha256, detector, rule, severity, message, evidence, lines) "
                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                    [(result.id, flag, result.sha256, detector, rule, severity, message, evidence, lines)
@@ -992,16 +1050,25 @@ def _allowed(db: sqlite3.Connection) -> None:
     db.executemany("INSERT OR IGNORE INTO temp.allowed VALUES (?)", [(i,) for i in allowlist.entries()])
 
 
-# One row per inspected file that has findings: its worst open severity, and how many of
-# its findings the allowlist hides.
-_PER_FILE = """per AS (SELECT f.id, f.truncated,
-    max(CASE WHEN a.id IS NULL AND n.severity='high' THEN 1 ELSE 0 END) AS h,
-    max(CASE WHEN a.id IS NULL AND n.severity='medium' THEN 1 ELSE 0 END) AS m,
-    max(CASE WHEN a.id IS NULL AND n.severity='low' THEN 1 ELSE 0 END) AS l,
-    sum(CASE WHEN a.id IS NOT NULL THEN 1 ELSE 0 END) AS hidden
+# A dismissal `d` applies to a stored finding `n` only while that finding is of the version
+# the dismissal was made for. Every reader joins through this, so a dismissal left behind by
+# a writer that did not know the table can hide nothing of another version.
+_DISMISSED = "d.file_id=n.file_id AND d.flag_id=n.flag_id AND d.sha256=n.sha256 AND d.detector=n.detector"
+# One row per inspected file that has findings: its worst open severity (a finding is open
+# unless the allowlist hides it or it is dismissed), and how many of its findings each hides.
+_PER_FILE = f"""per AS (SELECT f.id, f.truncated,
+    max(CASE WHEN a.id IS NULL AND d.flag_id IS NULL AND n.severity='high' THEN 1 ELSE 0 END) AS h,
+    max(CASE WHEN a.id IS NULL AND d.flag_id IS NULL AND n.severity='medium' THEN 1 ELSE 0 END) AS m,
+    max(CASE WHEN a.id IS NULL AND d.flag_id IS NULL AND n.severity='low' THEN 1 ELSE 0 END) AS l,
+    sum(CASE WHEN a.id IS NOT NULL THEN 1 ELSE 0 END) AS hidden,
+    sum(CASE WHEN d.flag_id IS NOT NULL THEN 1 ELSE 0 END) AS dismissed
     FROM files f JOIN findings n ON n.file_id=f.id LEFT JOIN temp.allowed a ON a.id=n.flag_id
+    LEFT JOIN dismissals d ON {_DISMISSED}
     WHERE f.root_id=:root AND f.state='inspected' GROUP BY f.id)"""
+# Findings left out of the store cannot be reviewed or dismissed: such a file stays suspicious.
 _SUSPICIOUS = "(per.h OR per.m OR per.truncated>0)"
+_HIDDEN_TOTALS = """coalesce(sum(per.hidden), 0) AS hidden, coalesce(sum(per.hidden>0), 0) AS hidden_files,
+    coalesce(sum(per.dismissed), 0) AS dismissed, coalesce(sum(per.dismissed>0), 0) AS dismissed_files"""
 
 
 def _root_status(db: sqlite3.Connection, root, alive: bool) -> dict:
@@ -1020,9 +1087,10 @@ def _root_status(db: sqlite3.Connection, root, alive: bool) -> dict:
     todo = db.execute("SELECT count(*) FROM files WHERE root_id=? AND todo=1", (root_id,)).fetchone()[0]
     sev = db.execute(f"""WITH {_PER_FILE} SELECT
         coalesce(sum({_SUSPICIOUS}), 0) AS suspicious, coalesce(sum(per.h), 0) AS high,
-        coalesce(sum(NOT {_SUSPICIOUS} AND per.l), 0) AS low_only, coalesce(sum(per.hidden), 0) AS hidden,
-        coalesce(sum(per.hidden>0), 0) AS hidden_files,
-        coalesce(sum(NOT {_SUSPICIOUS} AND NOT per.l), 0) AS hidden_only FROM per""", {"root": root_id}).fetchone()
+        coalesce(sum(NOT {_SUSPICIOUS} AND per.l), 0) AS low_only, {_HIDDEN_TOTALS},
+        coalesce(sum(NOT {_SUSPICIOUS} AND NOT per.l AND per.dismissed=0), 0) AS hidden_only,
+        coalesce(sum(NOT {_SUSPICIOUS} AND NOT per.l AND per.dismissed>0), 0) AS dismissed_only
+        FROM per""", {"root": root_id}).fetchone()
     folders = {row["state"]: row["n"] for row in db.execute(
         "SELECT state, count(*) AS n FROM dirs WHERE root_id=? GROUP BY state", (root_id,))}
     other = db.execute("SELECT coalesce(sum(excluded), 0) AS excluded, coalesce(sum(links), 0) AS links, "
@@ -1051,7 +1119,9 @@ def _root_status(db: sqlite3.Connection, root, alive: bool) -> dict:
         "suspicious": sev["suspicious"], "high": sev["high"], "low_only": sev["low_only"],
         "allowlisted_only": sev["hidden_only"], "allowlisted_findings": sev["hidden"],
         "allowlisted_files": sev["hidden_files"],
-        "no_findings": inspected - sev["suspicious"] - sev["low_only"] - sev["hidden_only"],
+        "dismissed_only": sev["dismissed_only"], "dismissed_findings": sev["dismissed"],
+        "dismissed_files": sev["dismissed_files"],
+        "no_findings": inspected - sev["suspicious"] - sev["low_only"] - sev["hidden_only"] - sev["dismissed_only"],
         "queued": states["new"], "uninspected": states["uninspected"], "uninspected_reasons": dict(reasons["uninspected"]),
         "failed": states["failed"], "failed_reasons": dict(reasons["failed"]), "missing": states["missing"],
         "excluded": other["excluded"], "excluded_extensions": exts, "links": other["links"], "special": other["special"],
@@ -1081,6 +1151,7 @@ def summary() -> dict | None:
         return None
     return {"libraries": len(rows), "candidates": sum(r["candidates"] for r in rows),
             "suspicious": sum(r["suspicious"] for r in rows), "stale": sum(r["stale"] for r in rows),
+            "dismissed": sum(r["dismissed_findings"] for r in rows),
             "unverified": sum(r["queued"] + r["uninspected"] + r["failed"] for r in rows),
             "unfinished": sum(1 for r in rows if r["run"] and r["run"]["state"] in ("running", "interrupted", "cancelled")),
             "running": any(r["run"] and r["run"]["state"] == "running" for r in rows)}
@@ -1118,6 +1189,9 @@ def render_status(rows: list[dict]) -> str:
                       "older detector)" if r["stale"] else ""))
         out.append(f"                 {r['suspicious']:,} suspicious: high or medium findings ({r['high']:,} with high)")
         out.append(f"                 {r['low_only']:,} with low-severity findings only")
+        if r["dismissed_only"]:
+            out.append(f"                 {r['dismissed_only']:,} with no open finding: all were dismissed for those "
+                       "exact bytes, or allowlisted")
         if r["allowlisted_only"]:
             out.append(f"                 {r['allowlisted_only']:,} whose findings are all hidden by your allowlist")
         out.append(f"                 {r['no_findings']:,} with no findings recorded")
@@ -1132,12 +1206,19 @@ def render_status(rows: list[dict]) -> str:
         out.append(f"  Folders      {f['listed']:,} listed"
                    + (f"; {f['failed']:,} could not be listed and {f['links']:,} became links: files below them are "
                       "unverified, not deleted" if f["failed"] or f["links"] else ""))
+        if r["dismissed_findings"]:
+            out.append(f"  Dismissed    {_n(r['dismissed_findings'], 'finding')} in {_n(r['dismissed_files'], 'file')}, "
+                       "each for one file's exact bytes and detector; evidence kept: "
+                       f"agentdetox library review {r['id']} --state dismissed")
         if r["allowlisted_findings"]:
             out.append(f"  Allowlist    {_n(r['allowlisted_findings'], 'finding')} in {_n(r['allowlisted_files'], 'file')} "
                        "hidden by ids you allowed (`agentdetox allow --list`)")
         out.append(f"  Review: agentdetox library review {r['id']}")
     out.append("\"No findings recorded\" means the deterministic rules matched nothing in the bytes read. It is not a "
                "verdict that a file is clean or true: paraphrased instructions and plausible false facts pass.")
+    if any(r["dismissed_findings"] for r in rows):
+        out.append("A dismissed finding was set aside by you for one version of one file. It is not a verdict either, "
+                   "and the same text is still flagged in other files and in every write check.")
     return "\n".join(out)
 
 
@@ -1154,34 +1235,53 @@ def page(target: Path | str, state: str = "suspicious", page_number: int = 1, pa
         args: dict = {"root": root["id"], "detector": detector_id(), "run": latest["id"] if latest else None,
                       "limit": page_size, "offset": (page_number - 1) * page_size}
         columns = "f.id, f.rel, f.state, f.reason, f.sha256, f.size, f.detector, f.verified_run, f.truncated"
-        if state in ("suspicious", "low"):
-            where = _SUSPICIOUS if state == "suspicious" else f"NOT {_SUSPICIOUS} AND per.l"
-            source = f"WITH {_PER_FILE} SELECT {{}} FROM per JOIN files f ON f.id=per.id WHERE {where}"
+        if state in ("suspicious", "low", "dismissed"):
+            where = {"suspicious": _SUSPICIOUS, "low": f"NOT {_SUSPICIOUS} AND per.l", "dismissed": "per.dismissed>0"}[state]
+            source = f"WITH {_PER_FILE} SELECT {columns} FROM per JOIN files f ON f.id=per.id WHERE {where}"
             order = " ORDER BY per.h DESC, per.m DESC, f.id"
+            # What the list leaves out is counted in the pass that counts the list.
+            hidden = db.execute(f"WITH {_PER_FILE} SELECT coalesce(sum({where}), 0) AS total, {_HIDDEN_TOTALS} FROM per",
+                                args).fetchone()
+            total = hidden["total"]
         else:
             where = {"stale": "f.state='inspected' AND (f.detector IS NOT :detector OR f.verified_run IS NOT :run)",
                      "queued": "f.state='new'", "inspected": "f.state='inspected'"}.get(state, f"f.state='{state}'")
-            source = f"SELECT {{}} FROM files f WHERE f.root_id=:root AND {where}"
+            source = f"SELECT {columns} FROM files f WHERE f.root_id=:root AND {where}"
             order = " ORDER BY f.id"
-        total = db.execute(source.format("count(*)"), args).fetchone()[0]
-        rows = [dict(row) for row in db.execute(source.format(columns) + order + " LIMIT :limit OFFSET :offset", args)]
+            total = db.execute(f"SELECT count(*) FROM files f WHERE f.root_id=:root AND {where}", args).fetchone()[0]
+            hidden = db.execute(f"WITH {_PER_FILE} SELECT {_HIDDEN_TOTALS} FROM per", args).fetchone()
+        rows = [dict(row) for row in db.execute(source + order + " LIMIT :limit OFFSET :offset", args)]
         for row in rows:
             row["stale"] = row["state"] == "inspected" and (row["detector"] != args["detector"]
                                                             or row["verified_run"] != args["run"])
             top = db.execute("SELECT n.severity, n.message, n.lines, n.flag_id FROM findings n LEFT JOIN temp.allowed a "
-                             "ON a.id=n.flag_id WHERE n.file_id=? AND a.id IS NULL ORDER BY CASE n.severity "
+                             f"ON a.id=n.flag_id LEFT JOIN dismissals d ON {_DISMISSED} WHERE n.file_id=? AND a.id IS NULL "
+                             "AND d.flag_id IS NULL ORDER BY CASE n.severity "
                              "WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, n.flag_id LIMIT 1", (row["id"],)).fetchone()
             row["finding"] = dict(top) if top else None
+            row["dismissed"] = db.execute(f"SELECT count(*) FROM findings n JOIN dismissals d ON {_DISMISSED} "
+                                          "WHERE n.file_id=?", (row["id"],)).fetchone()[0]
         return {"library": f"L{root['id']}", "path": root["path"], "state": state, "page": page_number,
-                "page_size": page_size, "pages": (total + page_size - 1) // page_size, "total": total, "rows": rows}
+                "page_size": page_size, "pages": (total + page_size - 1) // page_size, "total": total,
+                "dismissed_findings": hidden["dismissed"], "dismissed_files": hidden["dismissed_files"],
+                "allowlisted_findings": hidden["hidden"], "allowlisted_files": hidden["hidden_files"], "rows": rows}
 
 
 def render_page(data: dict) -> str:
-    lines = [f"Library {data['library']} · {short_path(data['path'])}: {_n(data['total'], 'file')} {data['state']}."]
+    label = "with dismissed findings" if data["state"] == "dismissed" else data["state"]
+    lines = [f"Library {data['library']} · {short_path(data['path'])}: {_n(data['total'], 'file')} {label}."]
+    # A list of open findings that says nothing of the hidden ones would read as "nothing found".
+    apart = []
+    if data["state"] in ("suspicious", "low") and data["dismissed_findings"]:
+        apart.append(f"{_n(data['dismissed_findings'], 'finding')} in {_n(data['dismissed_files'], 'file')} dismissed "
+                     "for their exact bytes (--state dismissed)")
+    if data["state"] in ("suspicious", "low") and data["allowlisted_findings"]:
+        apart.append(f"{_n(data['allowlisted_findings'], 'finding')} in {_n(data['allowlisted_files'], 'file')} "
+                     "hidden by ids you allowed")
     if not data["total"]:
         lines.append("Nothing in this state. Other states: --state " + "|".join(s for s in STATES if s != data["state"]))
-        return "\n".join(lines)
-    lines.append(f"Page {data['page']} of {data['pages']}")
+    else:
+        lines.append(f"Page {data['page']} of {data['pages']}")
     for row in data["rows"]:
         what = row["state"] + (f" ({_REASONS.get(row['reason'], row['reason'])})" if row["reason"] else "")
         lines.append(f"M{row['id']}  {printable(row['rel'])}  [{what}{', STALE' if row['stale'] else ''}]")
@@ -1189,6 +1289,12 @@ def render_page(data: dict) -> str:
         if top:
             lines.append(f"    {top['severity'].upper()}: {printable(top['message'])}"
                          + (f" (line {top['lines']})" if top["lines"] else "") + f" [id {top['flag_id']}]")
+        if row["dismissed"]:
+            lines.append(f"    {_n(row['dismissed'], 'finding')} dismissed for the version recorded")
+    if apart:
+        lines.append("Not listed here: " + "; ".join(apart) + ".")
+    if not data["total"]:
+        return "\n".join(lines)
     if data["page"] < data["pages"]:
         lines.append(f"Next page: repeat with --page {data['page'] + 1}.")
     lines.append("Open one file: agentdetox library review M<ID>.")
@@ -1230,10 +1336,15 @@ def detail(file_ref: str) -> dict:
         latest = _latest_run(db, row["root_id"])
         findings = [dict(f) for f in db.execute(
             "SELECT n.flag_id, n.rule, n.severity, n.message, n.evidence, n.lines, n.sha256, n.detector, "
-            "a.id IS NOT NULL AS allowed FROM findings n LEFT JOIN temp.allowed a ON a.id=n.flag_id WHERE n.file_id=? "
+            "a.id IS NOT NULL AS allowed, d.flag_id IS NOT NULL AS dismissed, d.created AS dismissed_at, "
+            "d.note AS dismissed_note FROM findings n LEFT JOIN temp.allowed a ON a.id=n.flag_id "
+            f"LEFT JOIN dismissals d ON {_DISMISSED} WHERE n.file_id=? "
             "ORDER BY CASE n.severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, n.flag_id", (row["id"],))]
     stale = row["state"] == "inspected" and (row["detector"] != detector_id()
                                              or row["verified_run"] != (latest["id"] if latest else None))
+    on_disk = _on_disk(row) if row["sha256"] else None
+    # Offered only while a dismissal would be accepted: for a current conclusion about the bytes on disk.
+    token = _review_hash(row) if row["state"] == "inspected" and not stale and on_disk == "unchanged" else None
     return {"id": f"M{row['id']}", "library": f"L{row['root_id']}", "path": str(Path(row["root_path"], *row["rel"].split("/"))),
             "root": row["root_path"], "state": row["state"], "reason": row["reason"], "sha256": row["sha256"],
             "size": row["size"], "detector": row["detector"], "current_detector": detector_id(), "stale": stale,
@@ -1241,7 +1352,7 @@ def detail(file_ref: str) -> dict:
             "inspected_by": ("cleanup" if row["cleanup_run"] is not None else "scan") if row["state"] == "inspected" else None,
             "cleanup_run": row["cleanup_run"],
             "latest_run": latest["id"] if latest else None, "truncated": row["truncated"],
-            "on_disk": _on_disk(row) if row["sha256"] else None, "findings": findings}
+            "on_disk": on_disk, "review_hash": token, "findings": findings}
 
 
 def render_detail(d: dict) -> str:
@@ -1266,24 +1377,198 @@ def render_detail(d: dict) -> str:
                      f"agentdetox library scan {d['library']}")
     elif d["on_disk"] not in (None, "unchanged"):
         lines.append(f"The file on disk now: {d['on_disk']}.")
-    shown = [f for f in d["findings"] if not f["allowed"]]
-    for f in shown:
-        lines.append(f"{f['severity'].upper():<6} {f['rule']}: {printable(f['message'])}"
-                     + (f" · line {f['lines']}" if f["lines"] else "") + f" [id {f['flag_id']}]")
+    shown = [f for f in d["findings"] if not f["allowed"] and not f["dismissed"]]
+    dismissed = [f for f in d["findings"] if f["dismissed"]]
+    for f in shown + dismissed:
+        lines.append(("DISMISSED " if f["dismissed"] else "") + f"{f['severity'].upper():<6} {f['rule']}: "
+                     + printable(f["message"]) + (f" · line {f['lines']}" if f["lines"] else "") + f" [id {f['flag_id']}]")
         if f["evidence"]:
             lines.append(f"       > {printable(f['evidence'][:160])}")
-    hidden = len(d["findings"]) - len(shown)
-    if hidden:
-        lines.append(f"{_n(hidden, 'finding')} hidden by ids you allowed: "
-                     + " ".join(f["flag_id"] for f in d["findings"] if f["allowed"]))
+        if f["dismissed"]:
+            lines.append(f"       set aside by you on {f['dismissed_at'].replace('T', ' ')}, for this version of this "
+                         "file only" + (f": {printable(f['dismissed_note'])}" if f["dismissed_note"]
+                                        else "; no reason was noted"))
+    allowed = [f["flag_id"] for f in d["findings"] if f["allowed"]]
+    if allowed:
+        lines.append(f"{_n(len(allowed), 'finding')} hidden by ids you allowed: " + " ".join(allowed))
     if d["truncated"]:
         lines.append(f"{_n(d['truncated'], 'more finding')} in this file were not stored.")
     if d["state"] == "inspected" and not d["findings"]:
         lines.append("No findings recorded for these bytes. That is not a verdict that the file is clean or true.")
+    elif d["state"] == "inspected" and not shown and not d["truncated"]:
+        lines.append("No open finding is left for these bytes: every stored one is dismissed or allowlisted, as listed "
+                     "above. That is not a verdict that the file is clean or true.")
     if d["state"] == "inspected" and d["findings"]:
         lines += [f"List its lines and choose what to remove: agentdetox clean {d['id']}",
-                  "A rule names its first match in a file; cleaning it can reveal a later one.",
-                  "False positive everywhere: agentdetox allow <id> (a lasting exception for that text in every check)."]
+                  "A rule names its first match in a file; cleaning it can reveal a later one."]
+        if shown and d["review_hash"]:
+            lines += [f"False positive in this file only: agentdetox library dismiss {d['id']} <id> --expected-hash "
+                      f"{d['review_hash']}",
+                      "  (that finding, for these exact bytes and this detector; the same text stays flagged everywhere else)"]
+        lines.append("False positive everywhere: agentdetox allow <id> (a lasting exception for that text in every check).")
+    if dismissed:
+        lines.append(f"Flag a dismissed finding again: agentdetox library reopen {d['id']} <id>")
+    return "\n".join(lines)
+
+
+# Triage --------------------------------------------------------------------------------
+
+def _review_hash(row) -> str:
+    """What a review of one file was a review of: this file of this library folder, these
+    bytes, this detector. A dismissal has to quote it, so a decision made looking at one
+    version, or at another file with the same content, is never recorded for something else.
+    File ids start again in a new inventory, so the folder and the path are part of it."""
+    parts = ("agentdetox-library-review", row["root_path"], row["dev"], row["ino"], f"M{row['id']}", row["rel"],
+             row["sha256"], row["detector"])
+    return hashlib.sha256("\0".join(parts).encode("utf-8", "surrogatepass")).hexdigest()
+
+
+def _reviewed(db: sqlite3.Connection | None, file_ref: str, expected_hash: str):
+    """The file row, refused unless its conclusion is current and is the one that was
+    reviewed: inspected, by this detector, verified by the latest run of its library."""
+    row = _file_row(db, file_ref)
+    assert db is not None
+    label = file_ref.upper()
+    again = f"scan with `agentdetox library scan L{row['root_id']}`, then review {label} again"
+    if row["state"] != "inspected":
+        raise StoreError(f"{label} is {row['state']}" + (f" ({_REASONS.get(row['reason'], row['reason'])})" if row["reason"] else "")
+                         + f", not an inspected version, so nothing in it can be dismissed; {again}")
+    if row["detector"] != detector_id():
+        raise StoreError(f"{label} was inspected by a different detector version, so its findings are stale and "
+                         f"cannot be dismissed; {again}")
+    latest = _latest_run(db, row["root_id"])
+    if row["verified_run"] != (latest["id"] if latest else None):
+        raise StoreError(f"{label} has not been verified by the latest run of its library, so its findings are stale "
+                         f"and cannot be dismissed; {again}")
+    if expected_hash != _review_hash(row):
+        raise StoreError(f"{label} is not the version that was reviewed: --expected-hash is not the review hash of this "
+                         "file with the bytes and detector now recorded for it. Nothing was dismissed; review it again with "
+                         f"`agentdetox library review {label}`")
+    return row
+
+
+def _require_on_disk(row, label: str) -> None:
+    """Refuse unless the file, read now through its library root within the scan's limits,
+    still is the recorded version."""
+    path = Path(row["root_path"], *_parts(row["rel"]))
+    again = f"scan with `agentdetox library scan L{row['root_id']}`, then review {label} again"
+    root = _Root({"id": row["root_id"], "path": row["root_path"], "dev": row["dev"], "ino": row["ino"]}).open()
+    try:
+        state, reason, data = _capture(root, _parts(row["rel"]))
+        root.verify()
+    finally:
+        root.close()
+    if data is None:
+        raise StoreError(f"{_shown(path)} cannot be read as {label} was inspected ({_REASONS.get(reason or '', reason or state)}), "
+                         f"so nothing in it was dismissed; {again}")
+    if hashlib.sha256(data).hexdigest() != row["sha256"]:
+        raise StoreError(f"{_shown(path)} changed since {label} was inspected, so its findings no longer describe it and "
+                         f"nothing was dismissed; {again}")
+
+
+def _flag_ids(flags: list[str], label: str) -> list[str]:
+    wanted = list(dict.fromkeys(flags))
+    if not wanted or len(wanted) > MAX_FINDINGS:
+        raise ValueError(f"Name between 1 and {MAX_FINDINGS} finding ids, as `agentdetox library review {label}` shows them")
+    return wanted
+
+
+def _triaged(db: sqlite3.Connection, row, action: str, findings: list[dict], note: str) -> dict:
+    stored = db.execute("SELECT count(*) FROM findings WHERE file_id=?", (row["id"],)).fetchone()[0]
+    dismissed = db.execute(f"SELECT count(*) FROM findings n JOIN dismissals d ON {_DISMISSED} WHERE n.file_id=?",
+                           (row["id"],)).fetchone()[0]
+    return {"action": action, "file": f"M{row['id']}", "library": f"L{row['root_id']}",
+            "path": str(Path(row["root_path"], *row["rel"].split("/"))), "sha256": row["sha256"],
+            "detector": row["detector"], "findings": findings, "note": note, "stored": stored, "dismissed": dismissed,
+            "truncated": row["truncated"]}
+
+
+def dismiss(file_ref: str, flags: list[str], *, expected_hash: str, note: str = "") -> dict:
+    """Set stored findings of one file aside as false positives, for the exact bytes and
+    detector that were reviewed. The finding rows stay; the file, the allowlist and the hook
+    store are not touched, so the same text is still flagged in every other file and check.
+    Refused unless the conclusion is current, is the one `expected_hash` names, and the
+    file on disk still holds those bytes. All of it is checked first without any lock, so
+    that a file that is slow or impossible to read holds nothing up, and again inside the
+    transaction that records the decision: a scan or cleanup finishing meanwhile wins, and
+    so does an edit to the file."""
+    label = file_ref.upper()
+    note = " ".join(note.split())
+    if len(note) > NOTE_CHARS:
+        raise ValueError(f"Keep the note within {NOTE_CHARS} characters")
+    wanted = _flag_ids(flags, label)
+    with connect() as reader:
+        row = _reviewed(reader, file_ref, expected_hash)
+    _require_on_disk(row, label)
+    with connect(write=True) as db:
+        assert db is not None
+        with _tx(db):
+            row = _reviewed(db, file_ref, expected_hash)
+            _require_on_disk(row, label)
+            marks = ", ".join("?" * len(wanted))
+            found = {f["flag_id"]: dict(f) for f in db.execute(
+                f"SELECT flag_id, rule, severity, message, lines FROM findings WHERE file_id=? AND sha256=? "
+                f"AND detector=? AND flag_id IN ({marks})", (row["id"], row["sha256"], row["detector"], *wanted))}
+            unknown = [flag for flag in wanted if flag not in found]
+            if unknown:
+                raise ValueError(f"{label} has no stored finding {' '.join(printable(flag)[:40] for flag in unknown)} for "
+                                 f"this version, so nothing was dismissed; `agentdetox library review {label}` lists the ids")
+            db.executemany(
+                "INSERT INTO dismissals(file_id, flag_id, sha256, detector, created, note) VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(file_id, flag_id) DO UPDATE SET sha256=excluded.sha256, detector=excluded.detector, "
+                "created=excluded.created, note=excluded.note",
+                [(row["id"], flag, row["sha256"], row["detector"], _now(), note) for flag in wanted])
+            return _triaged(db, row, "dismissed", [found[flag] for flag in wanted], note)
+
+
+def reopen(file_ref: str, flags: list[str]) -> dict:
+    """Undo dismissals: the findings are listed and counted again. It only removes a
+    decision, so it needs no version check and works on a file that can no longer be read."""
+    label = file_ref.upper()
+    wanted = _flag_ids(flags, label)
+    with connect() as reader:
+        _file_row(reader, file_ref)
+    with connect(write=True) as db:
+        assert db is not None
+        with _tx(db):
+            row = _file_row(db, file_ref)
+            marks = ", ".join("?" * len(wanted))
+            found = {f["flag_id"]: dict(f) for f in db.execute(
+                f"SELECT d.flag_id, n.rule, n.severity, n.message, n.lines FROM dismissals d LEFT JOIN findings n "
+                f"ON {_DISMISSED} WHERE d.file_id=? AND d.flag_id IN ({marks})", (row["id"], *wanted))}
+            unknown = [flag for flag in wanted if flag not in found]
+            if unknown:
+                raise ValueError(f"{label} has no dismissed finding {' '.join(printable(flag)[:40] for flag in unknown)}, so "
+                                 f"nothing was reopened; `agentdetox library review {label}` lists what is dismissed")
+            db.execute(f"DELETE FROM dismissals WHERE file_id=? AND flag_id IN ({marks})", (row["id"], *wanted))
+            return _triaged(db, row, "reopened", [found[flag] for flag in wanted], "")
+
+
+def render_triage(result: dict) -> str:
+    name = result["file"]
+    ids = " ".join(f["flag_id"] for f in result["findings"])
+    dismissed = result["action"] == "dismissed"
+    lines = [f"{'Dismissed' if dismissed else 'Reopened'} in {name} · {short_path(result['path'])}"
+             + (f", for the bytes with sha256 {result['sha256']} as judged by detector {result['detector']} only:"
+                if dismissed else ":")]
+    for f in result["findings"]:
+        what = (f"{f['severity'].upper()} {f['rule']}: {printable(f['message'])}" + (f" · line {f['lines']}" if f["lines"] else "")
+                if f["rule"] else "a finding of an earlier version")
+        lines.append(f"  {what} [id {f['flag_id']}]")
+    if not dismissed:
+        lines.append(f"Listed and counted again: agentdetox library review {name}")
+        return "\n".join(lines)
+    if result["note"]:
+        lines.append(f"Reason noted: {printable(result['note'])}")
+    lines += [f"{result['dismissed']:,} of {_n(result['stored'], 'stored finding')} of this version are now dismissed. The file is "
+              f"unchanged and the evidence stays in `agentdetox library review {name}`.",
+              "No id was allowed: the same text is still flagged in every other file and in every write check.",
+              "This ends when the file's bytes or the detector change: the finding is then shown again. A rule reports "
+              "only its first match in a file, so a later match of the same rule in this file is not listed separately."]
+    if result["truncated"]:
+        lines.append(f"{_n(result['truncated'], 'more finding')} in this file were not stored and cannot be dismissed, "
+                     "so the file stays suspicious.")
+    lines.append(f"Undo: agentdetox library reopen {name} {ids}")
     return "\n".join(lines)
 
 

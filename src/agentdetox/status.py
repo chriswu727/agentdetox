@@ -175,6 +175,7 @@ def render(data: dict) -> str:
         row("Library", f"{lib['candidates']:,} candidate file(s) in {lib['libraries']} folder(s): "
                        f"{lib['suspicious']:,} suspicious, {lib['unverified']:,} queued, not inspected or failed, "
                        f"{lib['stale']:,} stale"
+                       + (f", {lib['dismissed']:,} finding(s) dismissed for exact versions" if lib.get("dismissed") else "")
                        + ("; a scan is running" if lib["running"] else
                           "; an unfinished scan can be continued" if lib["unfinished"] else ""),
             "`agentdetox library status`")

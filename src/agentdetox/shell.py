@@ -40,8 +40,9 @@ _WRAPPER_VALUES = {
     "nice": {"-n", "--adjustment"},
     "timeout": {"-s", "-k", "--signal", "--kill-after"},
     # GNU's --replace, --eof and --max-lines take a value only when attached with `=`.
-    "xargs": {"-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--max-args",
-              "--max-procs", "--max-chars", "--process-slot-var"},
+    # -J, -R and -S are BSD's: without them `xargs -J % cmd %` would read `%` as the command.
+    "xargs": {"-a", "-d", "-E", "-I", "-J", "-L", "-n", "-P", "-R", "-s", "-S", "--arg-file", "--delimiter",
+              "--max-args", "--max-procs", "--max-chars", "--process-slot-var"},
     "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
     "time": {"-f", "-o", "--format", "--output"},
     "exec": {"-a"},
@@ -276,26 +277,78 @@ def _agentdetox_args(words: list[str]) -> list[str] | None:
     return None
 
 
-def changes_agentdetox(tokens: list[str], depth: int = 0) -> bool:
+def changes_agentdetox(tokens: list[str], depth: int = 0, replaced: Sequence[str] = ()) -> bool:
     """An agentdetox call that changes what it trusts: allowing an id, changing a
-    setting, (un)installing, snapshot or restore, or stopping or discarding a library
-    inspection. Reading commands, and `install` without --apply, which only shows the
-    change, stay free."""
+    setting, (un)installing, snapshot or restore, stopping or discarding a library
+    inspection, or dismissing or reopening one of its findings. Reading commands, and
+    `install` without --apply, which only shows the change, stay free. So does a call
+    with arguments only known at run time, but only if what is written out already pins
+    a command that can only read. `replaced` holds the strings an enclosing xargs
+    substitutes in the text being read."""
     for words, _ in _segments(tokens):
         body = _unwrap(words)
         if not body:
             continue
+        own = _xargs_replaced(words[:len(words) - len(body)])
         inner = _inner(body)
         if inner is not None:
-            if depth < _MAX_DEPTH and changes_agentdetox(split(inner), depth + 1):
+            # A script xargs appends to receives the arguments as "$@", which is unknown by itself.
+            if depth < _MAX_DEPTH and changes_agentdetox(split(inner), depth + 1, [*replaced, *(own or ())]):
                 return True
             continue
         args = _agentdetox_args(body)
-        if args is not None and any(compat.program(w) == "xargs" for w in words[:len(words) - len(body)]):
-            args = args + ["<from xargs>"]  # xargs supplies the rest of the arguments at run time
-        if args is not None and _changes_trust(args):
+        if args is None:
+            continue
+        unknown = [bool(_EXPANSION.search(a)) or any(r in a for r in (*replaced, *(own or ()))) for a in args]
+        appends = own == []
+        if _may_change_trust(args, unknown) if appends or any(unknown) else _changes_trust(args):
             return True
     return False
+
+
+def _xargs_replaced(wrappers: list[str]) -> list[str] | None:
+    """How an xargs among `wrappers` hands what it reads to the command: None when there is
+    none, an empty list when it appends the arguments, else the strings it substitutes
+    wherever they occur in the command (`-I {}`, `--replace`, GNU `-i`, BSD `-J %`)."""
+    found: list[str] | None = None
+    for start, wrapper in enumerate(wrappers):
+        if compat.program(wrapper) != "xargs":
+            continue
+        found = found or []
+        i = start + 1
+        while i < len(wrappers) and wrappers[i].startswith("-") and wrappers[i] not in ("-", "--"):
+            word = wrappers[i]
+            options, used = _options(wrappers, i, _WRAPPER_VALUES["xargs"])
+            for option, given in options:
+                if option in ("-I", "-J"):
+                    found.append(given or "")
+                elif len(option) > 2 and "--replace".startswith(option):
+                    found.append("{}" if given is None else given)
+                elif option == "-i":
+                    found.append(word[word.index("i") + 1:] or "{}")
+            i += used
+    return found
+
+
+# Parameter and command substitution, file name patterns and braces: what the word will be,
+# and how many words, is decided when the shell runs it. Quotes are gone by now, so a quoted
+# `$` or `*` counts too: an extra question at worst.
+_EXPANSION = re.compile(r"[$`*?\[{]")
+# The agentdetox commands that only read, whatever arguments follow them. Anything else,
+# a command added later included, asks when its arguments are not all written out.
+_READ_ONLY = (("status",), ("events",), ("doctor",), ("log",), ("blame",), ("export",), ("scan",), ("trace",),
+              ("library", "review"), ("library", "status"), ("agent", "scan"), ("agent", "verify"))
+
+
+def _may_change_trust(args: list[str], unknown: list[bool]) -> bool:
+    """Whether a call could change what AgentDetox trusts once the arguments marked unknown
+    (and any that xargs appends) are filled in: they may turn out to be a subcommand, an
+    action or a flag such as --apply. Only the words written out before the first of them
+    are certain, and only a read-only command there leaves nothing for the rest to change."""
+    certain = args[:unknown.index(True)] if any(unknown) else args
+    start = tuple(a for a in certain if not a.startswith("-"))
+    written = [a for a, missing in zip(args, unknown) if not missing]
+    return _changes_trust(written) or not any(start[:len(command)] == command for command in _READ_ONLY)
 
 
 def _changes_trust(args: list[str]) -> bool:
@@ -309,7 +362,7 @@ def _changes_trust(args: list[str]) -> bool:
                 or (sub == "allow" and any(a not in ("--list", "-h", "--help") for a in rest))
                 or (sub == "config" and len(words) >= 3)
                 or (sub == "agent" and words[1:2] in (["snapshot"], ["restore"]))
-                or (sub == "library" and (words[1:2] == ["cancel"] or any(
+                or (sub == "library" and (words[1:2] in (["cancel"], ["dismiss"], ["reopen"]) or any(
                     a.startswith('--') and '--restart'.startswith(a) for a in rest))))
 
 

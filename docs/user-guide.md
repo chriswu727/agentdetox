@@ -218,8 +218,16 @@ instead of asking. An `AGENTDETOX_<KEY>` environment variable overrides the file
 
 The settings, the allowlist and the snapshots are guarded like the agent's own config: an agent
 writing under `~/.agentdetox`, deleting it, or running `agentdetox allow`, `config <key> <value>`,
-`install`, `uninstall`, `agent snapshot`, review mutations, recovery, or stopping or restarting a
-library inspection needs your approval, or an injected instruction could switch a check off or allow itself.
+`install`, `uninstall`, `agent snapshot`, review mutations, recovery, stopping or restarting a
+library inspection, or dismissing or reopening a library finding needs your approval, or an
+injected instruction could switch a check off or allow itself. The same holds when part of such
+a command is only filled in when it runs, by `xargs`, a variable, a command substitution, a
+file name pattern or braces: the call needs approval unless what is written out is already a
+command that can only read (`status`, `events`, `doctor`, `log`, `blame`, `export`, `scan`,
+`trace`, `library review`, `library status`, `agent scan`, `agent verify`). So
+`agentdetox library review "$ID"` is free and `agentdetox review --project "$PWD"` asks, because
+the missing part could as well be `accept C1`. The check recognizes `agentdetox` by name,
+through wrappers, `python -m` and `bash -c`; it does not see a program name built at run time.
 
 Hooks fail open: if AgentDetox itself errors, the agent's action proceeds, and an unresolved failure
 remains visible in `doctor` and `status`. After investigating, acknowledge its event id with
@@ -241,8 +249,10 @@ agentdetox library scan ~/notes/memory        # list the folder; inspect what is
 agentdetox library scan L1 --background       # the same in a detached worker; returns at once
 agentdetox library status                     # coverage and progress of every library
 agentdetox library review L1                  # files with high or medium findings
-agentdetox library review L1 --state failed   # or low, stale, queued, uninspected, missing, inspected
-agentdetox library review M42                 # one file: version, findings and their line numbers
+agentdetox library review L1 --state failed   # or low, dismissed, stale, queued, uninspected, missing, inspected
+agentdetox library review M42                 # one file: version, findings, line numbers, review hash
+agentdetox library dismiss M42 <id> --expected-hash <review-hash> --note "why"   # false positive in this file
+agentdetox library reopen M42 <id>            # undo that: the finding is listed and counted again
 agentdetox clean M42                          # list its lines; then --lines, --expected-hash, --apply
 agentdetox library cancel L1                  # stop after the file in hand; scan again to continue
 agentdetox library scan L1 --full             # inspect every file again, changed or not
@@ -279,9 +289,10 @@ establishes what was read, not that it can be trusted. Findings whose id you all
 `agentdetox allow <id>` are hidden from these lists; `status` counts how many findings in how many
 files your allowlist hides, and a file whose findings are all hidden is counted on its own line,
 not among the files without findings. The allowlist is applied when a list is shown, so allowing
-or re-flagging an id needs no new scan. At most 50 findings are stored per file, the most severe
-first; the number left out is shown. A rule reports its first match in a file, so cleaning one
-flagged line can reveal another at the next look.
+or re-flagging an id needs no new scan. Findings you dismissed for one file (below) are counted
+the same way: apart, never as "no findings". At most 50 findings are stored per file, the most severe
+first; the number left out is shown, and a file with findings left out stays suspicious. A rule
+reports its first match in a file, so cleaning one flagged line can reveal another at the next look.
 
 **Versions.** A conclusion belongs to the exact bytes read (their SHA-256) and to the detector
 that judged them: the release, the size limits, and the source text of the rules and of the
@@ -329,14 +340,71 @@ Applying needs a system where AgentDetox can hold the file's folder open (macOS,
 Windows the preview works and applying is refused with an explanation: remove the lines with an
 editor and scan again.
 
-An agent needs your approval to run `library cancel`, `library scan --restart` or
-`clean M42 … --apply`; scanning, status, review and cleanup previews are free.
+**Dismissing a false positive in one file.** `agentdetox allow <id>` stops a text being flagged
+everywhere: in every file, every write check and every later version. To set a finding aside in
+one inspected file only, dismiss it there:
+
+```bash
+agentdetox library review M42        # shows each finding's id, and the review hash of this version
+agentdetox library dismiss M42 0c6eacf0b4 --expected-hash <review-hash> --note "quoted in the install guide"
+agentdetox library reopen M42 0c6eacf0b4
+```
+
+A dismissal belongs to one finding in one file, at the exact bytes and detector that were
+reviewed. The review hash names all of it (the library folder, the file, the content hash and
+the detector), so the hash of another file with the same content, of the same file id in
+another inventory, or of an earlier version is refused. Several ids can be given at once;
+either all are dismissed or none.
+
+- **What it changes.** One row in the library inventory. The file is not touched, the finding
+  and its excerpt stay stored, nothing is added to the allowlist and the hook store is not
+  opened. The same text in another file, in another library and in anything an agent writes is
+  flagged as before.
+- **What you still see.** `library review L1` lists files with open findings, so a file whose
+  high and medium findings are all dismissed leaves that list; `--state dismissed` lists the
+  files that have dismissed findings, and `library review M42` shows each one marked
+  `DISMISSED`, with its excerpt, when it was set aside and the note. `library status` counts
+  dismissed findings and files, and counts a file whose findings are all dismissed or
+  allowlisted on its own line, never among the files with no findings recorded. A dismissal is
+  your decision about one version, not a verdict that the file is clean.
+- **When it is refused.** The conclusion must be current: the file inspected (not queued,
+  failed or missing), by the detector now installed, and verified by the latest run of its
+  library. The file is then read again, within the 1 MB limit and without following links, and
+  must still hold the inspected bytes; it is read once more at the moment the decision is
+  recorded, so an edit made in between refuses it too. A scan in progress that has not reached
+  the file, an unreadable or replaced file, a replaced library folder or an outdated review
+  hash all refuse, and nothing is recorded. Run or finish the scan and review again.
+- **When it ends.** As soon as the inventory records anything else for that file: other bytes
+  (even if the flagged line is still there, and even if the file later returns to the earlier
+  bytes), another detector, a cleanup, the file going missing or becoming a link, or
+  `scan --restart` of a replaced folder. The finding is then open again. Scanning the same
+  bytes again with the same detector, with or without `--full`, keeps the dismissal, as does a
+  scan in which the file could not be read. Because the detector includes the release,
+  **dismissals end at the first scan after you upgrade AgentDetox**; use `allow` for an
+  exception that should last.
+- **What it can hide.** Only the stored finding. A rule reports its first match in a file, so
+  while that match is dismissed a later match of the same rule in the same file is not listed
+  either. Findings left out by the 50-per-file limit cannot be dismissed, and such a file stays
+  suspicious.
+
+The inventory's format changed to hold dismissals. The first library command of this version,
+including `status` and `review`, upgrades an existing inventory in one transaction and keeps
+everything in it; no scan is needed to read it. If the upgrade cannot be written (a read-only
+store), the command says so and changes nothing. Conclusions recorded by an earlier build are
+shown stale until scanned, as after any detector change. An older AgentDetox refuses the
+upgraded inventory rather than misread it.
+
+An agent needs your approval to run `library cancel`, `library scan --restart`,
+`library dismiss`, `library reopen` or `clean M42 … --apply`; scanning, status, review and
+cleanup previews are free. A `library` command completed at run time (`… | xargs agentdetox
+library`, `agentdetox library $ACTION …`) needs approval too, except `library review` and
+`library status`, which stay free with arguments from `xargs` or a variable.
 
 Limits: files over 1 MB and folders nested deeper than 64 levels are not inspected; cleanup keeps
 its 10,000-line limit; contradiction checks, duplicate detection and source attribution do not
-run on libraries; there is no per-file dismissal (use `allow`, a lasting exception everywhere, or
-clean the lines). Scale has been exercised with synthetic folders only; see the
-[large-memory protocol](../bench/LARGE_MEMORY.md).
+run on libraries; a dismissal covers one stored finding, not a line range or a whole file, and
+no record is kept of a dismissal once it has ended. Scale has been exercised with synthetic
+folders only; see the [large-memory protocol](../bench/LARGE_MEMORY.md).
 
 ## What it does not catch
 

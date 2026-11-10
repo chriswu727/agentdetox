@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from agentdetox import adapters
+from agentdetox import adapters, shell
 from agentdetox.context import claude_memory_dir
 from agentdetox.engine import GUARDRAILS, OWN_STATE, PLANTED, SHELL_WRITE, SUSPICIOUS, Write, check_command, check_write
 from agentdetox.integrity import store_dir
@@ -53,6 +53,102 @@ def test_shell_commands(tmp_path, monkeypatch):
     assert [s.check for s in check_command(f"echo '{POISON}' >> {target}", project)] == [PLANTED]
     assert [s.check for s in check_command("agentdetox allow 0123456789", project)] == [OWN_STATE]
     assert check_command("pytest -q 2>&1 | tail -3", project) == []
+
+
+@pytest.mark.parametrize("command", [
+    # xargs appends what it reads: a subcommand, an action or a flag.
+    "printf 'allow 0123456789' | xargs agentdetox",
+    "printf 'dismiss M1 abc --expected-hash def' | xargs python -m agentdetox library",
+    "printf 'reopen M1 abc' | xargs python3 -I -m agentdetox.cli library",
+    "printf 'allow 0123456789' | xargs uvx agentdetox",
+    "printf 'accept C1' | xargs agentdetox review",
+    "printf -- --apply | xargs agentdetox restore C1",
+    "printf 'copied off' | xargs agentdetox config",
+    "printf snapshot | xargs agentdetox agent",
+    "printf -- --restart | xargs -n 1 agentdetox library scan L1 --full",
+    "printf 'reopen M1 abc' | sudo xargs -n 3 agentdetox library",
+    "printf 'cancel L1' | xargs -0 env X=1 nice agentdetox library",
+    "bash -lc \"printf 'cancel L1' | xargs agentdetox library\"",
+    # xargs substitutes it for a token, anywhere in a word, whatever the token is.
+    "printf dismiss | xargs -I{} agentdetox library {} M1 abc --expected-hash def",
+    "printf dismiss | xargs -I {} agentdetox library {} M1 abc --expected-hash def",
+    "printf reopen | xargs -0I@ agentdetox library @ M1 abc",
+    "printf cancel | xargs --replace agentdetox library {} L1",
+    "printf cancel | xargs --replace=@ agentdetox library @ L1",
+    "printf cancel | xargs --repl=@ agentdetox library @ L1",
+    "printf cancel | xargs -i agentdetox library {} L1",
+    "printf cancel | xargs -i@ agentdetox library @ L1",
+    "printf allow | xargs -J % agentdetox % 0123456789",
+    "printf ply | xargs -I@ agentdetox clean M1 --lines 2 --expected-hash def --ap@",
+    "printf cancel | xargs -I status agentdetox library status L1",
+    "printf dismiss | xargs -I{} python -m agentdetox library {} M1 abc --expected-hash def",
+    "printf allow | xargs -I{} agentdetox {} status",          # a reading word after the unknown one pins nothing
+    "agentdetox $SUBCOMMAND library review M1",
+    # ... or hands it to a shell it runs.
+    "printf 'dismiss M1 abc --expected-hash def' | xargs sh -c 'agentdetox library \"$@\"' _",
+    "printf 'dismiss M1 abc --expected-hash def' | xargs -I{} sh -c 'agentdetox library {}'",
+    "printf 'allow 0123456789' | xargs -I{} bash -lc \"agentdetox {}\"",
+    # The shell fills it in.
+    "A=dismiss; agentdetox library $A M1 abc --expected-hash def",
+    "agentdetox library ${ACTION} L1",
+    "agentdetox library $(cat action) L1",
+    "agentdetox `cat subcommand` 0123456789",
+    "sh -c 'agentdetox library \"$@\"' _ reopen M1 abc",
+    "agentdetox clean M1 --lines 2 --expected-hash def $FLAG",
+    "agentdetox library scan L1 $MODE",
+    "agentdetox library {dismiss,M1} abc --expected-hash def",
+    "touch dismiss && agentdetox library dis* M1 abc --expected-hash def",
+    "agentdetox [l]ibrary cancel L1",
+    "agentdetox librar? cancel L1",
+    "agentdetox review --project \"$PWD\"",          # the cost: it could as well read `accept C1`
+])
+def test_an_agentdetox_call_completed_at_run_time_needs_approval(tmp_path, command):
+    assert OWN_STATE in [s.check for s in check_command(command, tmp_path)]
+
+
+@pytest.mark.parametrize("command", [
+    "printf M1 | xargs agentdetox library review",
+    "printf 'M1\nM2' | xargs -n1 agentdetox library review --format json",
+    "printf M1 | xargs -I{} agentdetox library review {} --format json",
+    "printf L1 | xargs -J % agentdetox library status % --format json",
+    "printf L1 | xargs python -m agentdetox library status",
+    "printf L1 | xargs -I{} sh -c 'agentdetox library review {} --state dismissed'",
+    "ls memory | xargs agentdetox blame",
+    "ls memory | xargs -I{} agentdetox log memory/{}",
+    "printf M1 | xargs -I{} agentdetox library review M1",
+    "for m in M1 M2; do agentdetox library review $m; done",
+    "agentdetox library review \"$M\" --format json",
+    "agentdetox library status $(cat library-id)",
+    "agentdetox status --project \"$PWD\"",
+    "agentdetox agent scan --project $(pwd)",
+    "agentdetox blame \"$FILE\"",
+    "agentdetox blame memory/*.md",
+    "agentdetox scan docs/{faq,guide}.jsonl --format json",
+    "agentdetox trace kb.jsonl -q 'Who is the CEO?' -a 'Tim Cook'",
+    "ls | xargs",
+    "ls | xargs echo agentdetox allow",
+    "find . -name '*.py' | xargs -I{} uvx ruff check {}",
+    # Written out in full, nothing changed.
+    "agentdetox clean M1 --lines 3",
+    "agentdetox library scan /notes --full --background",
+    "agentdetox review C12",
+    "agentdetox restore C1",
+    "agentdetox install claude-code",
+])
+def test_reading_commands_stay_free_with_arguments_from_xargs_or_variables(tmp_path, command):
+    assert OWN_STATE not in [s.check for s in check_command(command, tmp_path)]
+
+
+@pytest.mark.parametrize("wrappers, replaced", [
+    ([], None), (["nice", "-n", "5"], None),
+    (["xargs"], []), (["sudo", "xargs", "-n", "1", "-0"], []), (["xargs", "-t", "env"], []),
+    (["xargs", "-I", "{}"], ["{}"]), (["xargs", "-I@"], ["@"]), (["xargs", "-0I", "{}"], ["{}"]),
+    (["xargs", "--replace"], ["{}"]), (["xargs", "--replace=@"], ["@"]), (["xargs", "--repl=@"], ["@"]),
+    (["xargs", "-i"], ["{}"]), (["xargs", "-ti@"], ["@"]), (["xargs", "-J", "%"], ["%"]),
+    (["xargs", "-n", "1", "-I", "{}", "sudo", "-u", "root"], ["{}"]),
+])
+def test_how_xargs_hands_over_its_arguments(wrappers, replaced):
+    assert shell._xargs_replaced(wrappers) == replaced
 
 
 @pytest.mark.parametrize('prefix', ['++', '+++', '++++ '])
