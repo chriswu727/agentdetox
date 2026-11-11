@@ -117,8 +117,8 @@ def program() -> str | None:
     return named if named else shutil.which("claude")
 
 
-def opinion(text: str, kind: str) -> Opinion:
-    """What the model makes of `text`, about to be stored in a file of `kind`."""
+def opinion(text: str, kind: str, timeout: float = TIMEOUT) -> Opinion:
+    """What the model makes of `text`, which is or is about to be in a file of `kind`."""
     client = program()
     if client is None:
         return Opinion(None, error="Claude Code was not found (the `claude` command)")
@@ -127,7 +127,7 @@ def opinion(text: str, kind: str) -> Opinion:
               f"<<<TEXT>>>\n{shown}\n<<<END>>>")
     folder = Path(tempfile.mkdtemp(prefix=_MARK))
     try:
-        code, out = _ask(client, prompt, folder)
+        code, out = _ask(client, prompt, folder, timeout)
     except (OSError, subprocess.SubprocessError) as error:
         return Opinion(None, error=f"{type(error).__name__}: {str(error)[:200]}")
     finally:
@@ -158,7 +158,7 @@ def _read(answer: str) -> Opinion:
     return Opinion(True)
 
 
-def _ask(client: str, prompt: str, folder: Path) -> tuple[int, str]:
+def _ask(client: str, prompt: str, folder: Path, timeout: float = TIMEOUT) -> tuple[int, str]:
     servers = folder / "no-servers.json"
     servers.write_text('{"mcpServers": {}}', encoding="utf-8")
     done = subprocess.run(
@@ -166,7 +166,7 @@ def _ask(client: str, prompt: str, folder: Path) -> tuple[int, str]:
          "--tools", "", "--strict-mcp-config", "--mcp-config", str(servers), "--disable-slash-commands",
          "--setting-sources", "project,local", "--no-session-persistence", "--output-format", "json",
          "--max-budget-usd", "0.05"],
-        input=prompt, cwd=folder, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=TIMEOUT,
+        input=prompt, cwd=folder, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
         env={name: value for name, value in os.environ.items() if not name.startswith("AGENTDETOX_")})
     return done.returncode, done.stdout
 

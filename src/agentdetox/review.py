@@ -387,6 +387,8 @@ def finding_lines(text: str, findings: list) -> dict[str, int]:
     lines = [" ".join(normalize(line).split()) for line in text.split("\n")]
     where: dict[str, int] = {}
     for finding in findings:
+        if finding.detector == "judge":
+            continue    # read as a whole: the model named no line
         wanted = next((" ".join(normalize(part).split()) for part in finding.anchor.split("\n") if part.strip()), "")
         if not wanted:
             continue

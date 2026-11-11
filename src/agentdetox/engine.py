@@ -11,6 +11,7 @@ import difflib
 import functools
 import hashlib
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -154,25 +155,57 @@ def check_write(write: Write, project: Path, run: set[str], transcript: str | No
 def _judged(cf: ContextFile, added: str) -> list[Signal]:
     """What a model makes of the text a write adds, when it would stop it. Asked last, so
     that it can only add to what the rules and the text's origin already say."""
-    finding = Finding(str(cf.path), str(cf.path), "judge", "medium", "a model read this text as one that would turn "
-                      "the agent against you", anchor=added)
-    if not allowlist.unsuppressed([finding]):
-        return []       # this very text was allowed before; the model is not asked again
-    before = judge.remembered(finding_flag(finding).id)
-    if before is not None:
-        said = judge.Opinion(True, before)      # flagged once, flagged still: trying again changes nothing
-    else:
-        said = judge.opinion(added, cf.kind)
-        if said.flag is None:
-            events.record("hook_error", stage="judge", error=said.error[:300])
-            return []
-        if not said.flag:
-            return []
-        judge.remember(finding_flag(finding).id, said.category)
+    found, _ = judged([(cf, added)], "medium")
+    if not found:
+        return []
     cut = f" Only its first {judge.LIMIT} characters were read." if len(added) > judge.LIMIT else ""
     return [Signal(JUDGE, f"AgentDetox: a model read the text this write adds to the agent's {cf.kind} file "
-                          f"{short_path(str(cf.path))} and flagged it: {said.about}.{cut} Content like this, once "
-                          "saved, is obeyed in every later session.", [finding_flag(finding)])]
+                          f"{short_path(str(cf.path))} and flagged it: {found[0].evidence}.{cut} Content like this, "
+                          "once saved, is obeyed in every later session.", [finding_flag(found[0])])]
+
+
+JUDGED_AT_ONCE = 8      # texts a session start hands to the model; the rest wait for the next
+
+
+def judged(texts: list[tuple[ContextFile, str]], severity: str, *, limit: int | None = None,
+           timeout: float = judge.TIMEOUT) -> tuple[list[Finding], set[str]]:
+    """Findings for the texts a model flags, and the paths of those it gave no opinion on:
+    a call that failed, or a text past `limit`. The model is asked about several at once.
+    A text allowed before is not sent; one flagged before is flagged still, unasked, since
+    asking again might get another answer and trying again must change nothing."""
+    order = {"instructions": 0, "skill": 1, "memory": 2}
+    waiting: list[tuple[ContextFile, str, Finding]] = []
+    found: list[Finding] = []
+    undecided: set[str] = set()
+    for cf, text in sorted(texts, key=lambda pair: order.get(pair[0].kind, 3)):
+        if not text.strip():
+            continue
+        finding = Finding(str(cf.path), str(cf.path), "judge", severity, "a model read this text as one that would "
+                          "turn the agent against you", anchor=text)
+        if not allowlist.unsuppressed([finding]):
+            continue
+        before = judge.remembered(finding_flag(finding).id)
+        if before is not None:
+            finding.evidence = judge.Opinion(True, before).about
+            found.append(finding)
+        elif limit is not None and len(waiting) >= limit:
+            undecided.add(str(cf.path))
+        else:
+            waiting.append((cf, text, finding))
+    if not waiting:
+        return found, undecided
+    with ThreadPoolExecutor(min(JUDGED_AT_ONCE, len(waiting))) as pool:
+        said = list(pool.map(lambda job: judge.opinion(job[1], job[0].kind, timeout), waiting))
+    # Recorded here, one at a time: the store is not written from several threads.
+    for (cf, _, finding), opinion in zip(waiting, said):
+        if opinion.flag is None:
+            events.record("hook_error", stage="judge", error=opinion.error[:300])
+            undecided.add(str(cf.path))
+        elif opinion.flag:
+            judge.remember(finding_flag(finding).id, opinion.category)
+            finding.evidence = opinion.about
+            found.append(finding)
+    return found, undecided
 
 
 def _inside(folder: Path, project: Path) -> list[ContextFile]:
