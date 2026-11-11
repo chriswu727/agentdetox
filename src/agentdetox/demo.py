@@ -83,17 +83,26 @@ def _demo(home: Path) -> None:
 
 
 
+# Variables that point a client, or AgentDetox's idea of the project, somewhere else. Left
+# set, the demo would read and judge the folders they name instead of its own.
+_MOVED = ("CLAUDE_CONFIG_DIR", "CLAUDE_PROJECT_DIR", "CLAUDE_CODE_PROJECT_DIR_NAME", "CODEX_HOME", "CURSOR_CONFIG_DIR",
+          "CURSOR_PROJECT_DIR", "XDG_CONFIG_HOME", "OPENCLAW_HOME", "OPENCLAW_PROFILE", "OPENCLAW_STATE_DIR",
+          "OPENCLAW_CONFIG_PATH", "OPENCLAW_WORKSPACE_DIR", "AGENTDETOX_SUSPICIOUS", "AGENTDETOX_COPIED",
+          "AGENTDETOX_CONTRADICTION", "AGENTDETOX_ALLOW_CONFIG_WRITES")
+
+
 @contextlib.contextmanager
 def _sandbox():
     """Point every path AgentDetox and Claude Code use at a temporary folder, and keep
     the model server out of it."""
-    keys = ("AGENTDETOX_HOME", "AGENTDETOX_USER_HOME", "AGENTDETOX_NLI", "CLAUDE_CONFIG_DIR")
+    keys = ("AGENTDETOX_HOME", "AGENTDETOX_USER_HOME", "AGENTDETOX_NLI", *_MOVED)
     saved = {k: os.environ.get(k) for k in keys}
     with tempfile.TemporaryDirectory(prefix="agentdetox-demo-") as tmp:
         root = Path(tmp)
         os.environ.update(AGENTDETOX_HOME=str(root / "store"), AGENTDETOX_USER_HOME=str(root / "home"),
                           AGENTDETOX_NLI="0")
-        os.environ.pop("CLAUDE_CONFIG_DIR", None)
+        for key in _MOVED:
+            os.environ.pop(key, None)
         try:
             yield root / "home"
         finally:

@@ -15,11 +15,13 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
+from . import budget, paths
 from .findings import printable
 
 KINDS = ("memory", "instructions", "skill", "config")
@@ -58,7 +60,7 @@ CLAUDE_CODE = AgentProfile(
     user=(
         ("instructions", ".claude/CLAUDE.md"),
         ("instructions", ".claude/rules/**/*.md"),
-        ("memory", ".claude/projects/*/memory/*.md"),
+        ("memory", ".claude/projects/*/memory/**/*.md"),
         ("memory", ".claude/agent-memory/**/*.md"),
         ("skill", ".claude/skills/**/SKILL.md"),
         ("instructions", ".claude/agents/*.md"),
@@ -86,9 +88,32 @@ CLAUDE_CODE = AgentProfile(
         ("config", ".claude/hooks/**/*"),
     ),
     ancestors=(("instructions", "CLAUDE.md"), ("instructions", "CLAUDE.local.md")),
-    written=(("instructions", "**/CLAUDE.md"), ("instructions", "**/CLAUDE.local.md")),
+    # A session started in a subfolder of a repository works under the `.claude` folders
+    # between it and the repository's root too. Not further up: a `.claude` in `/tmp` or in
+    # the folder that holds all of someone's repositories is not this project's.
+    layered=(
+        ("instructions", ".claude/CLAUDE.md"),
+        ("instructions", ".claude/rules/**/*.md"),
+        ("skill", ".claude/skills/**/SKILL.md"),
+        ("instructions", ".claude/agents/*.md"),
+        ("instructions", ".claude/commands/**/*.md"),
+        ("config", ".claude/settings.json"),
+        ("config", ".claude/settings.local.json"),
+    ),
+    written=(
+        ("instructions", "**/CLAUDE.md"),
+        ("instructions", "**/CLAUDE.local.md"),
+        ("instructions", "**/.claude/CLAUDE.md"),
+        ("instructions", "**/.claude/rules/**/*.md"),
+        ("skill", "**/.claude/skills/**/SKILL.md"),
+        ("instructions", "**/.claude/agents/*.md"),
+        ("instructions", "**/.claude/commands/**/*.md"),
+        ("config", "**/.claude/settings.json"),
+        ("config", "**/.claude/settings.local.json"),
+    ),
     limits=(
         "files a CLAUDE.md or AGENTS.md pulls in with @path imports are not followed",
+        "what an installed plugin brings (its skills, commands and hooks under plugins/cache) is not covered",
         "auto memory moved with the autoMemoryDirectory setting is not covered",
         "managed policy files outside the home folder are not covered",
     ),
@@ -171,6 +196,7 @@ CURSOR = AgentProfile(
     ),
     written=(
         ("instructions", "**/.cursor/rules/**/*.mdc"),
+        ("instructions", "**/.cursor/rules/**/*.md"),
         ("instructions", "**/AGENTS.md"),
         ("skill", "**/.cursor/skills/**/SKILL.md"),
         ("skill", "**/.agents/skills/**/SKILL.md"),
@@ -418,7 +444,7 @@ def _read_config(config: Path) -> tuple[object, str]:
             _parsed.clear()
         try:
             _parsed[text] = _agents_of(load_json5(text)), ""
-        except (ValueError, RecursionError) as error:
+        except (ValueError, RecursionError, ImportError) as error:
             _parsed[text] = None, f"{type(error).__name__}: {printable(str(error))[:120]}"
     return _parsed[text]
 
@@ -551,9 +577,12 @@ def _globs(profile: AgentProfile, home: Path, project: Path | None, writes: bool
             yield "project", project, kind, pattern
         here = Path(os.path.abspath(project))
         if profile.layered:
+            user = Path(os.path.abspath(home))
             for folder in _layers(here, cwd):
                 for kind, pattern in profile.layered:
-                    yield "project", folder, kind, pattern
+                    # The home folder's own `.claude` is the user's, listed above under that name.
+                    if folder != user or not pattern.startswith(".claude/"):
+                        yield "project", folder, kind, pattern
         for parent in here.parents:
             for kind, name in profile.ancestors:
                 yield "project", parent, kind, name
@@ -651,10 +680,12 @@ def discover_session(project: Path, agent: str) -> list[ContextFile]:
     home = home_dir()
     found: dict[Path, ContextFile] = {}
     for scope, root, kind, pattern in _globs(PROFILES[agent], home, project):
-        if pattern in ('.claude/projects/*/memory/*.md', 'projects/*/memory/*.md'):
-            root, pattern = claude_memory_dir(project, home), '*.md'
+        if pattern in ('.claude/projects/*/memory/**/*.md', 'projects/*/memory/**/*.md'):
+            root, pattern = claude_memory_dir(project, home), '**/*.md'
         for path in _matches(root, pattern):
-            if path.is_file() and not path.is_symlink() and _counts(pattern, path):
+            # A link counts with what it points to, as the client reads it: context kept in a
+            # dotfiles folder is context.
+            if path.is_file() and _counts(pattern, path):
                 found.setdefault(path, ContextFile(agent, kind, scope, path))
     return list(found.values())
 
@@ -771,6 +802,9 @@ def _describe_roots(coverage: ClientCoverage, home: Path, project: Path | None) 
     elif name == "cursor":
         add(home / ".cursor", "user", "default")
         add(home / ".agents", "user", "default")
+        for folder, other in ((home / ".claude" / "skills", "Claude Code"), (home / ".codex" / "skills", "Codex")):
+            if folder.is_dir():
+                add(folder, "user", f"skills shared with {other}")
         for folder, source in cursor_cli_configs(home):
             # XDG_CONFIG_HOME is where the config would be, not a statement that Cursor is used.
             if source == "CURSOR_CONFIG_DIR" or folder.is_dir():
@@ -815,19 +849,77 @@ def classify(path: Path, agents: list[str] | None = None, project: Path | None =
     matched as written and, failing that, as its real location, so a write through a
     symlink counts. The file is named under `root` as given, as `discover` names it, so
     its snapshot and history stay under one name."""
+    budget.check()
     home = home or home_dir()
     written = Path(os.path.abspath(path))
     real = Path(os.path.realpath(path))
+    entries: list[tuple[str, str, Path, str, str]] = []
+    bases: dict[Path, tuple[Path, list[Path]]] = {}    # per root: as given, and the spellings to try
     for candidate in dict.fromkeys((written, real)):
+        entries = []
         for name in agents or list(PROFILES):
             profile = PROFILES[name]
             for scope, root, kind, pattern in _globs(profile, home, project, writes=True, candidate=candidate):
-                given = Path(os.path.abspath(root))
-                for base in dict.fromkeys((given, Path(os.path.realpath(root)))):
+                if root not in bases:
+                    absolute = Path(os.path.abspath(root))
+                    bases[root] = absolute, list(dict.fromkeys((absolute, Path(os.path.realpath(root)))))
+                given, spellings = bases[root]
+                entries.append((profile.name, scope, given, kind, pattern))
+                for base in spellings:
                     rel = _relative(candidate, base)
                     if rel is not None and _glob_regex(pattern, CASELESS).fullmatch(rel) and _counts(pattern, candidate):
                         return ContextFile(profile.name, kind, scope, given / rel if rel else given)
+    return _classify_by_identity(real, entries)
+
+
+def _classify_by_identity(real: Path, entries: list[tuple[str, str, Path, str, str]]) -> ContextFile | None:
+    """The ContextFile `real` is when no spelling of it matched: reached under another name
+    for the same folders (another Unicode form of a folder's name, macOS's
+    `/System/Volumes/Data/…`), or the place a link among a pattern's fixed folders points
+    to (`~/.claude/CLAUDE.md` or `~/.claude/skills` kept in a dotfiles folder)."""
+    above = paths.ancestry(real)
+    if not above:
+        return None
+    known: dict[str, paths.Identity | None] = {}
+    links: dict[str, bool] = {}
+
+    def at(folder: str) -> paths.Identity | None:
+        if folder not in known:
+            known[folder] = paths.identity(folder)
+        return known[folder]
+
+    def linked(path: str) -> bool:
+        if path not in links:
+            links[path] = os.path.islink(path)
+        return links[path]
+
+    for agent, scope, given, kind, pattern in entries:
+        base = str(given)
+        key = at(base)
+        found = [above[key]] if key is not None and key in above else []
+        for prefix in _fixed_prefixes(pattern):
+            link = os.path.join(base, prefix)
+            if linked(link) and (key := at(link)) is not None and key in above:
+                found.append(f"{prefix}/{above[key]}".rstrip("/"))
+        for rel in found:
+            rel = rel if rel.isascii() else unicodedata.normalize("NFC", rel)
+            if _glob_regex(pattern, CASELESS).fullmatch(rel) and _counts(pattern, real):
+                return ContextFile(agent, kind, scope, given / rel if rel else given)
     return None
+
+
+@lru_cache(maxsize=None)
+def _fixed_prefixes(pattern: str) -> list[str]:
+    """The leading folders of a pattern that are spelled out, shortest first:
+    `.claude/skills/**/SKILL.md` gives `.claude` and `.claude/skills`; a pattern with no
+    wildcard gives the whole of it too."""
+    pieces = pattern.split("/")
+    fixed = []
+    for piece in pieces:
+        if any(c in piece for c in "*?["):
+            break
+        fixed.append(piece)
+    return ["/".join(fixed[:count]) for count in range(1, len(fixed) + 1)]
 
 
 def named_like_context(rel: str) -> bool:
@@ -842,7 +934,20 @@ def named_like_context(rel: str) -> bool:
             pieces = pattern.split("/")
             if not any(c in pieces[-1] for c in "*?[") and _ends_with(pieces, parts):
                 return True
-    return False
+    # A file name that is itself a pattern (`memory/*.md`) says nothing alone; with the
+    # client's own folder spelled out before it (`.claude/projects/x/memory/a.md`) it does.
+    return any(p.search("/".join(parts)) for p in _client_folder_patterns())
+
+
+@lru_cache(maxsize=None)
+def _client_folder_patterns() -> tuple[re.Pattern, ...]:
+    found: dict[str, re.Pattern] = {}
+    for profile in PROFILES.values():
+        for _, pattern in profile.user + profile.project:
+            if pattern.startswith(".") and "/" in pattern and any(c in pattern.rsplit("/", 1)[-1] for c in "*?["):
+                found[pattern] = re.compile(r"(?:^|/)" + _glob_regex(pattern).pattern + "$",
+                                            re.IGNORECASE if CASELESS else 0)
+    return tuple(found.values())
 
 
 def _ends_with(pattern: list[str], parts: list[str]) -> bool:
@@ -940,12 +1045,15 @@ def related_files(cf: ContextFile, project: Path | None, home: Path | None = Non
     contradict project B using npm, so other projects' memory dirs are left out."""
     home = home or home_dir()
     projects_root = claude_dir(home) / "projects"
-    own_dir = cf.path.parent if _is_under(cf.path, projects_root) else (claude_memory_dir(project, home) if project else None)
+    own_dir = claude_memory_dir(project, home) if project else None
+    if _is_under(cf.path, projects_root):
+        # The project's memory folder, whichever of its subfolders the note is in.
+        own_dir = projects_root.joinpath(*cf.path.relative_to(projects_root).parts[:2])
     out = []
     for f in discover(project=project, home=home):
         if f.kind not in ("memory", "instructions") or f.path == cf.path:
             continue
-        if _is_under(f.path, projects_root) and f.path.parent != own_dir:
+        if _is_under(f.path, projects_root) and (own_dir is None or not _is_under(f.path, own_dir)):
             continue
         out.append(f.path)
     return out

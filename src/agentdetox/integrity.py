@@ -23,7 +23,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from .agentscan import scan_text
+from .agentscan import scan_stored, scan_text
 from .compat import hook_executable, quote_executable, release, try_lock
 from .context import ContextFile, is_hook_script
 from .findings import Finding
@@ -147,7 +147,9 @@ def runs_code_added(key: str, before: str | None, after: str | None, path: Path 
 
 
 def store_dir() -> Path:
-    return Path(os.environ.get("AGENTDETOX_HOME") or Path.home() / ".agentdetox")
+    # Absolute: a relative AGENTDETOX_HOME would name a different folder from every working
+    # directory, and for the worker that is started in the store itself.
+    return Path(os.path.abspath(os.environ.get("AGENTDETOX_HOME") or Path.home() / ".agentdetox"))
 
 
 def private_dir(path: Path) -> Path:
@@ -191,6 +193,10 @@ class StoreLocked(StoreError, TimeoutError):
 
 _LOCK = threading.RLock()
 _lock_depth = 0
+# After one wait timed out, later waits in the same process are short: a hook that already
+# reported a held lock should not wait the full time again for each store access it makes.
+LOCK_RETRY = 0.25
+_lock_refused = False
 
 
 @contextlib.contextmanager
@@ -198,7 +204,7 @@ def store_lock(timeout: float | None = None):
     """Serialise read-modify-write of the store across hooks, the model server and the
     CLI; parallel tool calls otherwise lose each other's snapshot entries. Re-entrant
     within a process (flock on a second descriptor would wait for ourselves)."""
-    global _lock_depth
+    global _lock_depth, _lock_refused
     with _LOCK:
         if _lock_depth:
             _lock_depth += 1
@@ -209,11 +215,14 @@ def store_lock(timeout: float | None = None):
             return
         fd = os.open(private_dir(store_dir()) / "store.lock", os.O_RDWR | os.O_CREAT, 0o600)
         try:
-            deadline = time.monotonic() + (LOCK_TIMEOUT if timeout is None else timeout)
+            limit = LOCK_TIMEOUT if timeout is None else timeout
+            deadline = time.monotonic() + (min(limit, LOCK_RETRY) if _lock_refused else limit)
             while not try_lock(fd):
                 if time.monotonic() > deadline:
+                    _lock_refused = True
                     raise StoreLocked(f"{store_dir()} is locked by another process")
                 time.sleep(0.01)
+            _lock_refused = False
             _lock_depth = 1
             try:
                 yield
@@ -278,11 +287,30 @@ def reset_baseline() -> Path | None:
     with store_lock():
         import sqlite3
 
+        marker = store_dir() / "sqlite-migrated"
         if storage.path().exists():
-            with contextlib.closing(sqlite3.connect(storage.path())) as probe:
-                incomplete = probe.execute("PRAGMA user_version").fetchone()[0] == 0
+            try:
+                with contextlib.closing(sqlite3.connect(storage.path())) as probe:
+                    incomplete = probe.execute("PRAGMA user_version").fetchone()[0] == 0
+            except sqlite3.Error:
+                # Not a database any more: kept beside, like the rest, and started over without.
+                kept = storage.path().with_name(f"state.sqlite3.broken-{uuid.uuid4().hex}")
+                storage.path().replace(kept)
+                incomplete = False
             if incomplete:
                 storage.path().unlink()
+        if not storage.path().exists() and marker.exists():
+            # The database of a migrated store is gone. Starting over must not read the files
+            # from before the migration again: they would bring back a stale snapshot and a
+            # history that ends where the migration happened. They are kept, under other names.
+            tag = uuid.uuid4().hex
+            for name in ("baseline.json", "ledger.jsonl", "events.jsonl"):
+                old = store_dir() / name
+                if old.exists():
+                    old.replace(old.with_name(f"{name}.before-reset-{tag}"))
+            marker.unlink()
+            _save_baseline({"version": SCHEMA_VERSION, "files": {}})
+            return kept
         if storage.exists():
 
             kept = store_dir() / f"state.sqlite3.backup-{uuid.uuid4().hex}"
@@ -318,10 +346,10 @@ def _snapshot(files: list[ContextFile], roots: list[Path], expected: dict[str, s
         try:
             data = cf.path.read_bytes()
             mode = stat.S_IMODE(cf.path.stat().st_mode)
-        except FileNotFoundError:
+        except OSError:
             if expected is None:
                 raise
-            continue                        # deleted since it was checked; the next check sees it
+            continue        # deleted or made unreadable since it was checked; the next check sees it
         digest = _sha(data)
         if expected is not None and expected.get(str(cf.path)) != digest:
             continue
@@ -356,7 +384,14 @@ class Change:
     kind: str
 
 
+# The detector of a finding that says a file could not be read.
+UNREAD = "unread"
+
+
 def verify(files: list[ContextFile], roots: list[Path]) -> tuple[list[Change], list[Finding]]:
+    """What changed since the snapshot, and what the rules find in it. A file that cannot be
+    read is reported as an `unread` finding (its evidence is the error's name) and the rest
+    are still compared: one unreadable file must not end the comparison."""
     baseline = _load_baseline()["files"]
     changes: list[Change] = []
     findings: list[Finding] = []
@@ -366,7 +401,12 @@ def verify(files: list[ContextFile], roots: list[Path]) -> tuple[list[Change], l
 
     for path, cf in current.items():
         entry = baseline.get(path)
-        data = cf.path.read_bytes()
+        try:
+            data = cf.path.read_bytes()
+        except OSError as error:
+            findings.append(Finding(path, path, UNREAD, "low", "could not be read, so it was not compared",
+                                    type(error).__name__))
+            continue
         if entry is not None and _sha(data) == entry["sha256"]:
             continue
         # Hash and scan the same read; a second open can observe a different version.
@@ -374,7 +414,7 @@ def verify(files: list[ContextFile], roots: list[Path]) -> tuple[list[Change], l
         text = data.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
         if entry is None:
             changes.append(Change(path, "added", cf.kind))
-            findings.extend(scan_text(path, path, text, cf.kind))
+            findings.extend(scan_stored(scan_text, path, path, text, cf.kind))
             # A config file that appeared where AgentDetox has looked before is checked like a
             # change; a project seen for the first time is its own, which the agent asks to trust.
             if cf.kind == "config" and max((r for r in root_strs if path.startswith(r)), key=len, default=None) in known:
@@ -388,7 +428,7 @@ def verify(files: list[ContextFile], roots: list[Path]) -> tuple[list[Change], l
                 continue
             changes.append(Change(path, "modified", cf.kind))
             findings.extend(_config_changes(path, cf.path, text, old_sections))
-            findings.extend(scan_text(path, path, text, cf.kind))
+            findings.extend(scan_stored(scan_text, path, path, text, cf.kind))
         else:
             changes.append(Change(path, "modified", cf.kind))
             old = object_text(entry["sha256"])
@@ -398,7 +438,7 @@ def verify(files: list[ContextFile], roots: list[Path]) -> tuple[list[Change], l
                 line[1:] for line in difflib.unified_diff(old.splitlines(), text.splitlines(), lineterm="", n=0)
                 if line.startswith("+") and not line.startswith("+++")
             )
-            for f in scan_text(path, path, added, cf.kind):
+            for f in scan_stored(scan_text, path, path, added, cf.kind):
                 f.message = f"{f.message} (added since snapshot)"
                 findings.append(f)
 

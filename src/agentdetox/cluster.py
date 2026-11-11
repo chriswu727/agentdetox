@@ -8,18 +8,10 @@ two or fewer passages per target, or deliberately diversify them, can evade this
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass, field
 
 import numpy as np
 
-
-@dataclass
-class ClusterResult:
-    groups: list[list[int]] = field(default_factory=list)
-    cliques: list[list[int]] = field(default_factory=list)
-    tau: float | None = None
-    mu: float | None = None
-    sigma: float | None = None
+from .scan import ClusterResult
 
 
 def knn(v: np.ndarray, k: int, block: int = 1024) -> tuple[np.ndarray, np.ndarray]:

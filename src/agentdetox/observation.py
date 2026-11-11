@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from . import allowlist, events, ledger, shell, storage
-from .agentscan import scan_text
+from .agentscan import scan_stored, scan_text
 from .context import ContextFile, discover_session, short_path, watched_roots
 from .engine import _added_text
 from .findings import Finding, finding_id, printable
@@ -18,6 +18,8 @@ from .integrity import StoreError, _config_changes, object_text, snapshot, store
 from .persistence import WHOLE_FILE, guarded_sections, leaves
 
 MAX_AGE = 24 * 3600
+# Kept with a start state's permission bits: the file was a symbolic link when the tool began.
+_LINK = 1 << 20
 
 
 def _key(agent: str, session: str, tool_id: str) -> str:
@@ -36,11 +38,16 @@ def start(agent: str, session: str, tool_id: str, project: Path) -> None:
         db.execute('INSERT INTO tool_runs VALUES (?, ?, ?, ?, ?)',
                    (run_id, agent, session, str(project), time.time()))
         for cf in discover_session(project, agent):
-            with cf.path.open('rb') as file:
-                data = file.read()
-                mode = stat.S_IMODE(os.fstat(file.fileno()).st_mode)
+            try:
+                with cf.path.open('rb') as file:
+                    data = file.read()
+                    mode = stat.S_IMODE(os.fstat(file.fileno()).st_mode)
+            except OSError:
+                # Not there any more, or not readable: without a start state its change during
+                # the tool shows as a new file, and the session-start check reports the rest.
+                continue
             if cf.path.is_symlink():
-                raise StoreError(f'Context became a symbolic link: {cf.path}')
+                mode |= _LINK
             digest = store_object(data)
             db.execute('INSERT INTO tool_versions VALUES (?, ?, ?, ?, ?, ?)',
                        (run_id, str(cf.path), digest, cf.kind, cf.scope, mode))
@@ -65,20 +72,25 @@ def finish(agent: str, session: str, tool_id: str, project: Path, *, failed: boo
         current = {str(cf.path): cf for cf in discover_session(project, agent)}
         for name in sorted(before.keys() | current.keys()):
             path = Path(name)
-            if path.is_symlink():
-                raise StoreError(f'Context became a symbolic link: {path}')
             previous = before.get(name)
+            # A file swapped for a link during the tool is a change like any other, and said so.
+            linked = path.is_symlink() and not (previous and previous['mode'] & _LINK)
+            if previous:
+                previous['mode'] &= 0o7777
             cf = current.get(name)
             if cf is None:
                 assert previous is not None
                 cf = ContextFile(agent, previous['kind'], previous['scope'], path)
-            data = path.read_bytes() if name in current else None
+            try:
+                data = path.read_bytes() if name in current else None
+            except OSError:
+                data = None     # gone or unreadable since it was listed: recorded as removed
             after_hash = hashlib.sha256(data).hexdigest() if data is not None else None
             before_hash = previous['digest'] if previous else None
-            if before_hash == after_hash:
+            if before_hash == after_hash and not linked:
                 continue
             latest = ledger.entries(name, limit=1)
-            if latest and latest[0].after == after_hash:
+            if latest and latest[0].after == after_hash and not linked:
                 continue
             old = object_text(before_hash) if before_hash else ''
             text = data.decode('utf-8', errors='replace') if data is not None else ''
@@ -96,6 +108,10 @@ def finish(agent: str, session: str, tool_id: str, project: Path, *, failed: boo
                                           'approves the command')
                 continue
             findings = _findings(cf, old, text, previous is not None, data is None)
+            if linked:
+                findings.append(Finding(name, name, 'context-change', 'medium',
+                                        'became a symbolic link to ' + printable(os.path.realpath(path))[:200],
+                                        anchor=f'{name}\nlink\n{after_hash}'))
             base = latest[0].after if latest else before_hash
             if latest and previous and before_hash != base:
                 # The file had already changed, outside any recorded write, before this tool ran.
@@ -200,5 +216,5 @@ def _findings(cf: ContextFile, old: str, text: str, existed: bool, deleted: bool
     if cf.kind == 'config' and not deleted:
         findings += _config_changes(name, cf.path, text, guarded_sections(cf.path, old) if existed else {})
     if not deleted:
-        findings += scan_text(name, name, text if cf.kind == 'config' else _added_text(old, text), cf.kind)
+        findings += scan_stored(scan_text, name, name, text if cf.kind == 'config' else _added_text(old, text), cf.kind)
     return allowlist.unsuppressed(findings)

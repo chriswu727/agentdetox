@@ -7,12 +7,43 @@ import unicodedata
 from bisect import bisect_right
 from html.parser import HTMLParser
 
+from . import budget
 from .corpus import Doc
 from .findings import Finding, line_at, snippet
 
 ZERO_WIDTH = "​‌‍⁠﻿᠎"
 BIDI_CONTROLS = "‪‫‬‭‮⁦⁧⁨⁩"
 _ZW_RE = re.compile(f"[{ZERO_WIDTH}]")
+# Other characters that take no space on screen: the soft hyphen, the direction marks, the
+# invisible operators and the variation selectors. Each is ordinary somewhere (a word
+# processor's hyphenation, right-to-left text, an emoji), so none is a finding by itself,
+# but a rule must read the word they were put inside as the word it is.
+INVISIBLE = ("\N{SOFT HYPHEN}\N{COMBINING GRAPHEME JOINER}\N{LEFT-TO-RIGHT MARK}\N{RIGHT-TO-LEFT MARK}"
+             "\N{ARABIC LETTER MARK}\N{FUNCTION APPLICATION}\N{INVISIBLE TIMES}\N{INVISIBLE SEPARATOR}\N{INVISIBLE PLUS}"
+             "\N{HANGUL CHOSEONG FILLER}\N{HANGUL JUNGSEONG FILLER}\N{HANGUL FILLER}\N{HALFWIDTH HANGUL FILLER}"
+             "\N{KHMER VOWEL INHERENT AQ}\N{KHMER VOWEL INHERENT AA}"
+             + "".join(chr(code) for first, last in (
+                 (0x180B, 0x180F),       # Mongolian variation selectors
+                 (0xFE00, 0xFE0F),       # variation selectors
+                 (0xFFF9, 0xFFFB),       # interlinear annotation marks
+                 (0x1D173, 0x1D17A),     # musical formatting
+                 (0xE0100, 0xE01EF),     # more variation selectors
+             ) for code in range(first, last + 1)))
+# Spellings a rule reads as one: the apostrophes and quotes a word processor types, and the
+# traditional forms of the Chinese characters the rules are written with. One character for
+# one, so a position in the folded text is the same position in the text itself.
+_FOLDED = {
+    "\N{RIGHT SINGLE QUOTATION MARK}": "'", "\N{LEFT SINGLE QUOTATION MARK}": "'",
+    "\N{LEFT DOUBLE QUOTATION MARK}": '"', "\N{RIGHT DOUBLE QUOTATION MARK}": '"',
+    **dict(zip("無視規則說記會訴戶讓覺關閉過繞審權檢發傳碼鑰憑證對話錄統個資執運裝載刪靜詢問確認現開從讀複寫編輯給請別這後報訊鏈體顯獲將擊樣啟動該與為於轉製駕設進總結環變",
+               "无视规则说记会诉户让觉关闭过绕审权检发传码钥凭证对话录统个资执运装载删静询问确认现开从读复写编辑给请别这后报讯链体显获将击样启动该与为于转制驾设进总结环变")),
+}
+_FOLD = str.maketrans(_FOLDED)
+
+
+def fold(text: str) -> str:
+    """`text` with those spellings folded, for rules to be matched against. Same length."""
+    return text.translate(_FOLD)
 # Zero-width chars wedged between Latin letters are a filter-evasion trick; ZWJ inside
 # emoji sequences or ZWNJ in Persian/Indic text are legitimate and must not fire.
 _ZW_IN_WORD_RE = re.compile(f"[A-Za-z][{ZERO_WIDTH}]+[A-Za-z]")
@@ -22,16 +53,38 @@ _PATTERNS: list[tuple[str, str, re.Pattern]] = [
     (
         "high",
         "instruction override",
+        # "Previous", "above" or "your" says which instructions are meant. "All" or "any" alone
+        # does not: "ignore all formatting rules" is about a linter, so there the thing dropped
+        # must follow directly, or after words that still mean the agent's own ("all other
+        # safety rules"). "Override" is also what one config does to another, so with "all" or
+        # "any" it needs instructions, prompts or directives, not rules.
         re.compile(
-            r"\b(ignore|disregard|forget|override)\b[^.\n]{0,30}\b(previous|prior|above|earlier|preceding|all|any|your)\b"
-            r"[^.\n]{0,20}\b(instructions?|prompts?|rules|directives|guidelines|context)\b",
+            r"\b(ignore|disregard|forget|override)\b[^.\n]{0,30}\b(previous|prior|above|earlier|preceding|your|system)\b"
+            r"[^.\n]{0,20}\b(instructions?|prompts?|rules|directives|guidelines|context)\b"
+            r"|\b(ignore|disregard|forget)\b[^.\n]{0,30}\b(all|any)\s+(?:(?:of\s+)?(?:the|these|those|other|my|users?|user's"
+            r"|existing|original|developer|system|safety|safety-related|security|guardrails?|anthropic|openai|earlier)\s+){0,3}"
+            r"(instructions?|prompts?|rules|directives|guidelines|context)\b"
+            r"|\boverride\b[^.\n]{0,30}\b(all|any)\s+(?:(?:of\s+)?(?:the|these|those|other|my|users?|user's|developer|system|original)\s+){0,2}"
+            r"(instructions?|prompts?|directives)\b"
+            r"|\boverride\b[^.\n]{0,30}\b(all|any)\s+(?:(?:of\s+)?(?:the|these|those|other)\s+){0,2}"
+            r"(?:safety|security|guardrails?)(?:-related)?\s+(rules|guidelines|instructions?|checks?|policies)\b"
+            # A file that puts itself above the system prompt, or above whatever its reader was told.
+            r"|\b(overrid(?:e|es|ing)|supersed(?:e|es|ing)|takes?\s+precedence\s+over|wins?\s+over|outranks?|replaces?)\s+"
+            r"(?:the\s+|your\s+|any\s+)?system\s+(prompt|message|instructions)\b"
+            r"|\bsystem\s+(prompt|message)\b[^.\n]{0,40}\b(conflicts?|disagrees?|contradicts?)\b[^.\n]{0,60}"
+            r"\b(this\s+(file|document|note|page)|these\s+instructions)\s+(wins?|prevails?|takes?\s+precedence|overrides?)\b"
+            r"|\b(supersed(?:e|es|ing)|overrid(?:e|es|ing)|takes?\s+precedence\s+over|replaces?)\b[^.\n]{0,20}"
+            r"\b(anything|everything|whatever|what)\b[^.\n]{0,30}\b(the\s+user|anthropic|openai|the\s+system\s+prompt)\b"
+            r"[^.\n]{0,20}\b(told|tells?|said|says?|asked|asks?|instructed|instructs?)\b",
             re.I,
         ),
     ),
     (
         "high",
         "instruction override",
-        re.compile(r"(忽略|无视|忘记|忘掉|不要理会)[^。\n]{0,10}(之前|以上|上面|前面|先前|所有|全部)[^。\n]{0,10}(指令|指示|提示|规则|说明|要求)"),
+        re.compile(r"(忽略|无视|忘记|忘掉|不要理会)[^。\n]{0,10}(之前|以上|上面|前面|先前|所有|全部)[^。\n]{0,10}(指令|指示|提示|规则|说明|要求)"
+                   r"|(凌驾于?|取代|推翻|覆盖)[^。\n]{0,4}(用户|使用者|系统提示)[^。\n]{0,6}(先前|之前|此前|早先|原先)[^。\n]{0,8}"
+                   r"(指令|指示|设定|设置|要求|规则|约定)"),
     ),
     # "Don't tell the user to use X" instructs the user; concealment is about withholding
     # something from them, so the rule needs "about/that/why..." or "to the user".
@@ -42,12 +95,19 @@ _PATTERNS: list[tuple[str, str, re.Pattern]] = [
             r"\b(do not|don't|never)\s+(tell|inform|notify|alert)\s+(the\s+)?users?\s+(about|that|of|what|why|where|how|this|anything)\b"
             r"|\b(do not|don't|never)\s+(mention|reveal|disclose|show)\b[^.\n]{0,40}\bto\s+the\s+user\b"
             r"|\bwithout\s+(telling|informing|alerting|notifying)\s+the\s+user\b"
-            r"|\bkeep\s+(this|it)\s+(secret|hidden)\s+from\s+the\s+user\b",
+            r"|\bkeep\s+(this|it)\s+(secret|hidden)\s+from\s+the\s+user\b"
+            # What a note to an agent says about itself, or about the agent's last message.
+            r"|\b(do not|don't|never)\s+(mention|reveal|disclose|surface|report)\s+(this|these)\s+"
+            r"(steps?|instructions?|directives?|note|section|file)\b"
+            r"|\b(do not|don't|never)\s+(mention|surface|report)\b[^.\n]{0,30}\bin\s+(the|your)\s+final\s+"
+            r"(message|answer|summary|reply|response|report)\b",
             re.I,
         ),
     ),
     # "不要让用户发现问题" means "check your work", so 发现 is deliberately not listed.
-    ("high", "conceal from user", re.compile(r"(不要|切勿|别|不得)(告诉|告知|透露给|通知)[^。\n]{0,6}用户|(不要|别|不得)让用户(知道|察觉|注意到|看到)")),
+    ("high", "conceal from user", re.compile(r"(不要|切勿|别|不得)(告诉|告知|透露给|通知)[^。\n]{0,6}(用户|使用者)|(不要|别|不得)让(用户|使用者)(知道|察觉|注意到|看到)"
+                                              r"|(不要|切勿|别|不得)在(对话|聊天|摘要|总结)(中|里)?(显示|提及|提到|透露|说明)"
+                                              r"|(不要|切勿|别|不得)(写进|写入|出现在)(摘要|总结|对话)")),
     (
         "high",
         "chat-template token",
@@ -61,7 +121,9 @@ _PATTERNS: list[tuple[str, str, re.Pattern]] = [
         "data exfiltration instruction",
         re.compile(
             r"\b(send|forward|email|post|upload|transmit|exfiltrate)\b[^\n]{0,80}"
-            r"\b(password|credential|api[ _-]?key|secret|token|conversation|chat history|system prompt|personal data)s?\b"
+            # A password reset mail and a token count are about the word, not the secret.
+            r"\b(password(?!\s+resets?\b)|credential|api[ _-]?key|secret|token(?!\s+(?:counts?|usage|limits?|budgets?)\b)"
+            r"|conversation|chat history|system prompt|personal data|environment variable|env var)s?\b"
             r"[^\n]{0,80}(https?://|[\w.+-]+@[\w-]+\.\w)",
             re.I,
         ),
@@ -72,8 +134,8 @@ _PATTERNS: list[tuple[str, str, re.Pattern]] = [
         # Like the English rule, a concrete external destination is required: "不要把密钥
         # 提交到仓库" (don't commit keys to the repo) is hygiene, not exfiltration.
         re.compile(
-            r"((密码|密钥|凭证|令牌|对话记录|聊天记录|系统提示|个人信息)[^。\n]{0,30}(发送|转发|上传|提交)"
-            r"|(发送|转发|上传|提交)[^。\n]{0,20}(密码|密钥|凭证|令牌|对话记录|聊天记录|系统提示|个人信息))"
+            r"((密码|密钥|凭证|令牌|对话记录|聊天记录|系统提示|个人信息|环境变量)[^。\n]{0,30}(发送|转发|上传|提交|上报)"
+            r"|(发送|转发|上传|提交|上报)[^。\n]{0,20}(密码|密钥|凭证|令牌|对话记录|聊天记录|系统提示|个人信息|环境变量))"
             r"[^。\n]{0,40}(https?://|[\w.+-]+@[\w-]+\.\w)"
         ),
     ),
@@ -105,8 +167,45 @@ _PATTERNS: list[tuple[str, str, re.Pattern]] = [
     ("medium", "role reassignment", re.compile(r"(你现在是|从现在(开始|起)[，,]?你|新的指令[:：]|系统提示[:：])")),
 ]
 
-_MD_IMAGE_RE = re.compile(r"!\[[^\]]*\]\((https?://[^)\s]+)\)")
-_TEMPLATED_QUERY_RE = re.compile(r"\?[^#]*(\{[^}]*\}|\$\{|\[[A-Z_ ]+\]|<[a-z_]+>)", re.I)
+_BRACKETS = re.compile(r"!\[|\[|\]\((?=https?://)|\]")
+_URL_END = re.compile(r"[)\s]")
+_PLACEHOLDER = re.compile(r"\[[A-Z_ ]+\]|<[a-z_]+>", re.I)
+
+
+def _templated_image_urls(text: str) -> list[str]:
+    """Addresses of markdown images (`![alt](https://…)`) whose query holds a placeholder:
+    `{…}`, `${`, `[NAME]` or `<name>` after a `?` and before any `#`. Read in one pass over
+    the brackets. One pattern for the whole image would cost the text's length squared when
+    `![` or `](https://` repeats with no end, and a limit on the alt text or the address
+    would be a way to hide one behind padding."""
+    urls: list[str] = []
+    open_: list[bool] = []      # for each `[` still open, whether `!` came before it
+    end = -1                    # where the address being read stops, once looked for
+    for m in _BRACKETS.finditer(text):
+        token = m.group()
+        if token in ("![", "["):
+            open_.append(token == "![")
+        elif open_ and open_.pop() and token == "](":
+            start = m.end()
+            if end < start:
+                found = _URL_END.search(text, start)
+                if found is None:
+                    break       # no later address has an end either
+                end = found.start()
+            if text[end] == ")" and _has_placeholder(text[start:end]):
+                urls.append(text[start:end])
+    return urls
+
+
+def _has_placeholder(url: str) -> bool:
+    for part in url.split("#"):
+        _, asked, query = part.partition("?")
+        if not asked:
+            continue
+        opened = query.find("{")
+        if opened >= 0 and query.find("}", opened) >= 0 or "${" in query or _PLACEHOLDER.search(query):
+            return True
+    return False
 
 _HTML_HINT_RE = re.compile(r"<(!--|[a-zA-Z][a-zA-Z0-9]*[\s>/])")
 _HIDDEN_STYLE_RE = re.compile(
@@ -117,10 +216,22 @@ _HIDDEN_STYLE_RE = re.compile(
 _VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
 
 
+_UNSEEN = dict.fromkeys(map(ord, ZERO_WIDTH + INVISIBLE + BIDI_CONTROLS))
+
+
+def _shown(text: str) -> str:
+    return text.translate(_UNSEEN)
+
+
 def normalize(text: str) -> str:
-    text = unicodedata.normalize("NFKC", text)
-    text = _ZW_RE.sub("", text)
-    return _BIDI_RE.sub("", text)
+    """`text` as it reads: compatibility forms folded, characters that do not show taken out.
+    They are taken out before as well as after: one put between a letter and its accent keeps
+    the two apart, so that a second pass would join them and normalising twice would shift
+    every position after it. A finding's line, and with it its id, must not depend on how
+    often a text was normalised."""
+    if text.isascii():
+        return text     # nothing to fold or take out; and normalising is called on every pass over a text
+    return _shown(unicodedata.normalize("NFKC", _shown(text)))
 
 
 def prose_view(text: str):
@@ -310,28 +421,151 @@ def match_injection(text: str, *, prose: bool = True) -> list[tuple[str, str, in
 
 def _injection_matches(text: str, *, prose: bool = True, guidance=None) -> list[tuple[str, str, int, int]]:
     """Injection phrases in `text`. `prose` reads all of it as sentences, in which a thing
-    forbidden is not a thing ordered; `guidance` says the same of single offsets."""
-    norm = normalize(text)
-    hits = []
+    forbidden is not a thing ordered; `guidance` says the same of single offsets. A phrase
+    broken over two lines is read as the phrase it is."""
+    seen = fold(normalize(text))
+    hits: list[tuple[str, str, int, int]] = []
     for severity, label, pattern in _PATTERNS:
-        quoted = False
-        for m in pattern.finditer(norm):
-            sentence = prose or guidance is not None and guidance(m.start())
-            if sentence and label == 'conceal from user' and _redacts_secret(norm, m.start()):
-                continue
-            if sentence and label in {"instruction override", "data exfiltration instruction"} \
-                    and is_prohibited_action(norm, m.start(), m.end()):
-                continue
-            # Security docs and skills quote attack phrases as examples to watch for.
-            # A quoted phrase is still reported, but not at a level that blocks.
-            if severity == "high" and _is_quoted(norm, m.start(), m.end()):
-                if not quoted:
-                    hits.append(("medium", f"{label} (quoted, possibly describing an attack)", m.start(), m.end()))
-                    quoted = True
-            else:
-                hits.append((severity, label, m.start(), m.end()))
-                break
+        budget.check()
+        _collect(hits, seen, pattern, severity, label, prose, guidance)
+    joined = _join_wrapped(seen)
+    if joined is not None:
+        for severity, label, pattern in _PATTERNS:
+            if label in _WRAPPABLE:
+                budget.check()
+                _collect(hits, joined.text, pattern, severity, label, prose, guidance, joined)
     return hits
+
+
+def _collect(hits: list[tuple[str, str, int, int]], text: str, pattern: re.Pattern, severity: str, label: str,
+             prose: bool, guidance, joined: _Joined | None = None) -> None:
+    """Add the rule's hits in `text`. With `joined`, `text` has wrapped lines put together:
+    only a hit that runs across a line end is new, and its place is given in the original."""
+    quoted = False
+    lines = Lines(text)
+    for m in pattern.finditer(text):
+        if joined is not None and not joined.crosses(m.start(), m.end()):
+            continue
+        if lines.flagged(m.start()):
+            continue
+        # Security docs and skills quote attack phrases as examples to watch for.
+        # A quoted phrase is still reported, but not at a level that blocks.
+        in_quotes = severity == "high" and _is_quoted(text, m.start(), m.end())
+        if in_quotes and quoted:
+            continue    # said once already; the sentence need not be read again for each repeat
+        start, end = (joined.origin(m.start()), joined.origin(m.end() - 1) + 1) if joined is not None else m.span()
+        sentence = prose or guidance is not None and guidance(start)
+        if sentence and label == 'conceal from user' and _redacts_secret(text, m.start()):
+            continue
+        if sentence and label in {"instruction override", "data exfiltration instruction"} \
+                and is_prohibited_action(text, m.start(), m.end()):
+            continue
+        if in_quotes:
+            hits.append(("medium", f"{label} (quoted, possibly describing an attack)", start, end))
+            quoted = True
+        else:
+            lines.flag(m.start())
+            hits.append((severity, label, start, end))
+            if len(lines.hit) >= MAX_HITS:
+                break
+
+
+# The rules about what is said, which a line break in the middle must not get past. The rest
+# are about commands and tokens, which are written on one line.
+_WRAPPABLE = {"instruction override", "conceal from user"}
+_SENTENCE_END = (".", "!", "?", "\N{IDEOGRAPHIC FULL STOP}", "\N{FULLWIDTH EXCLAMATION MARK}",
+                 "\N{FULLWIDTH QUESTION MARK}", ":", "\N{FULLWIDTH COLON}", ";", "\N{FULLWIDTH SEMICOLON}")
+_STARTS_BLOCK = re.compile(r"(?:[-*+]\s|\d+[.)]\s|#{1,6}\s|[|<]|`{3,}|~{3,})")
+
+
+class _Joined:
+    """A text with each wrapped line joined to the one before, and the way back."""
+
+    def __init__(self) -> None:
+        self.parts: list[str] = []
+        self.starts: list[int] = []     # where each part begins in the joined text
+        self.origins: list[int] = []    # and in the original
+        self.joins: list[int] = []      # positions, in the joined text, of the spaces that were line ends
+        self.length = 0
+        self.text = ""
+
+    def add(self, part: str, origin: int) -> None:
+        self.starts.append(self.length)
+        self.origins.append(origin)
+        self.parts.append(part)
+        self.length += len(part)
+
+    def origin(self, position: int) -> int:
+        index = max(0, bisect_right(self.starts, position) - 1)
+        return self.origins[index] + min(position - self.starts[index], max(len(self.parts[index]) - 1, 0))
+
+    def crosses(self, start: int, end: int) -> bool:
+        index = bisect_right(self.joins, start - 1)
+        return index < len(self.joins) and self.joins[index] < end
+
+
+def _join_wrapped(text: str) -> _Joined | None:
+    """`text` with a line that carries on a sentence joined to the line before it: one that
+    does not open a list item, heading, table row, tag or code fence, after a line that does
+    not end its sentence. Quote marks (`>`) and indentation before it are dropped. Lines in
+    a code fence stay as they are. None when no line was joined."""
+    if "\n" not in text:
+        return None
+    joined = _Joined()
+    position = 0
+    open_ = False       # the line before can be carried on
+    fence = ""
+    for number, line in enumerate(text.split("\n")):
+        stripped = line.strip()
+        mark = re.match(r"\s*(`{3,}|~{3,})", line)
+        lead = re.match(r"\s*(?:>\s*)*", line).end()    # type: ignore[union-attr]  # matches the empty string
+        rest = line[lead:]
+        if number and open_ and not fence and not mark and rest and not _STARTS_BLOCK.match(rest):
+            joined.joins.append(joined.length)
+            joined.add(" ", position - 1)
+            joined.add(rest, position + lead)
+        else:
+            if number:
+                joined.add("\n", position - 1)
+            joined.add(line, position)
+        if mark:
+            fence = "" if fence and mark.group(1)[0] == fence[0] and len(mark.group(1)) >= len(fence) else fence or mark.group(1)
+        body = stripped.lstrip("> ")
+        open_ = bool(body) and not fence and not mark and not body.endswith(_SENTENCE_END) and not body.startswith(("#", "|"))
+        position += len(line) + 1
+    if not joined.joins:
+        return None
+    joined.text = "".join(joined.parts)
+    return joined
+
+
+# Hits kept per rule in one text. Every line a rule flags is a hit of its own; past this
+# many the text is flagged thoroughly enough and the rest would only cost time.
+MAX_HITS = 20
+
+
+class Lines:
+    """The lines one rule has hit in a text. A match on a line that is already a hit is passed
+    over before anything is asked about it: whether its sentence forbids it means reading the
+    line, which for a long line of repeats would cost the line's length squared."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.hit: set[int] = set()
+        self._first, self._after = 0, -1     # the line last asked about: matches come in order
+
+    def _line(self, start: int) -> int:
+        if not self._first <= start < self._after:
+            self._first = self.text.rfind("\n", 0, start) + 1
+            end = self.text.find("\n", start)
+            self._after = end + 1 if end >= 0 else len(self.text) + 1
+        return self._first
+
+    def flagged(self, start: int) -> bool:
+        return self._line(start) in self.hit
+
+    def flag(self, start: int) -> None:
+        self.hit.add(self._line(start))
 
 
 _REDACTION = re.compile(
@@ -343,8 +577,8 @@ _REDACTION = re.compile(
 
 def _redacts_secret(text: str, start: int) -> bool:
     left = text.rfind('\n', 0, start) + 1
-    right = re.search(r'\n', text[start:])
-    return bool(_REDACTION.fullmatch(text[left:start + right.start() if right else len(text)]))
+    right = text.find('\n', start)
+    return bool(_REDACTION.fullmatch(text[left:right if right >= 0 else len(text)]))
 
 
 class _HiddenTextParser(HTMLParser):
@@ -378,6 +612,47 @@ class _HiddenTextParser(HTMLParser):
         if data.strip():
             self.comments.append(data.strip())
 
+    def close(self):
+        raw = self.rawdata
+        if _RETRIES_UNCLOSED and not self.cdata_elem and len(raw) > 1 and raw.startswith("<"):
+            # This interpreter's parser reads an unclosed construct at the end as text and
+            # retries at every later "<", each time to the end: quadratic. End it as the
+            # parsers of Python 3.11.13, 3.12.11 and 3.13.5 on do, in one step.
+            self.rawdata = ""
+            if raw.startswith("<!--"):
+                end = len(raw)
+                for suffix in ("--!", "--", "-"):
+                    if raw.endswith(suffix, 4):
+                        end -= len(suffix)
+                        break
+                self.handle_comment(raw[4:end])
+            elif raw == "</":
+                self.handle_data(raw)
+            elif (raw.startswith("<!") and not raw.startswith("<![CDATA[") and raw[:9].lower() != "<!doctype"
+                  or raw.startswith("</") and not _END_TAG_OPEN_RE.match(raw)):
+                self.handle_comment(raw[2:])
+            # An unclosed tag, declaration or processing instruction holds no text.
+        super().close()
+
+
+_END_TAG_OPEN_RE = re.compile(r"</[a-zA-Z]")
+
+
+def _retries_unclosed() -> bool:
+    class Probe(HTMLParser):
+        commented = False
+
+        def handle_comment(self, data):
+            self.commented = True
+
+    probe = Probe()
+    probe.feed("<!--x")
+    probe.close()
+    return not probe.commented
+
+
+_RETRIES_UNCLOSED = _retries_unclosed()
+
 
 def scan_doc(doc: Doc, *, prose: bool = True, wrapped: bool = False, guidance: bool = False) -> list[Finding]:
     findings: list[Finding] = []
@@ -398,12 +673,13 @@ def scan_doc(doc: Doc, *, prose: bool = True, wrapped: bool = False, guidance: b
     if _BIDI_RE.search(text):
         add("hidden-unicode", "low", "bidirectional control characters can reorder displayed text", "")
 
+    budget.check()
     if _HTML_HINT_RE.search(text):
         parser = _HiddenTextParser()
         try:
             parser.feed(text)
             parser.close()
-        except Exception:
+        except Exception:  # noqa: BLE001 - any text may be fed here; what was read before it failed is kept
             pass
         hidden = " ".join(parser.hidden_text)
         if hidden:
@@ -417,21 +693,22 @@ def scan_doc(doc: Doc, *, prose: bool = True, wrapped: bool = False, guidance: b
             if injected:
                 add("hidden-html", "high", f"HTML comment contains: {injected[0][1]}", comment[:200])
 
+    budget.check()
     norm = normalize(text)
     def anchor(start, end):
         return line_at(norm, start)
 
     if wrapped:
         norm, anchor = prose_view(text)
+    budget.check()
     for severity, label, pos, end in _injection_matches(norm, prose=prose, guidance=outside_code(norm) if guidance else None):
         add("injection-phrase", severity, label, snippet(norm, pos), anchor(pos, end))
     if smuggled.strip():
-        for severity, label, _ in match_injection(smuggled, prose=False):
+        for _, label, _ in match_injection(smuggled, prose=False):
             add("injection-phrase", "high", f"{label} (inside invisible tag characters)", smuggled[:200])
 
-    for m in _MD_IMAGE_RE.finditer(text):
-        if _TEMPLATED_QUERY_RE.search(m.group(1)):
-            add("exfil-link", "high", "markdown image URL with templated query, a known zero-click exfiltration channel", m.group(1)[:200])
+    for url in _templated_image_urls(text):
+        add("exfil-link", "high", "markdown image URL with templated query, a known zero-click exfiltration channel", url[:200])
 
     return _dedupe(findings)
 
@@ -440,7 +717,9 @@ def _dedupe(findings: list[Finding]) -> list[Finding]:
     seen = set()
     out = []
     for f in findings:
-        key = (f.detector, f.message)
+        # One per rule and place: a second line the same rule flags is a finding of its own,
+        # so allowing or explaining the first does not also cover the second.
+        key = (f.detector, f.message, f.anchor)
         if key not in seen:
             seen.add(key)
             out.append(f)

@@ -26,12 +26,14 @@ import json
 import os
 import socket
 import socketserver
+import stat
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 from . import __version__, background, compat, events
 from .integrity import StoreError, private_dir, store_dir
@@ -40,6 +42,8 @@ SERVER = os.name == "posix" and hasattr(socket, "AF_UNIX")
 IDLE_SECONDS = 30 * 60
 CONNECT_TIMEOUT = 0.5
 START_TIMEOUT = 10.0
+# How long a connected client may take to send its request.
+REQUEST_TIMEOUT = 30.0
 QUEUE_WAIT = 600.0
 # Seconds before a failed check's second and third attempt.
 RETRY_DELAYS = (5.0, 60.0)
@@ -52,14 +56,25 @@ def idle_seconds() -> float:
 
 def socket_path() -> Path:
     path = store_dir() / "nli.sock"
-    if len(str(path)) <= _MAX_SOCKET_PATH:
+    # The limit is in bytes: a store path with non-ASCII names is longer than it looks.
+    if len(os.fsencode(path)) <= _MAX_SOCKET_PATH:
         return path
+    if sys.platform == "win32":
+        raise OSError("no model server on Windows")
     # A deep custom store overflows sun_path. The per-user temp dir on macOS is private;
-    # elsewhere the 0700 directory below is, once its owner is checked.
+    # elsewhere the 0700 directory below is, once it is known to be a real folder of this
+    # user's. Looked at without following a link: in a shared /tmp another user could have
+    # put one there, and a folder it points to must not be re-permissioned or used.
     base = Path(tempfile.gettempdir()) / f"agentdetox-{os.getuid()}"
-    private_dir(base)
-    if base.stat().st_uid != os.getuid():
-        raise PermissionError(f"{base} belongs to another user")
+    try:
+        os.mkdir(base, 0o700)
+    except FileExistsError:
+        pass
+    found = os.lstat(base)
+    if not stat.S_ISDIR(found.st_mode) or found.st_uid != os.getuid():
+        raise PermissionError(f"{base} is not a folder of this user's")
+    if stat.S_IMODE(found.st_mode) != 0o700:
+        os.chmod(base, 0o700)
     return base / (hashlib.sha256(str(store_dir()).encode()).hexdigest()[:16] + ".sock")
 
 
@@ -77,7 +92,7 @@ def code_id() -> str:
 
 def request(message: dict, timeout: float = 5.0) -> dict | None:
     """One request to the running server; None if no server answered."""
-    if not SERVER:
+    if not SERVER or sys.platform == "win32":
         return None
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
@@ -171,8 +186,8 @@ def _spawn(job_file: str | None) -> None:
     fd = os.open(log, flags, 0o600)
     if compat.WINDOWS:
         # No console window, and out of the hook's process group so it outlives the hook.
-        detach = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-                                   | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200)}
+        detach: dict[str, Any] = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+                                  | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200)}
     else:
         detach = {"start_new_session": True}
     try:
@@ -414,12 +429,18 @@ class _State:
 
 
 class _Handler(socketserver.StreamRequestHandler):
+    # A client that connects and sends nothing must not count as work in progress for ever:
+    # the server would never see itself idle, and would keep the model loaded.
+    timeout = REQUEST_TIMEOUT
+
     def handle(self) -> None:
-        state: _State = self.server.state
+        state: _State = self.server.state       # type: ignore[attr-defined]  # set by _run
         with state.active():
             try:
                 msg = json.loads(self.rfile.readline())
-            except ValueError:
+            except (ValueError, OSError):
+                return
+            if not isinstance(msg, dict):
                 return
             op = msg.get("op")
             if op == "ping":
@@ -447,9 +468,12 @@ class _Handler(socketserver.StreamRequestHandler):
             self.wfile.write((json.dumps(data) + "\n").encode())
 
 
-if SERVER:
+if sys.platform == "win32":
+    _Server: Any  # declared only: the name stays unbound where there is no server
+elif SERVER:
     class _Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
         daemon_threads = True
+        state: _State
 
 
 def serve(job_file: str | None = None, nli_factory=None, idle: float | None = None) -> int:
@@ -481,7 +505,8 @@ def _run(lock_fd: int, nli_factory, idle: float) -> int:
     path.unlink(missing_ok=True)  # we hold the lock, so any socket left here is stale
     server = _Server(str(path), _Handler)
     os.chmod(path, 0o600)
-    state = server.state = _State(server, nli_factory, idle)
+    state = _State(server, nli_factory, idle)
+    server.state = state
     if nli_factory is None and _local_nli() is None:
         state.stop(finish_queue=True)  # no model to serve: mark what waits for it, then leave
     worker = threading.Thread(target=state.run_queue, daemon=True)

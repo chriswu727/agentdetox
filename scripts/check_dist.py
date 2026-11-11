@@ -35,7 +35,10 @@ def main(paths: list[str]) -> int:
     for p in map(Path, paths):
         kind = "wheel" if p.suffix == ".whl" else "sdist"
         kinds.add(kind)
-        if f"-{VERSION}" not in p.name:
+        # The whole version, not a prefix of one: 0.4.10 and 0.4.1rc1 are not 0.4.1.
+        right = (p.name.startswith(f"agentdetox-{VERSION}-") if kind == "wheel"
+                 else p.name == f"agentdetox-{VERSION}.tar.gz")
+        if not right:
             problems.append(f"{p.name}: not version {VERSION}")
         members = names(p)
         problems += [f"{p.name}: ships {m}" for m in members if any(bad in m for bad in NEVER)]

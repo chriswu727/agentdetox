@@ -164,7 +164,7 @@ def main() -> None:
             row = {"clean FPR": len(fp) / len(clean)}
             for key, docs in attack_sets.items():
                 row[key] = len(tool.flagged(docs)) / len(docs)
-        except Exception as e:  # gated models, missing binaries
+        except Exception as e:  # gated models, missing binaries  # noqa: BLE001 - a baseline that fails is reported, not fatal
             print(f"skipping {name}: {type(e).__name__}: {str(e).splitlines()[0][:160]}", file=sys.stderr)
             continue
         rows[name] = row

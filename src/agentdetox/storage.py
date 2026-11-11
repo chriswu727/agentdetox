@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import time
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
@@ -83,6 +84,11 @@ def connection(*, write: bool = False, seed: dict | None = None):
             version = db.execute('PRAGMA user_version').fetchone()[0]
             if version > VERSION:
                 raise StoreError('Metadata was written by a newer AgentDetox; upgrade before opening it')
+            if version == 0 and present and (store_dir() / 'sqlite-migrated').exists():
+                # The marker says this store was migrated; an empty database since then is a
+                # lost one. Reading the old files again would bring back a stale snapshot.
+                raise StoreError('state.sqlite3 is empty after migration; restore the database backup, or start '
+                                 'over with `agentdetox agent snapshot --reset`')
             if version < VERSION:
                 if not write and version == 0:
                     yield None
@@ -114,6 +120,21 @@ def connection(*, write: bool = False, seed: dict | None = None):
                 _ACTIVE.reset(token)
             if db is not None:
                 db.close()
+            if write and not present:
+                _discard_unmigrated()
+
+
+def _discard_unmigrated() -> None:
+    """Remove a database this call created but could not fill: left behind empty, it would
+    stand in for the old-format files, and what only they refer to would look unreferenced."""
+    try:
+        with contextlib.closing(sqlite3.connect(path())) as probe:
+            if probe.execute('PRAGMA user_version').fetchone()[0]:
+                return
+        for leftover in (path(), path().with_name(path().name + '-journal')):
+            leftover.unlink(missing_ok=True)
+    except (OSError, sqlite3.Error):
+        pass
 
 
 def _backup(db: sqlite3.Connection, target: Path) -> None:
@@ -122,13 +143,21 @@ def _backup(db: sqlite3.Connection, target: Path) -> None:
     from .integrity import write_private
 
     if target.exists():
-        return
-    write_private(target, b'')
-    copy = sqlite3.connect(target)
+        # One left empty by a process that stopped before copying is no backup.
+        try:
+            with contextlib.closing(sqlite3.connect(target.as_uri() + '?mode=ro', uri=True)) as probe:
+                if probe.execute('PRAGMA user_version').fetchone()[0]:
+                    return
+        except sqlite3.Error:
+            pass
+    partial = target.with_name(target.name + '.partial')
+    write_private(partial, b'')
+    copy = sqlite3.connect(partial)
     try:
         db.backup(copy)
     finally:
         copy.close()
+    os.replace(partial, target)
 
 
 def format_version() -> int | None:
@@ -137,20 +166,26 @@ def format_version() -> int | None:
         return db.execute('PRAGMA user_version').fetchone()[0] if db is not None else None
 
 
-def _json_lines(file: Path) -> list[dict]:
-    from .integrity import StoreError
-
+def _json_lines(file: Path, skipped: dict[str, int] | None = None) -> list[dict]:
+    """The records of an old-format log. A line that is not a record (cut short by a crash,
+    say) is left out and counted, as the readers of that format always did: one such line
+    must not keep a whole store from being migrated."""
     if not file.exists():
         return []
     out = []
-    for n, line in enumerate(file.read_text(encoding='utf-8').splitlines(), 1):
+    # A record ends at a line feed only; `splitlines` would also cut at the separators JSON
+    # may hold unescaped inside a string.
+    for line in file.read_text(encoding='utf-8', errors='replace').split('\n'):
+        if not line.strip():
+            continue
         try:
             item = json.loads(line)
-            if not isinstance(item, dict):
-                raise ValueError('expected an object')
+        except (ValueError, RecursionError):
+            item = None
+        if isinstance(item, dict):
             out.append(item)
-        except ValueError as e:
-            raise StoreError(f'Cannot migrate {file.name}, line {n}: {e}; original files were kept') from e
+        elif skipped is not None:
+            skipped[file.name] = skipped.get(file.name, 0) + 1
     return out
 
 
@@ -180,8 +215,13 @@ def _migrate(db, seed: dict | None) -> None:
     from .integrity import StoreError, _load_legacy_baseline, store_dir
 
     baseline = _load_legacy_baseline() if (store_dir() / 'baseline.json').exists() else seed if seed is not None else _load_legacy_baseline()
-    changes = _json_lines(store_dir() / 'ledger.jsonl')
-    events = _json_lines(store_dir() / 'events.jsonl')
+    skipped: dict[str, int] = {}
+    changes = _json_lines(store_dir() / 'ledger.jsonl', skipped)
+    complete = [e for e in changes if all(k in e for k in ('path', 'ts', 'origin', 'before', 'after'))]
+    if len(complete) != len(changes):
+        skipped['ledger.jsonl'] = skipped.get('ledger.jsonl', 0) + len(changes) - len(complete)
+        changes = complete
+    events = _json_lines(store_dir() / 'events.jsonl', skipped)
     refs = {e['sha256'] for e in baseline['files'].values()}
     refs.update(d for e in changes for d in (e.get('before'), e.get('after')) if d)
     for digest in refs:
@@ -195,13 +235,14 @@ def _migrate(db, seed: dict | None) -> None:
         db.execute('INSERT INTO files(path, checkpoint, observed_hash) VALUES (?, ?, ?)',
                    (file, json.dumps(entry), entry['sha256']))
     for entry in changes:
-        if not all(k in entry for k in ('path', 'ts', 'origin', 'before', 'after')):
-            raise StoreError('Cannot migrate an incomplete ledger entry; original files were kept')
         entry.update(actor={'you': 'agent', 'copied': 'agent'}.get(entry['origin'], entry['origin']),
                      method='legacy', attribution='legacy inference')
         append_change(db, entry)
     for event in events:
         append_event(db, event)
+    if skipped:
+        # Shown by doctor: the lines are still in the original files, which are kept.
+        append_event(db, {'ts': time.strftime('%Y-%m-%dT%H:%M:%S'), 'event': 'migration_skipped', 'lines': skipped})
     if db.execute('SELECT count(*) FROM changes').fetchone()[0] != len(changes):
         raise StoreError('Ledger migration count mismatch')
 
@@ -280,10 +321,11 @@ def events(limit: int | None = 50) -> list[dict] | None:
                 for r in reversed(db.execute(query, args).fetchall())]
 
 
-def references() -> set[str]:
+def references() -> set[str] | None:
+    """Every stored copy the database refers to; None when it does not hold the history yet."""
     with connection() as db:
         if db is None:
-            return set()
+            return None
         rows = db.execute('''SELECT before_hash FROM changes UNION SELECT after_hash FROM changes
             UNION SELECT accepted_hash FROM files UNION SELECT observed_hash FROM files
             UNION SELECT before_hash FROM operations UNION SELECT after_hash FROM operations''')

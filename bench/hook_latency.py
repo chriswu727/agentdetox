@@ -18,6 +18,7 @@ from pathlib import Path
 from agentdetox import session, storage
 from agentdetox.context import claude_memory_dir, discover
 from agentdetox.integrity import baseline_entries, snapshot
+from bench._meta import run_metadata
 
 
 def main() -> int:
@@ -192,7 +193,8 @@ raise SystemExit(code)
         measure('NLI record frontend, 1000 active memory files, fake queue, no inference', 250,
                 background_frontend, prepare_write)
     report = dict(platform=platform.platform(), python=platform.python_version(), results=results,
-                  model='disabled; no model or subscription usage', warmup='one untimed call per case')
+                  model='disabled; no model or subscription usage', warmup='one untimed call per case',
+                  **run_metadata())
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')

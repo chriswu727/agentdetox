@@ -327,7 +327,7 @@ def test_new_file_cleanup_leaves_empty_file_and_can_be_undone(context):
     assert preview['selected'] == [1]
     review.clean(change, '1', apply=True, expected_hash=preview['current_hash'])
     assert path.is_file() and path.read_bytes() == b''
-    with pytest.raises(StoreError, match='edited or removed'):
+    with pytest.raises(StoreError, match='already cleaned'):
         review.clean(change, '1')
     review.restore(f'C{ledger.entries(str(path))[-1].id}', True)
     assert path.read_bytes() == POISON
@@ -360,3 +360,71 @@ def test_hook_script_named_like_instructions_cannot_be_line_cleaned(context):
     change = record(path, BASE + POISON)
     with pytest.raises(ValueError, match='executable config'):
         review.clean(change, '3')
+
+
+def test_an_applied_cleanup_prints_its_id_and_says_so_when_applied_again(context, capsys):
+    _, path = context
+    change = record(path, BASE + POISON)
+    assert main(['clean', change, '--lines', '3', '--format', 'json']) == 0
+    preview = json.loads(capsys.readouterr().out)
+    apply = ['clean', change, '--lines', '3', '--expected-hash', preview['current_hash'], '--apply']
+    assert main(apply) == 0
+    out = capsys.readouterr().out
+    latest = ledger.entries(str(path))[-1]
+    assert f'Recorded as C{latest.id}. To undo this cleanup: agentdetox restore C{latest.id} --apply' in out
+    assert main([*apply, '--format', 'json']) == 2
+    again = capsys.readouterr().err
+    assert f'{change} was already cleaned: line 3 was removed and recorded as C{latest.id}' in again
+    assert f'agentdetox restore C{latest.id} --apply' in again
+    assert main(['clean', change, '--lines', '3']) == 2
+    assert 'was already cleaned' in capsys.readouterr().err
+    assert path.read_bytes() == BASE
+
+    assert main(['restore', f'C{latest.id}']) == 0
+    undo = capsys.readouterr().out
+    assert f'agentdetox restore C{latest.id}\n' not in undo and 'Preview undo of this recovery' not in undo
+    assert f'undoing it puts back the lines it removed. Apply it: agentdetox restore C{latest.id} --apply' in undo
+    assert main(['restore', f'C{latest.id}', '--apply']) == 0
+    assert path.read_bytes() == BASE + POISON
+    capsys.readouterr()
+    assert main(['clean', change, '--lines', '3']) == 0
+
+
+def test_a_cleanup_refused_for_a_later_edit_is_not_called_already_applied(context, capsys):
+    _, path = context
+    change = record(path, BASE + POISON)
+    path.write_bytes(BASE + b'Edited by hand.\n')
+    assert main(['clean', change, '--lines', '3']) == 2
+    err = capsys.readouterr().err
+    assert 'Selected lines were edited or removed later' in err and 'already cleaned' not in err
+
+
+def test_log_events_and_status_word_a_cleanup_alike_with_short_paths(context, capsys):
+    _, path = context
+    change = record(path, BASE + POISON)
+    events.record('context_inspected', files=4, review=[change])
+    preview = review.clean(change, '3')
+    review.clean(change, '3', apply=True, expected_hash=preview['current_hash'])
+    latest = ledger.entries(str(path))[-1]
+    assert main(['log']) == 0
+    assert '  cleaned   ' in capsys.readouterr().out
+    assert main(['events']) == 0
+    out = capsys.readouterr().out
+    row = next(line for line in out.splitlines() if '  cleaned  ' in line)
+    assert row.endswith(f' [C{latest.id}]') and (f'removed 1 selected line from {change}' in row or '… [C' in row)
+    assert row.split(' [C')[0].rstrip('…').split()[-1] in f'{path}: removed 1 selected line from {change}'.split()
+    assert f'1 recorded for review [{change}]' in out and 'review item(s) open' not in out
+    assert main(['status']) == 0
+    out = capsys.readouterr().out
+    assert 'cleaned' in out and '1 recorded for review' in out
+    assert main(['status', '--format', 'json']) == 0
+    recent = json.loads(capsys.readouterr().out)['recent']
+    cleaned = next(r for r in recent if r['what'] == 'cleaned')
+    assert cleaned['about'] == f'{path}: removed 1 selected lines from {change}'
+    assert 'review item(s) open' in next(r for r in recent if r['what'] == 'inspected')['about']
+
+
+def test_clip_cuts_at_a_word():
+    assert status.clip('short', 10) == 'short'
+    assert status.clip('~/.claude/CLAUDE.md: removed three selected lines', 30) == '~/.claude/CLAUDE.md: removed…'
+    assert len(status.clip('x' * 200, 90)) == 90

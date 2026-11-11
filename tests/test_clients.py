@@ -245,6 +245,11 @@ def test_scan_says_where_it_looked_and_what_it_cannot_see(env, capsys):
     assert main(['agent', 'scan', '--project', str(project)]) == 0
     out = capsys.readouterr().out
     assert 'Looked in:' in out and 'workbuddy (unverified)' in out and 'unverified guesses' in out
+    assert "SQLite and generated memory" not in out and '(claude-code, codex, cursor, openclaw: not found on this machine' in out
+    (home / '.codex').mkdir()
+    (home / '.openclaw').mkdir()
+    assert main(['agent', 'scan', '--project', str(project)]) == 0
+    out = capsys.readouterr().out
     assert "SQLite and generated memory" in out and 'there is no OpenClaw hook' in out
     main(['agent', 'scan', '--project', str(project), '--format', 'json'])
     coverage = {c['agent']: c for c in json.loads(capsys.readouterr().out)['coverage']}
@@ -801,3 +806,14 @@ def test_a_session_after_an_inspection_points_at_cleanup_not_at_a_restore(env):
     out = handle('codex', {'hook_event_name': 'SessionStart', 'cwd': str(project), 'session_id': 's', 'source': 'startup'})[1]
     notice = json.loads(out)['hookSpecificOutput']['additionalContext']
     assert f'agentdetox clean {change}' in notice and f'agentdetox restore {change}' not in notice
+
+
+def test_cursor_lists_the_skill_folders_it_shares_where_it_found_them(env, capsys):
+    home, project = env
+    put(home / '.claude/skills/helper/SKILL.md')
+    coverage = {c.agent: c for c in survey(['cursor'], project, home).clients}['cursor']
+    assert coverage.files == 1
+    roots = {r['path']: r for r in coverage.roots}
+    assert roots[str(home / '.claude/skills')]['exists'] and str(home / '.codex/skills') not in roots
+    assert main(['agent', 'scan', '--agent', 'cursor', '--project', str(project)]) == 0
+    assert '~/.claude/skills (skills shared with Claude Code)' in capsys.readouterr().out.replace(os.sep, '/')

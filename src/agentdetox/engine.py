@@ -14,8 +14,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import allowlist, events, ledger, shell, storage
-from .agentscan import scan_text
+from . import allowlist, budget, events, ledger, paths, shell, storage
+from .agentscan import scan_stored, scan_text
 from .allowlist import Flag, contradiction_flag, copy_flag, finding_flag, source_id
 from .consistency import (
     NLI,
@@ -33,6 +33,7 @@ from .integrity import (
     is_self_hook,
     object_text,
     snapshot,
+    snapshot_text,
     store_dir,
     store_lock,
 )
@@ -75,6 +76,18 @@ class Signal:
     flags: list[Flag] = field(default_factory=list)
 
 
+def _transcript(path: str | None) -> Transcript | None:
+    """The session's recent turns, or None when there is no transcript or it cannot be read.
+    Without one a flagged write counts as planted, never as the user's own words."""
+    try:
+        if not path or not Path(path).is_file():
+            return None
+        return read_transcript(path)
+    except Exception as error:  # noqa: BLE001 - its content is whatever the agent read
+        events.record("hook_error", stage="transcript", error=type(error).__name__)
+        return None
+
+
 def check_write(write: Write, project: Path, run: set[str], transcript: str | None = None) -> list[Signal]:
     """What is wrong with a planned write. `run` names the configurable checks to do
     now. A clear-cut finding stops the rest: the write is blocked anyway."""
@@ -93,7 +106,7 @@ def check_write(write: Write, project: Path, run: set[str], transcript: str | No
 
     @functools.cache
     def recent() -> Transcript | None:
-        return read_transcript(transcript) if transcript and Path(transcript).is_file() else None
+        return _transcript(transcript)
 
     if cf.kind == "config":
         findings = allowlist.unsuppressed(scan_text(str(path), str(path), new, "config"))
@@ -159,9 +172,7 @@ def removal_targets(path: Path, project: Path) -> list[Path]:
 
 def _folder_removal(folder: Path, project: Path) -> list[Signal]:
     """What is wrong with an edit tool removing a folder, judged by the context files in it."""
-    real = os.path.realpath(folder)
-    store = os.path.realpath(store_dir())
-    if Path(store).is_relative_to(real) or Path(real).is_relative_to(store):
+    if is_own_state(folder) or holds_own_state(folder):
         return [Signal(OWN_STATE, f"AgentDetox: this removes {short_path(str(folder))}, which holds AgentDetox's own "
                                   "settings, allowlist or snapshots.")]
     signals: list[Signal] = []
@@ -195,21 +206,36 @@ def _removal(cf: ContextFile, old: str) -> list[Signal]:
 
 def check_command(command: str, project: Path, cwd: Path | None = None) -> list[Signal]:
     """What is wrong with a shell command the agent is about to run in `cwd` (by default
-    the project root)."""
+    the project root). Raises budget.OverBudget when reading it takes too long: a command
+    built to be slow to read (thousands of folders entered, each looked up on disk) must not
+    outlast the client's patience with the hook and so go unread."""
+    with budget.limit():
+        return _check_command(command, project, cwd)
+
+
+def _check_command(command: str, project: Path, cwd: Path | None = None) -> list[Signal]:
     cwd = cwd or project
+    if "\0" in command:
+        # No shell word holds a NUL. Depending on how the command reaches the shell, it ends
+        # at the first one or the NULs are dropped; either reading may be what runs.
+        found: dict[str, Signal] = {}
+        for reading in dict.fromkeys((command.split("\0", 1)[0], command.replace("\0", ""))):
+            for signal in _check_command(reading, project, cwd):
+                found.setdefault(signal.check, signal)
+        return list(found.values())
     command_only, bodies = shell.heredocs(command)
     tokens = shell.split(command_only)
     fed, fed_changes = shell.heredoc_targets(bodies)
     targets = shell.write_targets(tokens) + fed
     targets = [t.removesuffix(shell.INTO) for t in targets if not t.endswith(shell.INTO)
-               or not t.startswith(shell.UNKNOWN) and shell.resolve(t.removesuffix(shell.INTO), cwd).parent.is_dir()]
+               or not t.startswith(shell.UNKNOWN) and _is_dir(shell.resolve(t.removesuffix(shell.INTO), cwd).parent)]
     trees = {t.removesuffix(shell.TREE) for t in targets if t.endswith(shell.TREE)}
     targets = [t.removesuffix(shell.TREE) for t in targets]
     # A target in a folder only known at run time is judged by its name alone.
     context = [t for t in targets if named_like_context(t[len(shell.UNKNOWN):]) if t.startswith(shell.UNKNOWN)]
     targets = [t for t in targets if not t.startswith(shell.UNKNOWN)]
     context += [t for t in targets if any(classify(p, project=project) for p in shell.resolve_all(t, cwd))]
-    folders = [p for t in targets if t in trees for p in shell.resolve_all(t, cwd) if p.is_dir()]
+    folders = [p for t in targets if t in trees for p in shell.resolve_all(t, cwd) if _is_dir(p)]
     if folders:
         inside = [os.path.realpath(cf.path) for cf in discover(project=project)]
         context += [str(f) for f in folders
@@ -231,11 +257,25 @@ def check_command(command: str, project: Path, cwd: Path | None = None) -> list[
                                     + printable("; ".join(sorted({f.message for f in findings}))) + ".",
                            [finding_flag(f) for f in findings if f.severity == "high"])]
     if (any(is_own_state(p) for t in targets if not t.startswith(shell.UNKNOWN) for p in shell.resolve_all(t, cwd))
+            or any(holds_own_state(f) for f in folders)
             or shell.changes_agentdetox(tokens) or fed_changes):
         return [Signal(OWN_STATE, "AgentDetox: this command changes AgentDetox's own settings, allowlist or snapshots.")]
     if context:
-        return [Signal(SHELL_WRITE, "AgentDetox: this shell command writes to or deletes the agent's memory, rules or "
-                                    "config, bypassing the write check.")]
+        written = Signal(SHELL_WRITE, "AgentDetox: this shell command writes to or deletes the agent's memory, rules "
+                                      "or config, bypassing the write check.")
+        guarded = _guarded_targets(targets, project, cwd)
+        if guarded:
+            # What the command leaves in the file cannot be read from it, so this is judged as
+            # an edit tool removing the file would be: it sets the agent's own guardrails.
+            return [Signal(GUARDRAILS, f"AgentDetox: this shell command writes to or deletes {guarded}, which sets "
+                                       "the agent's hooks, MCP servers or permissions. An agent changing those is "
+                                       "how an injected instruction makes itself permanent."), written]
+        return [written]
+    if shell.unreadable(command_only) and (shell.names_context(command_only)
+                                            or "agentdetox" in command_only.lower()):
+        # Nothing was found, but the command could not be read to its end either.
+        return [Signal(SHELL_WRITE, "AgentDetox: this shell command could not be read to its end (an unclosed quote "
+                                    "or substitution) and names the agent's memory, rules or config, or AgentDetox.")]
     return []
 
 
@@ -248,7 +288,7 @@ def after_write(paths: list[Path], project: Path, record_contradictions: bool, t
 
     @functools.cache
     def recent() -> Transcript | None:
-        return read_transcript(transcript) if transcript and Path(transcript).is_file() else None
+        return _transcript(transcript)
 
     for path in paths:
         cf = classify(path, project=project)
@@ -269,18 +309,24 @@ def after_write(paths: list[Path], project: Path, record_contradictions: bool, t
                 data = path.read_bytes()
             text = data.decode("utf-8", errors="replace")
             digest = hashlib.sha256(data).hexdigest()
-            full_findings = allowlist.unsuppressed(scan_text(str(path), str(path), text, cf.kind))
+            full_findings = allowlist.unsuppressed(scan_stored(scan_text, str(path), str(path), text, cf.kind))
             high = [f for f in full_findings if f.severity == "high"]
             t = recent()
             # A file that keeps a clear-cut finding the user did not write stays untrusted; the
             # agent's edit to it is still recorded.
             trusted = not high or bool(t and t.human and all(typed_by_user(f, t.human) for f in high))
+            if trusted and cf.kind == "config" and old.strip():
+                # What the agent built on already set up something else than the snapshot does:
+                # a change made outside the agent that nobody has been told about. The snapshot
+                # stays where it is, so the next session still reports it.
+                checked = snapshot_text(str(path))
+                trusted = checked is None or guarded_sections(path, checked) == guarded_sections(path, old)
             if digest != before:
                 added = _added_text(old, text)
                 origin, source, requested = origin_of(added, t)
                 spans = attribute_lines(old, text, t)
                 findings = (full_findings if cf.kind == "config" else
-                            allowlist.unsuppressed(scan_text(str(path), str(path), added, cf.kind)))
+                            allowlist.unsuppressed(scan_stored(scan_text, str(path), str(path), added, cf.kind)))
                 copied = _copied(cf, added, t)
             with store_lock(), storage.connection(write=True):
                 # Evidence is computed without the global lock; neither its base version nor
@@ -324,9 +370,9 @@ def changed_findings(cf: ContextFile, before: str, text: str) -> list[Finding]:
     name = str(cf.path)
     if cf.kind == "config":
         found = _config_changes(name, cf.path, text, guarded_sections(cf.path, before) if before.strip() else {})
-        found += scan_text(name, name, text, cf.kind)
+        found += scan_stored(scan_text, name, name, text, cf.kind)
     else:
-        found = scan_text(name, name, _added_text(before, text), cf.kind)
+        found = scan_stored(scan_text, name, name, _added_text(before, text), cf.kind)
     return allowlist.unsuppressed(found)
 
 
@@ -349,7 +395,7 @@ def before_removal(paths: list[Path], project: Path, agent: str = "") -> None:
                 break
             text = data.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
             if known is None:
-                findings = [f for f in allowlist.unsuppressed(scan_text(str(path), str(path), text, cf.kind))
+                findings = [f for f in allowlist.unsuppressed(scan_stored(scan_text, str(path), str(path), text, cf.kind))
                             if f.severity in ("medium", "high")]
             else:
                 findings = changed_findings(cf, object_text(known), text)
@@ -371,11 +417,12 @@ def before_write(paths: list[Path], project: Path) -> None:
     """Record a change made outside the agent that is about to be built on: a file the
     agent is going to edit no longer matches the last version AgentDetox knows, because
     something else changed it during the session (an install script, say). Without this the
-    agent's edit would be credited with that change. Config files churn on their own and
-    are compared at session start instead."""
+    agent's edit would be credited with that change. Config files churn on their own
+    (counters, caches), so for them only a change to what they guard counts: a hook, an MCP
+    server or a permission added outside the agent is not the agent's either."""
     for path in paths:
         cf = classify(path, project=project)
-        if cf is None or cf.kind == "config" or not path.is_file():
+        if cf is None or not path.is_file():
             continue
         for _ in range(3):
             with store_lock():
@@ -384,7 +431,13 @@ def before_write(paths: list[Path], project: Path) -> None:
             if known is None or hashlib.sha256(data).hexdigest() == known:
                 break
             text = data.decode('utf-8', errors='replace').replace('\r\n', '\n').replace('\r', '\n')
-            findings = allowlist.unsuppressed(scan_text(str(path), str(path), text, cf.kind))
+            if cf.kind == "config":
+                earlier = object_text(known)
+                if guarded_sections(path, earlier) == guarded_sections(path, text):
+                    break
+                findings = changed_findings(cf, earlier, text)
+            else:
+                findings = allowlist.unsuppressed(scan_stored(scan_text, str(path), str(path), text, cf.kind))
             with store_lock():
                 if previous_version(str(path)) != known:
                     continue
@@ -413,7 +466,51 @@ def previous_version(path: str) -> str | None:
 def is_own_state(path: Path) -> bool:
     # Settings, allowlist and snapshots: an injected instruction that could edit these
     # could switch the checks off, allow itself, or make a poisoned file the baseline.
-    return Path(os.path.realpath(path)).is_relative_to(os.path.realpath(store_dir()))
+    # By what the file is, not how the path is spelled: another case, another name for the
+    # volume or a link reach the same store.
+    return paths.inside(path, store_dir())
+
+
+# Config files that hold nothing but what is guarded: one of these being created is a
+# guardrail change whatever is put in it.
+_ONLY_GUARDED = {"hooks.json", ".mcp.json", "mcp.json"}
+
+
+def _guarded_targets(targets: list[str], project: Path, cwd: Path) -> str:
+    """The config files among a command's targets that set hooks, MCP servers or
+    permissions now, or could hold nothing else; "" when there are none."""
+    found = []
+    for target in targets:
+        if target.startswith(shell.UNKNOWN):
+            continue
+        for path in shell.resolve_all(target, cwd):
+            try:
+                cf = classify(path, project=project)
+                if cf is None or cf.kind != "config":
+                    continue
+                if path.is_file():
+                    sections = guarded_sections(cf.path, path.read_text(encoding="utf-8", errors="replace"))
+                    if not sections:
+                        continue
+                elif path.name not in _ONLY_GUARDED:
+                    continue
+            except (OSError, ValueError):
+                continue
+            found.append(short_path(str(cf.path)))
+    return ", ".join(dict.fromkeys(found))
+
+
+def _is_dir(path: Path) -> bool:
+    """A path the file system refuses to look at (too long, a NUL in it) is no folder."""
+    try:
+        return path.is_dir()
+    except (OSError, ValueError):
+        return False
+
+
+def holds_own_state(folder: Path) -> bool:
+    """Whether removing or moving `folder` takes AgentDetox's store with it."""
+    return paths.inside(store_dir(), folder)
 
 
 def _planted(cf: ContextFile, findings: list[Finding], t: Transcript | None) -> Signal:

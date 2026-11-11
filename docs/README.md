@@ -1,6 +1,6 @@
 # Documentation
 
-AgentDetox **0.4.1** was released on 2026-11-05. English is the primary language for the README,
+AgentDetox **0.5.0** was released on 2026-11-10. English is the primary language for the README,
 user guide, policies, release notes and developer documentation. The
 [Simplified Chinese README](../README.zh-CN.md) covers installation, the review workflow and key
 limits; detailed references are maintained in English. Keep both READMEs aligned when behavior changes.
@@ -33,7 +33,7 @@ not silently refreshed to describe current code.
 | [Knowledge-base benchmark](../bench/KB_BENCHMARK.md) | Historical scanner comparison on public RAG data |
 | [Real-agent lab](../lab/README.md) | Protocol, authorization, costs and outcome definitions |
 | [Cross-client disinfection](client-validation.md) | 2026-11-10 file workflows, native-client checks, latency and known gaps |
-| [Latest recorded lab run](../lab/results/latest.md) | 2026-11-10 development checks: two Claude Code scenarios, both passed; earlier runs retained |
+| [Latest recorded lab run](../lab/results/latest.md) | 0.5.0 candidate, 12 Claude Code scenarios with and without AgentDetox. 23 of 24 checks passed. |
 
 ## Develop and contribute
 

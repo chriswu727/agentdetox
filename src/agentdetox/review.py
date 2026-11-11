@@ -14,9 +14,10 @@ from collections import Counter
 from pathlib import Path
 
 from . import allowlist, cleanup, events, ledger, storage
-from .agentscan import scan_text
+from .agentscan import scan_stored, scan_text
 from .context import classify, claude_memory_dir, display_path, is_hook_script, short_path
 from .findings import finding_id, printable
+from .hidden import normalize
 from .integrity import (
     StoreError,
     baseline_entries,
@@ -31,7 +32,7 @@ from .persistence import guarded_sections
 
 
 def number(value: str, prefix: str = 'C') -> int:
-    if not re.fullmatch(prefix + r'[1-9][0-9]*', value.upper()):
+    if not re.fullmatch(prefix + r'[1-9][0-9]{0,17}', value.upper()):
         raise ValueError(f'Expected a {prefix} id, such as {prefix}42')
     return int(value[1:])
 
@@ -40,7 +41,8 @@ def get(change_id: str) -> dict:
     with storage.connection() as db:
         row = db.execute('SELECT * FROM changes WHERE id=?', (number(change_id),)).fetchone() if db else None
         if row is None:
-            raise ValueError(f'Unknown change {change_id}')
+            raise ValueError(f'Unknown change {change_id}. `agentdetox review` lists the changes that need '
+                             'attention, `agentdetox review --all` every recorded one')
         return dict(row)
 
 
@@ -151,7 +153,8 @@ def page(*, since: str | None = None, all_changes: bool = False, project: Path |
         args.extend((pattern, pattern))
     where = ' WHERE ' + ' AND '.join(clauses) if clauses else ''
     result: dict = dict(rows=[], page=page_number, page_size=page_size, pages=0, group_by=group_by,
-                        total_changes=0, total_files=0, states={}, operations={}, project=str(project) if project else None)
+                        total_changes=0, total_files=0, states={}, operations={}, project=str(project) if project else None,
+                        filtered=bool(since or all_changes or project or file or search))
     with storage.connection() as db:
         if db is None:
             return result
@@ -174,8 +177,16 @@ def page(*, since: str | None = None, all_changes: bool = False, project: Path |
         else:
             query = 'SELECT c.* FROM changes c' + where + ' ORDER BY c.id DESC LIMIT ? OFFSET ?'
         result['rows'] = [dict(r) for r in db.execute(query, [*args, page_size, (page_number - 1) * page_size])]
+        sizes = []
         for row in result['rows']:
-            row.update(_summary(db, row['id']))
+            summary, versions = _summary(db, row['id'])
+            row.update(summary)
+            sizes.append(versions)
+    # Comparing two versions can take seconds. It is done with the database closed: a reader
+    # that held it open this long made a hook's write wait, and then fail.
+    for row, versions in zip(result['rows'], sizes):
+        if versions is not None:
+            row['added'], row['removed'] = _size(*versions)
     return result
 
 
@@ -184,8 +195,10 @@ _WRITERS = {'you': 'the agent, with your words', 'agent': 'the agent', 'external
 _SEVERITY_RANK = "CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END"
 
 
-def _summary(db, change_id: int) -> dict:
-    """What a change was, in a few words: who wrote it, its size, and its most serious open finding."""
+def _summary(db, change_id: int) -> tuple[dict, tuple[str | None, str | None] | None]:
+    """What a change was, in a few words: who wrote it and its most serious open finding.
+    Its size is left out; the versions to compare for it are returned beside, or None when
+    it has no size to show."""
     change = db.execute('SELECT * FROM changes WHERE id=?', (change_id,)).fetchone()
     data = json.loads(change['data'])
     origin = data.get('origin', '')
@@ -199,21 +212,23 @@ def _summary(db, change_id: int) -> dict:
         writer = 'during a shell command, writer unknown'
     else:
         writer = _WRITERS.get(origin, origin)
-    added: int | None
-    removed: int | None
-    try:
-        before, after = _object_text(change['before_hash']), _object_text(change['after_hash'])
-        added, removed = _line_changes(before.splitlines(), after.splitlines())
-    except StoreError:
-        added = removed = None
     top = db.execute(f"SELECT severity, reason FROM findings WHERE change_id=? AND status='pending' "
                      f"ORDER BY {_SEVERITY_RANK}, id LIMIT 1", (change_id,)).fetchone()
     operation = ('deleted' if change['after_hash'] is None else 'added' if change['before_hash'] is None
                  else 'inspected' if data.get('method') == INSPECTION else 'changed')
-    if data.get('method') == INSPECTION:
-        added = removed = None
-    return {'writer': writer, 'operation': operation, 'added': added, 'removed': removed,
-            'finding': {'severity': top['severity'], 'reason': top['reason']} if top else None}
+    versions = None if data.get('method') == INSPECTION else (change['before_hash'], change['after_hash'])
+    return {'writer': writer, 'operation': operation, 'added': None, 'removed': None,
+            'finding': {'severity': top['severity'], 'reason': top['reason']} if top else None}, versions
+
+
+def _size(before_hash: str | None, after_hash: str | None) -> tuple[int | None, int | None]:
+    """Lines a change added and removed; (None, None) when a version is missing or comparing
+    them would take too long."""
+    try:
+        before, after = _object_text(before_hash), _object_text(after_hash)
+    except StoreError:
+        return None, None
+    return _line_changes(before.splitlines(), after.splitlines())
 
 
 _DIFF_BUDGET = 4_000_000
@@ -249,6 +264,8 @@ def render_page(data: dict) -> str:
     file_word = 'file' if data['total_files'] == 1 else 'files'
     lines = [f"{data['total_changes']} {change_word} across {data['total_files']} {file_word}{scope}."]
     if not data['total_changes']:
+        if not data.get('filtered'):
+            return 'Nothing needs review. `agentdetox review --since 7d` also lists recent changes that need none.'
         return lines[0] + '\nNothing matches. Use --since 7d to include recent quiet changes.'
     lines.append(', '.join(f'{n} {state}' for state, n in sorted(data['states'].items())) + '. ' +
                  ', '.join(f'{n} {operation}' for operation, n in sorted(data['operations'].items())) + '.')
@@ -272,39 +289,48 @@ def render_page(data: dict) -> str:
     return '\n'.join(lines)
 
 
-def detail(change_id: str) -> str:
+def detail(change_id: str, restoring: bool = False) -> str:
     row = get(change_id)
     data = json.loads(row['data'])
     before = _object_text(row['before_hash'])
     after = _object_text(row['after_hash'])
+    found = data.get('method') == INSPECTION
     lines = [f"C{row['id']} · {short_path(row['path'])} · {row['review_state']}",
-             f"Observed writer: {data.get('actor') or data.get('origin', 'unknown')}",
+             f"{'Found by' if found else 'Observed writer'}: {data.get('actor') or data.get('origin', 'unknown')}",
              f"Session: {data.get('session') or 'unknown'}; tool: {data.get('tool') or 'unknown'}",
              'Content attribution is evidence-based inference, not proof of authorship.']
     evidence = sorted({(s.get('attribution', 'unknown'), s.get('source', '')) for s in data.get('spans', [])})
     lines += [f'  {printable(str(what))}' + (f': {printable(str(source))}' if source else '') for what, source in evidence]
     if not evidence:
         lines.append(f"  {data.get('attribution', 'unknown')} ({data.get('method', 'legacy')})")
-    if data.get('method') == INSPECTION:
+    where: dict[str, int] = {}
+    if found:
         lines.append('This records a version found as it was, not a change: AgentDetox has no earlier version of '
                      'the file, so there is no diff and nothing to restore.')
+        # With no diff to show them, the flagged lines themselves.
+        where = _flagged_lines(Path(row['path']), after)
+        text = after.split('\n')
+        lines += [f"{n:>5}  {printable(text[n - 1])}" for n in sorted(set(where.values()))]
     lines += [printable(line) for line in
               difflib.unified_diff(before.splitlines(), after.splitlines(), fromfile='before', tofile='after', lineterm='')]
     with storage.connection() as db:
         findings = db.execute('SELECT * FROM findings WHERE change_id=? ORDER BY id', (row['id'],)).fetchall()
-    lines += [f"F{f['id']} [{f['severity']}, {f['status']}] {printable(f['reason'])}" for f in findings]
+    lines += [f"F{f['id']} [{f['severity']}, {f['status']}] "
+              + (f"line {where[f['flag_id']]}: " if f['flag_id'] in where else '') + printable(f['reason']) for f in findings]
     try:
         _check_current(row)
     except StoreError:
         lines.append('STALE: the file no longer matches this change. Accept and whole-version restore refuse newer work; '
                      'selective cleanup requires unchanged, unambiguous selected lines.')
-    recovery_label = 'Preview undo of this recovery' if data.get('origin') == 'restored' else 'Preview recovery'
+    recovery_label = ('Preview undo of this recovery' if data.get('origin') == 'restored' else
+                      'Preview removal of the file, which this change added' if row['before_hash'] is None else
+                      'Preview recovery')
     lines.append(f'Accept only this version: agentdetox review accept C{row["id"]}')
     if data.get('method') == INSPECTION:
         lines.append(f'List its lines for selective cleanup: agentdetox clean C{row["id"]}')
     else:
-        lines += [f'{recovery_label}: agentdetox restore C{row["id"]}',
-                  f'Inspect added lines for selective cleanup: agentdetox clean C{row["id"]}']
+        lines += ([] if restoring else [f'{recovery_label}: agentdetox restore C{row["id"]}']) + [
+            f'Inspect added lines for selective cleanup: agentdetox clean C{row["id"]}']
     lines.append('Dismiss one finding: agentdetox review dismiss F<ID>. This grants no permanent exception.')
     if data.get('cleanup'):
         action = data['cleanup']
@@ -355,6 +381,31 @@ def pending_recovery_paths() -> set[str]:
         return {row['path'] for row in rows}
 
 
+def finding_lines(text: str, findings: list) -> dict[str, int]:
+    """The line of the inspected version each finding is on, where the flagged line can be
+    found again: the number `agentdetox clean` takes."""
+    lines = [" ".join(normalize(line).split()) for line in text.split("\n")]
+    where: dict[str, int] = {}
+    for finding in findings:
+        wanted = next((" ".join(normalize(part).split()) for part in finding.anchor.split("\n") if part.strip()), "")
+        if not wanted:
+            continue
+        hits = [i for i, line in enumerate(lines, 1) if wanted in line]
+        if len(hits) == 1:
+            where[finding_id(finding)] = hits[0]
+    return where
+
+
+def _flagged_lines(path: Path, text: str, kind: str | None = None) -> dict[str, int]:
+    """Finding id to line number, for the findings of `text` that can be placed on one line."""
+    if kind is None:
+        kinds = {cf.kind for root in path.parents if (cf := classify(path, project=root)) is not None}
+        kind = next((k for k in ('memory', 'instructions', 'skill', 'config') if k in kinds), 'memory')
+    found = [f for f in allowlist.unsuppressed(scan_stored(scan_text, str(path), str(path), text, kind))
+             if f.severity in ('medium', 'high')]
+    return finding_lines(text, found)
+
+
 def restore(change_id: str, apply: bool = False) -> str:
     from . import safefs
 
@@ -366,13 +417,34 @@ def restore(change_id: str, apply: bool = False) -> str:
         with safefs.pinned(Path(row['path'])) as pin:
             path = _check_current(row, pin=pin)
             residual, warning = _residual(path, row['before_hash'])
+            # There was no file before a change that added it: going back means removing it.
+            removes = row['before_hash'] is None
             if not apply:
-                return detail(change_id) + f'\nRestore the version before this change: agentdetox restore {change_id} --apply\nThe current version will be backed up; file permissions will be preserved. Recovery does not certify that a version is safe.' + warning
+                data = json.loads(row['data'])
+                undoes = ('This record is a cleanup: undoing it puts back the lines it removed'
+                          if data.get('method') == 'selective-removal' else
+                          'This record is a recovery: undoing it puts back the version it replaced')
+                action = (f'This file did not exist before this change, so restoring REMOVES it: agentdetox restore {change_id} --apply\n'
+                          f'To keep the file and take out chosen lines instead: agentdetox clean {change_id}\n'
+                          'The current version will be backed up. ' if removes else
+                          f'{undoes}. Apply it: agentdetox restore {change_id} --apply\n'
+                          'The current version will be backed up; file permissions will be preserved. '
+                          if data.get('origin') == 'restored' else
+                          f'Restore the version before this change: agentdetox restore {change_id} --apply\n'
+                          'The current version will be backed up; file permissions will be preserved. ')
+                return (detail(change_id, restoring=True) + '\n' + action + 'Recovery does not certify that a version '
+                        'is safe.' + warning)
             mode = json.loads(row['data']).get('before_mode')
             if mode is None:
-                mode = baseline_entries().get(str(path), {}).get('mode', 0o600)
+                mode = baseline_entries().get(str(path), {}).get('mode')
+            if mode is None:
+                # No recorded permissions for that version: the file keeps the ones it has now,
+                # as the preview says. A script that was executable stays executable.
+                mode = _current_mode(pin)
             backup = _recover(path, row['before_hash'], row['after_hash'], mode, residual, row['id'], pin=pin)
-            return f'Restored {short_path(str(path))}. Backup: {backup or "file was absent"}.' + warning
+            done = (f'Removed {short_path(str(path))}, which did not exist before C{row["id"]}.' if removes
+                    else f'Restored {short_path(str(path))}.')
+            return f'{done} Backup: {backup or "file was absent"}.' + warning
 
 
 def clean(change_id: str, lines: str | None = None, *, apply: bool = False,
@@ -417,12 +489,24 @@ def clean_version(pin, kind: str, versions, label: str, source: dict, lines: str
     if apply and (not lines or not expected_hash):
         raise ValueError('Preview with --lines first, then use the printed --expected-hash and --apply command')
     if expected_hash is not None and expected_hash != digest:
-        raise StoreError('File changed after the cleanup preview; preview it again before applying')
+        raise StoreError(_cleaned_already(path, digest, source, label)
+                         or 'File changed after the cleanup preview; preview it again before applying')
     before, after = versions(current)
-    plan = cleanup.plan(before, after, current, lines)
+    try:
+        plan = cleanup.plan(before, after, current, lines)
+    except (StoreError, ValueError) as error:
+        done = _cleaned_already(path, digest, source, label)
+        if done is None:
+            raise
+        raise StoreError(done) from error
     target = plan.content.decode('utf-8')
-    residual, warning = _residual_text(path, target, kind)
-    result = dict(change=label, path=str(path), current_hash=digest,
+    residual, warning = _residual_text(path, target, kind, cleanup=True)
+    flagged: list[int] = []
+    if not plan.selected:
+        # Nothing chosen yet: say which of the listed lines the rules flag, and warn of nothing.
+        warning = ''
+        flagged = sorted(set(_flagged_lines(path, after.decode('utf-8'), kind).values()) & set(plan.added))
+    result = dict(change=label, path=str(path), current_hash=digest, flagged=flagged,
                   added=[{'line': n, 'text': _cleanup_line(text)}
                          for n, text in plan.added.items()],
                   selected=plan.selected, current_lines=plan.current_lines,
@@ -433,8 +517,8 @@ def clean_version(pin, kind: str, versions, label: str, source: dict, lines: str
                   warning=warning, applied=False, backup=None)
     if not apply:
         return result
-    original_flags = {finding_id(f) for f in scan_text(str(path), str(path), current.decode('utf-8'), kind)}
-    remaining_flags = {finding_id(f) for f in scan_text(str(path), str(path), target, kind)}
+    original_flags = {finding_id(f) for f in scan_stored(scan_text, str(path), str(path), current.decode('utf-8'), kind)}
+    remaining_flags = {finding_id(f) for f in scan_stored(scan_text, str(path), str(path), target, kind)}
     with store_lock():
         if _pinned_digest(pin) != digest:
             raise StoreError('File changed after the cleanup preview; preview it again before applying')
@@ -444,11 +528,36 @@ def clean_version(pin, kind: str, versions, label: str, source: dict, lines: str
             # A store used only for library scans has no metadata yet, and content copies
             # without metadata read as a damaged store.
             pass
+        made: dict = {}
         backup = _recover(path, store_object(plan.content), digest, pin.mode(), residual, None,
                           cleanup_data={**source, 'lines': plan.selected,
-                                        'resolved_flags': sorted(original_flags - remaining_flags)}, pin=pin)
-    result.update(applied=True, backup=str(backup) if backup else None, reload=RELOAD)
+                                        'resolved_flags': sorted(original_flags - remaining_flags)}, pin=pin,
+                          recorded=made)
+    result.update(applied=True, backup=str(backup) if backup else None, reload=RELOAD,
+                  recovery=f"C{made['id']}" if 'id' in made else None)
     return result
+
+
+def _cleaned_already(path: Path, digest: str, source: dict, label: str) -> str | None:
+    """What to say when the file is the one a recorded cleanup of `source` left: applying or
+    previewing that cleanup again then fails for that reason, not for an edit made later."""
+    try:
+        with storage.connection() as db:
+            row = db.execute('SELECT id, data FROM changes WHERE path=? AND after_hash=? ORDER BY id DESC LIMIT 1',
+                             (str(path), digest)).fetchone() if db else None
+    except StoreError:
+        return None
+    if row is None:
+        return None
+    data = json.loads(row['data'])
+    action = data.get('cleanup') or {}
+    if data.get('method') != 'selective-removal' or any(action.get(k) != v for k, v in source.items()):
+        return None
+    lines = action.get('lines') or []
+    many = len(lines) != 1
+    return (f"{label} was already cleaned: line{'s' if many else ''} {','.join(map(str, lines))} "
+            f"{'were' if many else 'was'} removed and recorded as C{row['id']}. Nothing was changed now. "
+            f"To undo that cleanup: agentdetox restore C{row['id']} --apply")
 
 
 # A cleanup changes the file, not what a running agent has already read from it.
@@ -464,7 +573,11 @@ def render_cleanup(data: dict) -> str:
     library = data.get('library')
     lines = [f"Selective cleanup of {data['change']} · {short_path(data['path'])}"]
     if data['applied']:
-        lines += [f"Removed selected lines. Backup: {data['backup']}.", RELOAD,
+        lines += [f"Removed selected lines. Backup: {data['backup']}."]
+        if data.get('recovery'):
+            lines.append(f"Recorded as {data['recovery']}. To undo this cleanup: agentdetox restore "
+                         f"{data['recovery']} --apply (without --apply it shows what that would do).")
+        lines += [RELOAD,
                   'Unselected content was preserved. Review any remaining findings with `agentdetox '
                   + (f"library review {data['change']}`." if library else 'review`.')]
     elif not data['selected']:
@@ -472,8 +585,12 @@ def render_cleanup(data: dict) -> str:
                   'Lines of the inspected version (not current-file line numbers):' if data.get('inspected') else
                   'Added or replaced lines in this recorded version (not current-file line numbers):']
         lines += [f"{item['line']:>5}  {printable(item['text'])}" for item in data['added']]
-        lines += [f"Choose only unwanted lines: agentdetox clean {data['change']} --lines 3,5-7"
-                  if data['added'] else 'This change has no added lines to clean.']
+        flagged = ','.join(map(str, data.get('flagged') or []))
+        lines += ['This change has no added lines to clean.'] if not data['added'] else [
+            f"The rules flag line {flagged}. Preview removing only that: agentdetox clean {data['change']} --lines {flagged}"
+            if flagged else
+            "Choose only unwanted lines by the numbers above, singly or as ranges: "
+            f"agentdetox clean {data['change']} --lines <numbers>"]
     else:
         chosen = ','.join(map(str, data['selected']))
         lines += [data['diff'],
@@ -514,19 +631,22 @@ def _residual(path: Path, target_hash: str | None) -> tuple[list, str]:
     return _residual_text(path, target)
 
 
-def _residual_text(path: Path, target: str, kind: str | None = None) -> tuple[list, str]:
+def _residual_text(path: Path, target: str, kind: str | None = None, cleanup: bool = False) -> tuple[list, str]:
     if kind is None:
         cf = classify(path, project=path.parent)
         kind = cf.kind if cf else 'config' if path.suffix in ('.json', '.toml') else 'memory'
-    residual = [f for f in allowlist.unsuppressed(scan_text(str(path), str(path), target, kind))
+    residual = [f for f in allowlist.unsuppressed(scan_stored(scan_text, str(path), str(path), target, kind))
                 if f.severity in ('medium', 'high')]
-    warning = ('\nWARNING: the recovery version still has rule findings: ' +
-               printable('; '.join(sorted({f.message for f in residual}))) + '. Restoring it does not clear these findings.') if residual else ''
+    said = printable('; '.join(sorted({f.message for f in residual})))
+    warning = '' if not residual else (
+        f'\nWARNING: with these lines removed the file still has rule findings: {said}.' if cleanup else
+        f'\nWARNING: the recovery version still has rule findings: {said}. Restoring it does not clear these findings.')
     return residual, warning
 
 
 def _recover(path: Path, target_hash: str | None, current_hash: str | None, mode: int, residual: list,
-             change_id: int | None, *, cleanup_data: dict | None = None, pin=None) -> Path | None:
+             change_id: int | None, *, cleanup_data: dict | None = None, pin=None,
+             recorded: dict | None = None) -> Path | None:
     """Replace `path`, now `current_hash`, with the stored `target_hash` version: journalled,
     refused if the file changes meanwhile, the current version kept in quarantine, and the
     result recorded in the same transaction. Every read and write of the file goes through
@@ -547,6 +667,7 @@ def _recover(path: Path, target_hash: str | None, current_hash: str | None, mode
         with contextlib.ExitStack() as stack:
             if pin is None:
                 pin = stack.enter_context(safefs.pinned(path))
+            pin.sweep()     # what a recovery stopped half-way left beside the file
             original = pin.read()
             if (hashlib.sha256(original).hexdigest() if original is not None else None) != current_hash:
                 raise StoreError('The file changed since it was checked; review it again')
@@ -568,6 +689,8 @@ def _recover(path: Path, target_hash: str | None, current_hash: str | None, mode
                 entry = ledger.record(path, 'restored', current_hash, data, findings=residual, **fields)
                 if entry is None:
                     raise StoreError('Could not record recovery')
+                if recorded is not None:
+                    recorded['id'] = entry.id
                 if change_id is not None:
                     db.execute("UPDATE changes SET review_state='restored' WHERE id=?", (change_id,))
                     db.execute("UPDATE findings SET status='restored' WHERE change_id=?", (change_id,))
@@ -598,10 +721,27 @@ def _recover(path: Path, target_hash: str | None, current_hash: str | None, mode
                 db.execute("UPDATE operations SET stage='completed', backup=? WHERE id=?", (str(backup) if backup else None, operation))
     except (OSError, StoreError) as e:
         with storage.connection(write=True) as db:
+            # Where the backup is if one was written; `operation_backup` says whether it was.
             db.execute("UPDATE operations SET stage='failed', backup=?, error=? WHERE id=?",
                        (str(backup_path), str(e), operation))
         raise
     return backup
+
+
+def _current_mode(pin) -> int:
+    try:
+        return pin.mode()
+    except OSError:
+        return 0o600
+
+
+def operation_backup(operation) -> str:
+    """Where an unfinished recovery's backup is, said only if it is there: the path is
+    recorded before the copy is made, and a recovery stopped earlier wrote none."""
+    backup = operation['backup'] or str(store_dir() / 'quarantine' / operation['id'] / 'content')
+    if Path(backup).exists():
+        return f'backup: {backup}'
+    return 'no backup was written, so the file was not replaced'
 
 
 def handled_findings() -> set[tuple[str, str | None, str]]:

@@ -19,6 +19,7 @@ import contextlib
 import os
 import stat
 import sys
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -29,6 +30,8 @@ PINNED = (sys.platform != "win32" and os.open in os.supports_dir_fd and os.renam
           and os.stat in os.supports_dir_fd and os.unlink in os.supports_dir_fd
           and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"))
 TEMP_PREFIX = ".agentdetox-restore-"
+# A staged replacement older than this (seconds) belongs to a recovery that is not running.
+STALE_TEMP = 600.0
 MAX_LINK_HOPS = 16
 _BINARY = getattr(os, "O_BINARY", 0)
 _CLOEXEC = getattr(os, "O_CLOEXEC", 0)
@@ -286,6 +289,28 @@ class Pin:
     def discard(self, temp: str) -> None:
         with contextlib.suppress(OSError):
             os.unlink(temp if PINNED else self.path.with_name(temp), dir_fd=self._fd)
+
+    def sweep(self, older_than: float = STALE_TEMP) -> int:
+        """Remove replacements an earlier recovery staged in this folder and never used: it
+        was stopped between writing one and renaming it. Only AgentDetox's own, by their
+        name, and only old ones, so a recovery running right now keeps its file."""
+        removed = 0
+        try:
+            names = os.listdir(self._fd if PINNED and self._fd is not None else self.path.parent)
+        except OSError:
+            return 0
+        for name in names:
+            if not name.startswith(TEMP_PREFIX):
+                continue
+            target, dir_fd = (name, self._fd) if PINNED else (self.path.with_name(name), None)
+            try:
+                found = os.stat(target, dir_fd=dir_fd, follow_symlinks=False)
+                if stat.S_ISREG(found.st_mode) and time.time() - found.st_mtime > older_than:
+                    os.unlink(target, dir_fd=dir_fd)
+                    removed += 1
+            except OSError:
+                continue
+        return removed
 
     def unlink(self) -> None:
         if not PINNED:

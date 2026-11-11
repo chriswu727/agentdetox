@@ -10,7 +10,7 @@ from pathlib import Path
 from . import __version__, allowlist, background, daemon, doctor, events, settings, storage
 from .adapters import SHELL_TOOLS
 from .consistency import NLI
-from .context import home_dir, short_path
+from .context import display_path, home_dir, short_path
 from .findings import printable
 from .integrity import StoreError, baseline_entries, store_dir, usage
 
@@ -18,8 +18,9 @@ ACTIVITY = ("blocked", "asked", "recorded", "contradictions", "notices")
 _DECISIONS = {"deny": "blocked", "ask": "asked", "record": "recorded"}
 
 
-def describe(row: dict) -> tuple[str, str, str]:
-    """(what happened, what it was about, ids the user can allow) for one logged event."""
+def describe(row: dict, short: bool = False) -> tuple[str, str, str]:
+    """(what happened, what it was about, ids the user can allow) for one logged event. `short`
+    words it for the terminal, with paths under the home folder shown with ~."""
     event = row.get("event", "")
     flags = row.get("flags") or []
     ids = " ".join(dict.fromkeys(f.get("id", "") for f in flags)) or row.get("id", "")
@@ -27,6 +28,8 @@ def describe(row: dict) -> tuple[str, str, str]:
         label = _DECISIONS.get(row.get("decision", ""), row.get("decision", ""))
         text = "; ".join(f.get("what", "") for f in flags) or row.get("reason", "")
         target = " ".join(str(row.get("target") or "").split())
+        if short and str(row.get("tool", "")).lower() not in SHELL_TOOLS:
+            target = short_path(target)
         if len(target) > 70:  # a command reads from the start, a path from its file name
             target = target[:69] + "…" if str(row.get("tool", "")).lower() in SHELL_TOOLS else "…" + target[-69:]
         if target:
@@ -55,13 +58,27 @@ def describe(row: dict) -> tuple[str, str, str]:
     elif event == 'context_inspected':
         label, ids = 'inspected', ', '.join(row.get('review', [])[:5])
         text = (f"{row.get('files', 0)} context files inspected from the command line; "
-                f"{len(row.get('review', []))} review item(s) open")
+                + (f"{len(row.get('review', []))} recorded for review" if short else
+                   f"{len(row.get('review', []))} review item(s) open"))
     elif event == 'cleanup_applied':
         label, ids = 'cleaned', str(row.get('recovery', ''))
-        text = f"{row.get('path')}: removed {len(row.get('lines', []))} selected lines from {row.get('change')}"
+        path = str(row.get('path') or '')
+        count = len(row.get('lines', []))
+        text = (f"{display_path(path) if short else path}: removed {count} selected "
+                f"line{'' if short and count == 1 else 's'} from {row.get('change')}")
     else:
         label, text = event, ""
     return label, printable(" ".join(str(text).split())), ids
+
+
+def clip(text: str, width: int) -> str:
+    """`text` cut to `width` characters at a word boundary, marked with … when cut."""
+    if len(text) <= width:
+        return text
+    cut = text[:width - 1]
+    if " " in cut:
+        cut = cut[:cut.rindex(" ")]
+    return cut.rstrip(" ;:,") + "…"
 
 
 def _bucket(row: dict) -> str:
@@ -117,7 +134,8 @@ def collect(project: Path, days: int = 7) -> dict:
         "allowed": len(allowlist.entries()),
         "days": days,
         "activity": {k: activity[k] for k in ACTIVITY},
-        "recent": [dict(zip(("ts", "what", "about", "ids"), (r.get("ts", ""), *describe(r)))) for r in rows[-5:]],
+        "recent": [dict(zip(("ts", "what", "about", "ids"), (r.get("ts", ""), *describe(r))),
+                        summary=describe(r, short=True)[1]) for r in rows[-5:]],
     }
 
 
@@ -149,7 +167,7 @@ def render(data: dict) -> str:
         source = (f" (AGENTDETOX_{c['key'].upper()})" if c["source"] == "env"
                   else " (config file)" if c["value"] != settings.DEFAULTS[c["key"]] else "")
         inactive = c["key"] == "contradiction" and c["value"] != "off" and not data["contradiction_model"]
-        checks.append(f"{settings.LABELS[c['key']]}: {c['value']}{source}"
+        checks.append(f"{settings.LABELS[c['key']]} ({c['key']}): {c['value']}{source}"
                       + (" (inactive: model not installed)" if inactive else ""))
     checks.append("change with `agentdetox config <key> <value>`")
     row("Checks", *checks)
@@ -190,7 +208,7 @@ def render(data: dict) -> str:
     row(f"Last {data['days']} days", f"{a['blocked']} blocked, {a['asked']} asked, {a['recorded']} recorded, "
                                      f"{a['contradictions']} contradiction(s), {a['notices']} session notice(s)")
     if data["recent"]:
-        recent = [f"{r['ts'][5:16].replace('T', ' ')}  {r['what']:<13} {r['about'][:90]}"
+        recent = [f"{r['ts'][5:16].replace('T', ' ')}  {r['what']:<13} {clip(r.get('summary', r['about']), 90)}"
                   + (f" [{r['ids']}]" if r["ids"] else "") for r in data["recent"]]
         row("Recent", *recent, "`agentdetox events` for more")
     home = str(home_dir())

@@ -146,8 +146,18 @@ def test_program_names(token, name):
 def test_git_bash_drive_paths(windows):
     assert compat.native_path("/c/Users/me/.agentdetox/allowlist.json") == "c:/Users/me/.agentdetox/allowlist.json"
     assert compat.native_path("/d") == "d:/"
+    assert compat.native_path("/dev/..//c/Users/me/CLAUDE.md") == "c:/Users/me/CLAUDE.md"
+    assert compat.native_path("//c/share/x") == "//c/share/x"
     assert compat.native_path("/tmp/x") == "/tmp/x"
     assert compat.native_path("notes/x.md") == "notes/x.md"
+
+
+def test_unreadable_write_to_a_backslashed_context_path_asks(windows, env):
+    _, project, _ = env
+    _, out = hooks.handle("claude-code", {"hook_event_name": "PreToolUse", "cwd": str(project), "tool_name": "Write",
+                                          "tool_input": {"old_string": 1.0,
+                                                         "file_path": f"{project}\\.claude\\rules\\style.md"}})
+    assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "ask"
 
 
 def test_posix_paths_are_left_alone(monkeypatch):

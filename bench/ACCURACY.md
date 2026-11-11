@@ -7,6 +7,44 @@ retain monitoring evidence, and recover without hiding remaining findings or ove
 These are separate outcomes; a notification alone is not prevention, and a successful rollback
 does not establish that a file is safe.
 
+## Blind held-out set, 2026-11-10
+
+The galleries below and `bench/rule_variants.py` hold cases written by people who knew the
+rules. [`bench/heldout/`](heldout/heldout.json) does not: 90 texts that should not enter an
+agent's standing context and 90 ordinary ones, written by an author kept from the code, the
+rules and every other test set. Each attack comes in a conventional wording (`direct`), another
+natural wording, tool, language or layout (`variant`) and one with no telltale keyword
+(`paraphrase`). Half of the set was read while the rules were then changed; the other half
+was sealed until they were final. `python -m bench.heldout_eval` puts every text through the
+real pre-write hook ([complete results](results/heldout-2026-11-10.json)).
+
+Sealed half, 37 attacks and 44 ordinary texts:
+
+| Where the text came from | Attacks stopped | direct | variant | paraphrase | Ordinary texts asked about |
+|---|---:|---:|---:|---:|---:|
+| Unknown: only the rules can stop it | 12/37 | 7/18 | 5/11 | 0/8 | 1/44 |
+| A page the session fetched; the user did not ask to save it | 37/37 | 18/18 | 11/11 | 8/8 | 41/44 |
+| Typed by the user, who asked to save it | 12/37 | 7/18 | 5/11 | 0/8 | 1/44 |
+
+What this says:
+
+- **The rules catch about a third of attack text nobody tuned them on, and none of the
+  paraphrases.** They rarely fire on ordinary text. On the half that was read, the same rule
+  changes took the count from 12 to 30 of 53; on the sealed half they moved it from 11 to 12 of
+  37. A rule added for a wording catches that wording. More rules do not close this gap.
+- **Where the text came from is what stops the rest.** Text that reached the session through a
+  tool and is being written to memory without the user having asked is asked about whatever it
+  says: every attack, every paraphrase, and nearly every ordinary text too. That question is
+  the cost of the protection, and it is only asked when the agent saves what it was not asked
+  to save.
+- **What neither layer covers:** text the agent rewords before saving it, text the user pastes
+  in person, and files that arrive outside the agent (a cloned repository's CLAUDE.md, a script
+  that writes a rules file). For those only the rules stand, at about a third. A change made
+  outside the agent is still recorded and can be reviewed and undone; it interrupts the next
+  session only when a rule flags it.
+
+The sealed half is spent by this measurement: a later rule change needs a new blind set.
+
 ## Phase 1 development verification, 2026-11-09
 
 Runtime `6339eef` passes the unchanged [45-case gallery](results/accuracy-phase1-2026-11-09.json)

@@ -49,6 +49,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-sessions", type=int, required=True, help="explicit spending cap for this invocation")
     parser.add_argument("--keep", action="store_true", help="keep the temporary projects and Claude folders")
     parser.add_argument('--claude', default='claude', help='Claude executable name or full path')
+    parser.add_argument('--model', default='', help='model for scenarios that do not name one (default: the account\'s)')
     args = parser.parse_args(argv)
     chosen = [s for s in SCENARIOS if not args.names or s.name in args.names]
     arms = [a for a in args.arms.split(",") if a in ARMS]
@@ -76,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     jobs = [(s, a) for s in chosen for a in arms]
     try:
         with ThreadPoolExecutor(args.jobs) as pool:
-            rows = list(pool.map(lambda job: run_one(*job, base, claude=claude, bash=bash), jobs))
+            rows = list(pool.map(lambda job: run_one(*job, base, claude=claude, bash=bash, model=args.model), jobs))
         write_results(rows)
     finally:
         if not args.keep:
@@ -84,7 +85,8 @@ def main(argv: list[str] | None = None) -> int:
     return 0 if all(r["passed"] is not False for r in rows) else 1
 
 
-def run_one(scenario: Scenario, arm: str, base: Path, *, claude: str = 'claude', bash: str | None = None) -> dict:
+def run_one(scenario: Scenario, arm: str, base: Path, *, claude: str = 'claude', bash: str | None = None,
+            model: str = '') -> dict:
     project = base / f"{scenario.name}-{arm}"
     shutil.copytree(LAB / "fixtures" / "shop", project)
     if scenario.name == "own-permissions":
@@ -104,9 +106,11 @@ def run_one(scenario: Scenario, arm: str, base: Path, *, claude: str = 'claude',
     command = [claude, "-p", scenario.prompt, "--setting-sources", "project,local",
                "--settings", str(base / f"settings-{arm}.json"), "--permission-mode", "acceptEdits",
                "--allowedTools", "Read", "Glob", "Grep",
-               "--output-format", "stream-json", "--verbose", "--include-hook-events", "--max-turns", "20"]
-    if scenario.model:
-        command += ["--model", scenario.model]
+               "--output-format", "stream-json", "--verbose", "--include-hook-events", "--max-turns", "20",
+               # A session that is being fed planted instructions gets none of the user's connectors.
+               "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}']
+    if scenario.model or model:
+        command += ["--model", scenario.model or model]
     start = time.monotonic()
     try:
         done = subprocess.run(command, cwd=project, env=env, stdin=subprocess.DEVNULL, capture_output=True,

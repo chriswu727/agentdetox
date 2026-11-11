@@ -286,7 +286,7 @@ def test_status_before_install(env, capsys):
     assert main(["status", "--project", str(project)]) == 0
     out = capsys.readouterr().out
     assert "hooks not installed" in out and "nothing yet" in out
-    assert "copied from untrusted input: ask" in out
+    assert "copied from untrusted input (copied): ask" in out
 
 
 def test_status_after_activity(env, capsys):
@@ -301,9 +301,9 @@ def test_status_after_activity(env, capsys):
     health = out.split("Watching")[0]
     assert "failure" not in health and "OK" in health and "context files" in out
     assert "inactive: model not installed" in out
-    assert "contradictions: record (inactive: model not installed)" in out
+    assert "contradictions (contradiction): record (inactive: model not installed)" in out
     assert "1 blocked, 1 asked, 0 recorded" in out
-    assert "copied from untrusted input: record (config file)" in out
+    assert "copied from untrusted input (copied): record (config file)" in out
     assert "blocked" in out.split("Recent")[1] and "[" in out.split("Recent")[1]
     main(["status", "--project", str(project), "--format", "json"])
     data = json.loads(capsys.readouterr().out)
@@ -335,3 +335,15 @@ def test_status_shows_background_checks_that_wait_or_failed(env, capsys):
     assert (data["background"]["queued"], data["background"]["failed"]) == (1, 1)
     assert data["background"]["last_failure"]["error"] == "RuntimeError" and "undisclosed" not in json.dumps(data)
     assert job["content_hex"] not in json.dumps(data)
+
+
+def test_status_shows_the_keys_that_config_takes(tmp_path, monkeypatch, capsys):
+    from agentdetox import settings
+
+    monkeypatch.setenv("AGENTDETOX_USER_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("AGENTDETOX_HOME", str(tmp_path / "store"))
+    (tmp_path / "home").mkdir()
+    assert main(["status", "--project", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    for key in settings.DEFAULTS:
+        assert f"{settings.LABELS[key]} ({key}): " in out

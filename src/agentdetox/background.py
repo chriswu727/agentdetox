@@ -30,6 +30,8 @@ KEEP_SECONDS = 7 * 86400
 STALLED_AFTER = 600.0
 # Each job holds a copy of the file it is about; a queue nothing drains must not grow without end.
 QUEUE_LIMIT = 500
+# A job holds one file's text twice at most; anything larger handed in is not one.
+MAX_JOB_BYTES = 64 * 1024 * 1024
 _ABANDONED_PART = 3600
 
 
@@ -109,12 +111,35 @@ def enqueue(job: dict) -> Path | None:
     return path
 
 
+def _is_job(path: Path) -> bool:
+    """A regular file below the store that is a job: anything in pending/, or elsewhere an
+    object naming the file it is about. The store's own files (the allowlist, a snapshot
+    list) are objects of other shapes."""
+    from . import paths
+
+    if path.is_symlink() or not path.is_file() or not paths.inside(path, store_dir()):
+        return False
+    if paths.same(path.parent, store_dir() / "pending"):
+        return True     # where earlier versions queued: taken as it is, a damaged one included
+    try:
+        if path.stat().st_size > MAX_JOB_BYTES:
+            return False
+        job = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(job, dict) and isinstance(job.get("path"), str) and ("old" in job or "content_hex" in job)
+
+
 def adopt(path: Path) -> None:
     """Move a job file from outside the queue into it: one an earlier version left in
     pending/, or one handed to `_daemon --job`. Its content is not touched; a job without
     a "queue" entry reads as not yet attempted."""
     try:
         if os.path.realpath(path.parent) == os.path.realpath(queue_dir()):
+            return
+        # Only a job file inside the store: any other file handed in would be moved out of
+        # where it was, and deleted later as a job that could not be read.
+        if not _is_job(path):
             return
         stamp = path.stat().st_mtime_ns
     except OSError:

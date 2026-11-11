@@ -22,10 +22,13 @@ from .findings import Finding
 from .hidden import normalize
 from .persistence import TEXT_RULES
 
-# Tools whose output can carry text an attacker controls: anything fetched, read, run
-# or returned by another agent. MCP tools bring in mail, chat, tickets and the like.
-UNTRUSTED_TOOLS = {"WebFetch", "WebSearch", "Bash", "Read", "Grep", "NotebookRead", "Agent", "Task", "BashOutput"}
-UNTRUSTED_PREFIXES = ("mcp__",)
+# Tools whose result is the agent's own action, or the user's own answer, echoed back. The
+# output of every other tool can carry text an attacker controls: anything fetched, read,
+# run or returned by another agent or an MCP server (mail, chat, tickets). A tool this list
+# has never heard of is one of those: a new way to read something must not be trusted
+# until someone has looked at what it returns.
+TRUSTED_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "TodoWrite", "EnterPlanMode", "ExitPlanMode",
+                 "AskUserQuestion", "Glob", "LS", "KillShell", "KillBash"}
 
 # Share of the new text's 6-token shingles found in one untrusted output. Set on the dev
 # split of bench/provenance_eval.py: the lowest tested value with no benign false alarm.
@@ -96,7 +99,10 @@ def read_transcript(path: str | Path, human_turns: int = HUMAN_TURNS, tail_bytes
         size = f.tell()
         f.seek(max(0, size - tail_bytes))
         raw = f.read().decode("utf-8", errors="replace")
-    lines = raw.splitlines()
+    # Records end at a line feed only. `splitlines` would also cut at U+2028, U+2029 and
+    # U+0085, which JSON may hold unescaped inside a string: a tool result with one in it
+    # would fall apart into fragments and be lost as a source.
+    lines = raw.split("\n")
     if size > tail_bytes:
         lines = lines[1:]  # the first line was cut mid-record
     names: dict[str, str] = {}
@@ -105,37 +111,54 @@ def read_transcript(path: str | Path, human_turns: int = HUMAN_TURNS, tail_bytes
     for line in lines:
         try:
             rec = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError):
             continue
-        msg = rec.get("message") or {}
-        content = msg.get("content")
-        if rec.get("type") == "assistant" and isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "tool_use":
-                    names[block.get("id", "")] = block.get("name", "")
-                    inputs[block.get("id", "")] = block.get("input")
-        elif rec.get("type") == "user" and not rec.get("isMeta"):
-            if isinstance(content, str):
-                turns.append((content, []))
-            elif isinstance(content, list):
-                results = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_result"]
-                if not results:
-                    text = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
-                    turns.append((text, []))
-                for b in results:
-                    use_id = b.get("tool_use_id", "")
-                    tool = names.get(use_id, "")
-                    if not _untrusted(tool):
-                        continue
-                    if not turns:
-                        turns.append(("", []))
-                    turns[-1][1].append(Source(tool, _result_text(b.get("content")), _origin(inputs.get(use_id))))
+        if not isinstance(rec, dict):
+            continue
+        try:
+            _read_record(rec, names, inputs, turns)
+        except (AttributeError, TypeError, KeyError, ValueError):
+            continue    # a record shaped unlike any this reads is no source and no user turn
     recent = turns[-human_turns:]
     return Transcript([s for _, srcs in recent for s in srcs], [h for h, _ in recent])
 
 
+def _read_record(rec: dict, names: dict[str, str], inputs: dict[str, object],
+                 turns: list[tuple[str, list[Source]]]) -> None:
+    msg = rec.get("message") or {}
+    content = msg.get("content")
+    if rec.get("type") == "assistant" and isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                names[block.get("id", "")] = block.get("name", "")
+                inputs[block.get("id", "")] = block.get("input")
+    elif rec.get("type") == "user" and not rec.get("isMeta"):
+        # Only what the person typed counts as theirs. A subagent's prompt (written by the
+        # agent) and a summary of earlier turns (written by the model) are records of the
+        # same type, and either can repeat text that came from a tool.
+        typed = not (rec.get("isSidechain") or rec.get("isCompactSummary"))
+        if isinstance(content, str):
+            if typed:
+                turns.append((content, []))
+        elif isinstance(content, list):
+            results = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_result"]
+            if not results and typed:
+                text = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
+                turns.append((text, []))
+            for b in results:
+                use_id = b.get("tool_use_id", "")
+                # A result whose call is not in the part of the transcript that was read came
+                # from a tool that cannot be named, so it cannot be known to be a trusted one.
+                tool = names.get(use_id) or "unknown tool"
+                if not _untrusted(tool):
+                    continue
+                if not turns:
+                    turns.append(("", []))
+                turns[-1][1].append(Source(tool, _result_text(b.get("content")), _origin(inputs.get(use_id))))
+
+
 def _untrusted(tool: str) -> bool:
-    return tool in UNTRUSTED_TOOLS or tool.startswith(UNTRUSTED_PREFIXES)
+    return tool not in TRUSTED_TOOLS
 
 
 _ORIGIN_KEYS = ("file_path", "notebook_path", "url", "command", "query", "pattern", "path", "description")
@@ -418,12 +441,30 @@ def _excerpt(body: str, shared: set[tuple[str, ...]]) -> str:
     return words[:120] or body.strip()[:120]
 
 
+# Comparing lines is quadratic in repeated ones. Past this many line pairs the comparison
+# sets frequent lines aside, as difflib does by default.
+_EXACT_DIFF = 4_000_000
+
+
+def _added_ranges(old: list[str], new: list[str]) -> list[tuple[int, int]]:
+    """Ranges of `new` that a change added or replaced. The unchanged start and end are set
+    aside first, so one edited line in a long file costs one line's comparison."""
+    limit = min(len(old), len(new))
+    head = 0
+    while head < limit and old[head] == new[head]:
+        head += 1
+    tail = 0
+    while tail < limit - head and old[-1 - tail] == new[-1 - tail]:
+        tail += 1
+    old, new = old[head:len(old) - tail], new[head:len(new) - tail]
+    matcher = difflib.SequenceMatcher(None, old, new, autojunk=len(old) * len(new) > _EXACT_DIFF)
+    return [(head + start, head + end) for tag, _, _, start, end in matcher.get_opcodes() if tag in ("insert", "replace")]
+
+
 def attribute_lines(old: str, new: str, transcript: Transcript | None) -> list[dict]:
     spans = []
     after = new.splitlines()
-    for tag, _, _, start, end in difflib.SequenceMatcher(None, old.splitlines(), after, autojunk=False).get_opcodes():
-        if tag not in ("insert", "replace"):
-            continue
+    for start, end in _added_ranges(old.splitlines(), after):
         for index in range(start, end):
             origin, source, _ = origin_of(after[index], transcript)
             spans.append({"line": index + 1, "origin": origin, "source": source,

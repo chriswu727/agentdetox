@@ -60,3 +60,76 @@ def test_every_command_works_through_python_dash_m(tmp_path, monkeypatch):
     done = subprocess.run([sys.executable, "-I", "-m", "agentdetox.cli", "review"], capture_output=True, text=True,
                           env=dict(os.environ))
     assert done.returncode == 0, done.stderr
+
+
+def _isolated(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENTDETOX_USER_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("AGENTDETOX_HOME", str(tmp_path / "store"))
+    (tmp_path / "home").mkdir()
+
+
+def _usage_error(capsys, argv):
+    import pytest
+
+    with pytest.raises(SystemExit) as stopped:
+        main(argv)
+    assert stopped.value.code == 2
+    return capsys.readouterr().err
+
+
+def test_a_missing_project_folder_is_an_error_for_every_command_that_takes_one(tmp_path, monkeypatch, capsys):
+    _isolated(tmp_path, monkeypatch)
+    missing = str(tmp_path / "no such project")
+    for argv in (["agent", "scan"], ["agent", "inspect"], ["agent", "snapshot"], ["agent", "verify"], ["review"],
+                 ["status"], ["doctor"], ["install", "claude-code"], ["uninstall", "claude-code"]):
+        assert main([*argv, "--project", missing]) == 2, argv
+        assert capsys.readouterr().err == f"error: the project folder {missing} does not exist\n", argv
+    assert not (tmp_path / "store").exists()
+    assert main(["agent", "scan", "--project", missing, "--user-only"]) == 0
+
+
+def test_review_errors_say_what_to_do_next(tmp_path, monkeypatch, capsys):
+    _isolated(tmp_path, monkeypatch)
+    assert main(["review"]) == 0
+    assert capsys.readouterr().out.startswith("Nothing needs review.")
+    assert main(["review", "--search", "x"]) == 0
+    assert "Nothing matches" in capsys.readouterr().out
+    assert main(["review", "C999"]) == 2
+    assert "`agentdetox review` lists the changes" in capsys.readouterr().err
+    assert main(["review", "bogus", "C6"]) == 2
+    err = capsys.readouterr().err
+    assert "Unknown review action bogus" in err and "review accept C<ID>" in err and "review dismiss F<ID>" in err
+
+
+def test_usage_errors_name_what_the_usage_line_shows_and_hide_internal_commands(capsys):
+    err = _usage_error(capsys, ["install"])
+    assert "required: client" in err and err.index("client") < err.index("error:")
+    assert err.startswith("usage: agentdetox install")
+    err = _usage_error(capsys, ["bogus"])
+    assert "_daemon" not in err and "demo" in err
+    assert "_worker" not in _usage_error(capsys, ["library", "bogus"])
+    err = _usage_error(capsys, ["review", "--page", "0"])
+    assert err.startswith("usage: agentdetox review") and "--page must be between" in err
+
+
+def test_a_knowledge_base_scan_error_shows_the_scan_usage(tmp_path, capsys):
+    err = _usage_error(capsys, ["scan", str(tmp_path / "nope")])
+    assert err.startswith("usage: agentdetox scan") and "does not exist" in err
+
+
+def test_help_lists_commands_for_a_new_user_first_and_describes_every_argument(capsys):
+    import re
+
+    import pytest
+
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    listed = re.findall(r"^    (\S+)", capsys.readouterr().out, re.M)
+    assert listed[:7] == ["demo", "install", "status", "review", "clean", "restore", "agent"]
+    assert listed[-1] == "hook" and len(listed) == 23 and "_daemon" not in listed
+    for argv, wanted in ((["review"], ("accept", "dismiss", "F7")), (["restore"], ("the recorded change to undo",)),
+                         (["install"], ("--scope project writes", "the settings in the project folder only"))):
+        with pytest.raises(SystemExit):
+            main([*argv, "--help"])
+        out = " ".join(capsys.readouterr().out.split())
+        assert all(w in out for w in wanted), argv

@@ -4,7 +4,10 @@ a tool that rewrites its own hook config is the behaviour AgentDetox flags in ot
 from __future__ import annotations
 
 import json
+import os
 import re
+import shlex
+import shutil
 import stat
 import subprocess
 import sys
@@ -12,14 +15,15 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import __version__, allowlist, background, compat, daemon, events, settings, storage
+from . import __version__, allowlist, background, compat, daemon, events, review, settings, storage
 from .consistency import NLI, NLI_MODEL
 from .context import claude_dir, home_dir
 from .install import (
-    claude_code_plugin,
     claude_code_settings,
     default_settings_path,
+    missing_hooks,
     plugin_command,
+    plugin_state,
     read_claude_settings,
 )
 from .integrity import StoreError, is_self_hook, store_dir, usage
@@ -35,7 +39,8 @@ def run(project: Path) -> list[Check]:
     checks = [Check("ok", f"agentdetox {__version__} (Python {sys.version.split()[0]})")]
     others = _other_agents(project)
     claude = _claude_code_hooks(project)
-    if others and not claude_dir().exists() and [c.status for c in claude] == ["fail"]:
+    if (others and not claude_dir().exists() and len(claude) == 1
+            and claude[0].message.startswith("Claude Code: hooks not installed")):
         # Someone who uses only Codex or Cursor has no Claude Code hooks to be missing.
         claude = [Check("ok", f"Claude Code: not set up on this machine (no {claude_dir()}); its hooks are not checked")]
     checks += claude
@@ -49,9 +54,11 @@ def run(project: Path) -> list[Check]:
             interrupted = db.execute("SELECT * FROM operations WHERE stage NOT IN ('completed', 'acknowledged')").fetchall() if db else []
         for operation in interrupted:
             checks.append(Check("fail", f"Recovery {operation['id']} for {operation['path']} is incomplete; "
-                                       f"backup: {operation['backup']}; error: {operation['error'] or 'process interrupted'}. "
-                                       "Inspect both, then retry or run `agentdetox health acknowledge-recovery "
-                                       f"{operation['id']}`"))
+                                       f"{review.operation_backup(operation)}; error: "
+                                       f"{operation['error'] or 'process interrupted'}. "
+                                       "Inspect the file, then retry or run `agentdetox health acknowledge-recovery "
+                                       f"{operation['id']}`. A temporary file it may have left beside the file "
+                                       "(.agentdetox-restore-*) is removed by the next restore or clean there"))
     except StoreError:
         pass
     try:
@@ -70,8 +77,10 @@ def _claude_code_hooks(project: Path) -> list[Check]:
     found = []
     in_settings = False
     seen = set()
-    for scope in ("user", "project"):
-        path = default_settings_path("claude-code", scope, project)
+    registered: list[str] = []
+    for path in (default_settings_path("claude-code", "user", project),
+                 default_settings_path("claude-code", "project", project),
+                 project / ".claude" / "settings.local.json"):
         # In the home folder the project's settings are the user's settings.
         if not path.exists() or path.resolve() in seen:
             continue
@@ -85,7 +94,14 @@ def _claude_code_hooks(project: Path) -> list[Check]:
                     for g in groups for h in g.get("hooks", []) if is_self_hook(h.get("command", ""))]
         if commands:
             in_settings = True
+            registered.append(commands[0])
             found.append(_check_claude_settings(path, settings, commands[0]))
+    if len(registered) > 1:
+        # Claude Code runs the hooks of every settings file that applies; it does not merge them.
+        found.append(Check("warn", f"Claude Code: AgentDetox's hooks are registered in {len(registered)} settings "
+                                   "files that apply here, so every check runs more than once; keep one and remove "
+                                   "the others with `agentdetox uninstall claude-code` (add `--scope project` for "
+                                   "the project's)"))
     disabled = False
     for path in (default_settings_path("claude-code", "user", project),
                  project / ".claude/settings.json", project / ".claude/settings.local.json"):
@@ -97,16 +113,19 @@ def _claude_code_hooks(project: Path) -> list[Check]:
             continue
     if disabled:
         found.append(Check("fail", "Claude Code: disableAllHooks is true; AgentDetox hooks are disabled"))
-    plugin = claude_code_plugin(project)
+    plugin, problem = plugin_state(project)
+    if problem:
+        # Enabled in settings but not installed, or another marketplace's: no hooks to count on.
+        found.append(Check("warn" if plugin else "fail", f"Claude Code: {problem}"))
     if plugin:
         found.append(_check_plugin(plugin))
         if in_settings:
             found.append(Check("warn", f"Claude Code: the {plugin} plugin and settings both register AgentDetox's "
                                        "hooks, so every check runs twice; remove the settings copy with "
                                        "`agentdetox uninstall claude-code`"))
-    if not found:
-        return [Check("fail", "Claude Code: hooks not installed (install the plugin, or run "
-                              "`agentdetox install claude-code --apply`)")]
+    if not found or problem and not plugin and not in_settings:
+        found.append(Check("fail", "Claude Code: hooks not installed (install the plugin, or run "
+                                   "`agentdetox install claude-code --apply`)"))
     return found
 
 
@@ -127,8 +146,9 @@ def _check_plugin(plugin: str) -> Check:
     return Check("ok", f"Claude Code: hooks run by the {plugin} plugin ({command[0]})")
 
 
-def _version(exe: str) -> str:
-    out = subprocess.run([exe, "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace",
+def _version(program: str | list[str]) -> str:
+    argv = [program] if isinstance(program, str) else program
+    out = subprocess.run([*argv, "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace",
                          timeout=20).stdout.strip()
     return out.split()[-1] if out else "?"
 
@@ -162,19 +182,48 @@ def outdated_settings(project: Path) -> list[Path]:
 
 
 def _check_claude_settings(path: Path, settings: dict, command: str) -> Check:
-    if _registered_by_older(settings, command):
-        return Check("warn", f"Claude Code: hooks in {path} are from an older version; "
-                             "re-run `agentdetox install claude-code --apply`")
-    exe = compat.hook_executable(command)
-    if not Path(exe).exists():
-        return Check("fail", f"Claude Code: hook command {exe} does not exist; every tool call will report a hook error")
+    missing = missing_hooks(settings.get("hooks", {}), is_self_hook)
+    blind = [name for name in missing if name in ("SessionStart", "PreToolUse")]
+    if blind:
+        # Without these nothing is checked before a write, or reported at session start.
+        return Check("fail", f"Claude Code: AgentDetox's hooks in {path} are missing {', '.join(missing)}, so "
+                             + ("writes are not checked before they happen" if "PreToolUse" in blind
+                                else "changes made outside the agent are not reported")
+                             + "; re-run `agentdetox install claude-code --apply`")
+    if missing or _registered_by_older(settings, command):
+        return Check("warn", f"Claude Code: hooks in {path} are from an older version"
+                             + (f" (missing {', '.join(missing)})" if missing else "")
+                             + "; re-run `agentdetox install claude-code --apply`")
     try:
-        hooked = _version(exe)
+        argv = hook_program(command)
+    except ValueError as e:
+        return Check("fail", f"Claude Code: the hook command in {path} cannot be read ({e}): {command[:120]}")
+    shown = " ".join(argv)
+    if len(argv) == 1 and not Path(argv[0]).exists():
+        return Check("fail", f"Claude Code: hook command {shown} does not exist; every tool call will report a hook error")
+    try:
+        hooked = _version(argv)
     except (OSError, subprocess.SubprocessError) as e:
-        return Check("fail", f"Claude Code: hook command {exe} failed to run: {e}")
+        return Check("fail", f"Claude Code: hook command {shown} failed to run: {e}")
     if hooked != __version__:
-        return Check("warn", f"Claude Code: hooks run agentdetox {hooked}, this is {__version__} ({exe})")
+        return Check("warn", f"Claude Code: hooks run agentdetox {hooked}, this is {__version__} ({shown})")
     return Check("ok", f"Claude Code: hooks installed and current in {path}")
+
+
+def hook_program(command: str) -> list[str]:
+    """What to run to ask a hook command's AgentDetox for its version: the program itself
+    (looked up on PATH when it is a bare name), or the interpreter with `-m agentdetox` when
+    the hook is run that way. Raises ValueError when the command cannot be split."""
+    words = shlex.split(command, posix=not compat.WINDOWS)
+    words = [word.strip('"') for word in words] if compat.WINDOWS else words
+    if not words:
+        raise ValueError("empty command")
+    if "-m" in words[1:] and words[words.index("-m") + 1:words.index("-m") + 2] in (["agentdetox"], ["agentdetox.cli"]):
+        return words[:words.index("-m") + 2]
+    program = words[0]
+    if not Path(program).exists() and os.sep not in program and (found := shutil.which(program)):
+        program = found
+    return [program]
 
 
 def _settings() -> list[Check]:

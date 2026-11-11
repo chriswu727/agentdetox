@@ -5,6 +5,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import sys
 from collections import Counter
 from dataclasses import asdict
@@ -20,6 +21,7 @@ from . import (
     events,
     ledger,
     review,
+    session,
     settings,
     status,
     storage,
@@ -33,29 +35,40 @@ from .entrypoint import _utf8_output
 from .findings import ID_LENGTH, SEVERITY_ORDER, at_least, finding_id, printable
 from .hooks import main_hook
 from .install import (
-    claude_code_plugin,
     claude_code_settings,
     codex_hooks,
     cursor_hooks,
     default_settings_path,
     hook_command,
     install_claude_code,
+    plugin_state,
     remove_claude_code_hooks,
     uninstall_claude_code,
 )
-from .integrity import StoreError, gc, reset_baseline, snapshot, snapshot_text, store_dir, verify
+from .integrity import StoreError, baseline_paths, gc, reset_baseline, snapshot, snapshot_text, store_dir, verify
 from .persistence import guarded_sections
+
+
+class _Parser(argparse.ArgumentParser):
+    def error(self, message):
+        # Commands whose name starts with "_" are started by AgentDetox itself, never typed.
+        if "invalid choice" in message:
+            message = re.sub(r", '?_[a-z_]+'?(?=[,)])", "", message)
+        super().error(message)
 
 
 def main(argv: list[str] | None = None) -> int:
     _utf8_output()
-    parser = argparse.ArgumentParser(prog="agentdetox", description=__doc__)
+    parser = _Parser(prog="agentdetox", description=__doc__)
     parser.add_argument("--version", action="version", version=f"agentdetox {__version__}")
     sub = parser.add_subparsers(dest="command", required=True, metavar="command")
 
     p_review = sub.add_parser("review", help="review changes, evidence and exact versions")
-    p_review.add_argument("action", nargs="?")
-    p_review.add_argument("id", nargs="?")
+    p_review.add_argument("action", nargs="?", metavar="C42|accept|dismiss",
+                          help="a change id, to show that change; or accept, then a change id, to accept that exact "
+                               "version; or dismiss, then a finding id (F7), to set that one finding aside. With "
+                               "none, list the changes that need attention")
+    p_review.add_argument("id", nargs="?", help="the id that accept (C42) or dismiss (F7) acts on")
     p_review.add_argument("--since", help="show recent changes, e.g. 7d")
     p_review.add_argument("--all", action="store_true", help="include changes that need no attention")
     review_scope = p_review.add_mutually_exclusive_group()
@@ -63,13 +76,15 @@ def main(argv: list[str] | None = None) -> int:
     review_scope.add_argument("--global", dest="global_scope", action="store_true", help="include shared user context in interactive review")
     p_review.add_argument("--file", type=Path, help="only this file (relative to --project when supplied)")
     p_review.add_argument("--search", default="", help="match a path or finding description")
-    p_review.add_argument("--page", type=int, default=1)
-    p_review.add_argument("--page-size", type=int, default=20)
-    p_review.add_argument("--group-by", choices=["file", "change"], default="file")
+    p_review.add_argument("--page", type=int, default=1, help="which page of the list to show (default: 1)")
+    p_review.add_argument("--page-size", type=int, default=20, help="entries per page, up to 200 (default: 20)")
+    p_review.add_argument("--group-by", choices=["file", "change"], default="file",
+                          help="one entry per file, or one per change (default: file)")
     p_review.add_argument("--interactive", action="store_true", help="browse and handle changes in a terminal")
     p_review.add_argument("--format", choices=["text", "json"], default="text")
     p_restore = sub.add_parser("restore", help="preview recovery of a recorded change")
-    p_restore.add_argument("id")
+    p_restore.add_argument("id", help="the recorded change to undo (C42), as `agentdetox review` lists it; a cleanup "
+                                      "prints the id that undoes it")
     p_restore.add_argument("--apply", action="store_true", help="apply the previewed recovery")
     p_clean = sub.add_parser("clean", help="preview removal of selected added lines, preserving later edits")
     p_clean.add_argument("id", help="a recorded change (C42) or an inspected library file (M42)")
@@ -157,39 +172,56 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--user-only", action="store_true", help="skip project-level files")
         p.add_argument("--format", choices=["text", "json"], default="text")
 
-    a_scan = asub.add_parser("scan", help="scan context files for planted instructions (read-only)")
+    fail_on_help = ("exit with status 1 when a finding is at least this severe, or when a folder asked for could "
+                    "not be looked at (default: high); 'none' exits 0 whatever is found. Errors exit with 2")
+    a_scan = asub.add_parser("scan", help="scan context files for planted instructions (read-only)",
+                             description="Scan context files for planted instructions. Read-only. Exit status: 0 "
+                                         "when nothing reaches --fail-on, 1 when something does or the scan is "
+                                         "incomplete, 2 on an error.")
     agent_args(a_scan)
-    a_scan.add_argument("--fail-on", choices=["low", "medium", "high", "none"], default="high")
+    a_scan.add_argument("--fail-on", choices=["low", "medium", "high", "none"], default="high", help=fail_on_help)
     a_scan.add_argument("--consistency", action="store_true",
                         help="also look for memory entries that contradict each other (needs agentdetox[nli])")
     a_inspect = asub.add_parser("inspect", help="scan, and record what is flagged or changed as review items "
                                                 "(C ids) that `review` and `clean` take; nothing flagged is trusted")
     agent_args(a_inspect)
-    a_inspect.add_argument("--fail-on", choices=["low", "medium", "high", "none"], default="high")
+    a_inspect.add_argument("--fail-on", choices=["low", "medium", "high", "none"], default="high", help=fail_on_help)
     a_snap = asub.add_parser("snapshot", help="record recovery checkpoints for current context files")
     agent_args(a_snap)
     a_snap.add_argument("--reset", action="store_true",
                         help="start a new snapshot list when the old one is damaged or missing")
     a_verify = asub.add_parser("verify", help="report context files changed since the snapshot")
     agent_args(a_verify)
-    a_verify.add_argument("--fail-on", choices=["low", "medium", "high", "none"], default="high")
+    a_verify.add_argument("--fail-on", choices=["low", "medium", "high", "none"], default="high", help=fail_on_help)
     a_restore = asub.add_parser("restore", help="put back the snapshotted version; the current one is quarantined")
     a_restore.add_argument("paths", type=Path, nargs="+")
     asub.add_parser("gc", help="delete snapshot copies nothing refers to (also runs daily on its own)")
 
     p_hook = sub.add_parser("hook", help="hook entry point called by the agent (reads the event JSON on stdin)")
-    p_hook.add_argument("agent_name", choices=["claude-code", "codex", "cursor"])
+    p_hook.add_argument("agent_name", choices=["claude-code", "codex", "cursor"], metavar="client",
+                        help="claude-code, codex or cursor")
 
     p_install = sub.add_parser("install", help="register AgentDetox's hooks with an agent")
-    p_install.add_argument("agent_name", choices=["claude-code", "codex", "cursor"])
-    p_install.add_argument("--scope", choices=["user", "project"], default="user")
-    p_install.add_argument("--project", type=Path, default=Path.cwd())
+    p_install.add_argument("agent_name", choices=["claude-code", "codex", "cursor"], metavar="client",
+                           help="the agent to protect: claude-code, codex or cursor")
+    p_install.add_argument("--scope", choices=["user", "project"], default="user",
+                           help="user: the agent's settings in your home folder, used in every project (default); "
+                                "project: the settings in the project folder only")
+    p_install.add_argument("--project", type=Path, default=Path.cwd(),
+                           help="the project folder: where --scope project writes, and whose files are checked "
+                                "with the rest (default: current directory)")
     p_install.add_argument("--apply", action="store_true", help="write the config (default: print it)")
 
-    p_uninstall = sub.add_parser("uninstall", help="remove AgentDetox's hooks, keeping all other settings")
-    p_uninstall.add_argument("agent_name", choices=["claude-code"])
+    p_uninstall = sub.add_parser("uninstall", help="remove AgentDetox's hooks, keeping all other settings",
+                                 description="Remove AgentDetox's hooks, keeping all other settings. This applies at "
+                                             "once, with no preview; the old file is backed up first.")
+    p_uninstall.add_argument("agent_name", choices=["claude-code"], metavar="client",
+                             help="the agent to remove the hooks from: claude-code")
     p_uninstall.add_argument("--scope", choices=["user", "project"], default="user")
     p_uninstall.add_argument("--project", type=Path, default=Path.cwd())
+    p_uninstall.add_argument("--apply", action="store_true",
+                             help="accepted and ignored, as uninstall always applies; it matches install, clean "
+                                  "and restore")
 
     p_events = sub.add_parser("events", help="show what AgentDetox recently asked, blocked, noticed or recorded")
     p_events.add_argument("-n", type=int, default=20, help="number of events (default 20)")
@@ -228,7 +260,53 @@ def main(argv: list[str] | None = None) -> int:
     p_blame = sub.add_parser("blame", help="where each line of a memory, rules or config file came from")
     p_blame.add_argument("path", type=Path)
 
+    # Listed by what a new user needs first; commands for rare or internal use last.
+    first = ["demo", "install", "status", "review", "clean", "restore", "agent", "log", "blame", "events", "allow",
+             "config", "doctor", "uninstall", "library", "scan", "trace", "export", "history", "health", "daemon",
+             "fetch-models", "hook"]
+    sub._choices_actions.sort(key=lambda a: first.index(a.dest) if a.dest in first else len(first))
+
     args = parser.parse_args(argv)
+    if args.command == "hook":
+        return main_hook(args.agent_name)       # a hook answers for itself, whatever goes wrong
+    command = sub.choices[args.command]
+    nested = {"agent": (asub, "agent_command"), "library": (lsub, "library_command")}.get(args.command)
+    if nested:
+        command = nested[0].choices[getattr(args, nested[1])]
+    project = getattr(args, "project", None)
+    if isinstance(project, Path) and not getattr(args, "user_only", False) and not project.expanduser().is_dir():
+        print(f"error: the project folder {printable(str(project))} "
+              + ("is not a folder" if project.expanduser().exists() else "does not exist"), file=sys.stderr)
+        return 2
+    try:
+        _check_ranges(args, command)
+        return _dispatch(args, command)
+    except OverflowError:
+        print("error: a number in this command is too large", file=sys.stderr)
+        return 2
+    except (StoreError, OSError, ValueError) as e:
+        # Every command ends an ordinary mistake (a missing file, a damaged store, an id that
+        # does not exist) with one line and status 2, never a traceback. File names in the
+        # message are shown with control characters escaped.
+        print(f"error: {printable(str(e))}", file=sys.stderr)
+        return 2
+
+
+def _check_ranges(args, parser) -> None:
+    """Numbers argparse takes as given but the command cannot use."""
+    import math
+
+    for name, least in (("k", 1), ("min_clique", 2), ("top_k", 1), ("page", 1), ("n", 0), ("chunk_chars", 0)):
+        value = getattr(args, name, None)
+        if isinstance(value, int) and not least <= value <= 10**9:
+            parser.error(f"--{name.replace('_', '-') if name != 'n' else 'n'} must be between {least} and 1000000000"
+                         .replace("--n ", "-n "))
+    z = getattr(args, "z", None)
+    if isinstance(z, float) and not math.isfinite(z):
+        parser.error("--z must be a finite number")
+
+
+def _dispatch(args, parser) -> int:
     if args.command in ("review", "restore", "clean", "export", "health", "history"):
         try:
             return _review_command(args)
@@ -259,13 +337,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "daemon":
         return _daemon_command(args.action)
     if args.command == "events":
-        rows = events.read(args.n)
+        rows = events.read(args.n) if args.n else []
         if args.format == "json":
             print(json.dumps(rows, ensure_ascii=False, indent=2))
         else:
             for r in rows:
-                what, about, ids = status.describe(r)
-                print(f"{r.get('ts', '')}  {what:<13} {about[:150]}" + (f" [{ids}]" if ids else ""))
+                what, about, ids = status.describe(r, short=True)
+                print(f"{r.get('ts', '')}  {what:<13} {status.clip(about, 150)}" + (f" [{ids}]" if ids else ""))
             if not rows:
                 print("no events yet")
         return 0
@@ -288,8 +366,9 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, ValueError) as e:
             print(f"error: {e}", file=sys.stderr)
             return 2
-        print(f"removed AgentDetox hooks from {target} (backup: {backup})" if removed
-              else f"no AgentDetox hooks found in {target}")
+        print(f"AgentDetox hooks removed from {short_path(str(target))}"
+              + (f" (backup: {short_path(str(backup))})." if backup else ".")
+              if removed else f"No AgentDetox hooks found in {short_path(str(target))}; nothing was changed.")
         if removed:
             try:
                 _trust_own_removal(target, args.project.expanduser().absolute())
@@ -310,11 +389,25 @@ def main(argv: list[str] | None = None) -> int:
             return 2
     if not args.path.exists():
         parser.error(f"{args.path} does not exist")
-    from .embed import get_embedder
     from .scan import scan
-    from .trace import trace
 
-    docs = load_corpus(args.path, args.text_field, args.id_field, args.chunk_chars)
+    try:
+        if args.command == "trace" or not args.no_cluster:
+            from .embed import get_embedder
+            from .trace import trace
+    except ImportError as e:
+        if e.name != "numpy":
+            raise
+        print("comparing passages needs numpy, which the knowledge-base extra installs: pip install "
+              "'agentdetox[kb]'." + (" `agentdetox scan --no-cluster` checks each file for hidden text and "
+                                     "injection phrasing without it." if args.command == "scan" else ""), file=sys.stderr)
+        return 2
+
+    skipped: dict[str, int] = {}
+    docs = load_corpus(args.path, args.text_field, args.id_field, args.chunk_chars, skipped)
+    if skipped:
+        # Said on stderr so JSON output stays JSON; what was skipped was not scanned.
+        print("not scanned: " + ", ".join(f"{count} {what}" for what, count in sorted(skipped.items())), file=sys.stderr)
     if not docs:
         parser.error(f"no readable documents under {args.path}")
 
@@ -330,8 +423,8 @@ def main(argv: list[str] | None = None) -> int:
     texts = [d.text for d in docs]
     if hasattr(embedder, "fit"):
         embedder.fit(texts)
-    rows = trace(docs, embedder.encode(texts), embedder, args.question, args.answer, args.top_k)
-    _print_trace(rows, args.format)
+    ranked = trace(docs, embedder.encode(texts), embedder, args.question, args.answer, args.top_k)
+    _print_trace(ranked, args.format)
     return 0
 
 
@@ -345,14 +438,18 @@ def _log(args) -> int:
         print("no recorded changes" + (f" to {short_path(path)}" if path else "") + " yet")
     for e in rows:
         session = f" [session {e.session[:8]}]" if e.session else ""
-        print(f"{e.ts.replace('T', ' ')}  {e.origin:<9} {display_path(e.path)}: {e.describe()}{session}")
+        origin = "cleaned" if e.method == "selective-removal" else e.origin
+        print(f"{e.ts.replace('T', ' ')}  {origin:<9} {display_path(e.path)}: {e.describe()}{session}")
     return 0
 
 
 def _blame(args) -> int:
     path = args.path.expanduser().absolute()
     if not path.exists():
-        print(f"error: {path} does not exist", file=sys.stderr)
+        print(f"error: {printable(str(path))} does not exist", file=sys.stderr)
+        return 2
+    if not path.is_file():
+        print(f"error: {printable(str(path))} is not a file", file=sys.stderr)
         return 2
     labels = {ledger.EARLIER: "earlier", ledger.UNRECORDED: "not yet recorded"}
     rows = ledger.blame(path)
@@ -395,37 +492,93 @@ def _trust_own_removal(path: Path, project: Path) -> None:
     snapshot([cf], watched_roots(project), expected={str(path): hashlib.sha256(data).hexdigest()})
 
 
+def _trust_own_install(path: Path, project: Path, existed: bool) -> None:
+    """Take the settings file with AgentDetox's hooks as its new snapshot, so adding them is not
+    reported as a change made outside the agent. Only when nothing else it guards differs from
+    the snapshot: anything that does was recorded for review and stays there."""
+    cf = next((cf for cf in discover(project=project) if cf.path == path), None)
+    if cf is None:
+        return
+    data = path.read_bytes()
+    before = snapshot_text(str(path))
+    if before is None and existed:
+        return      # a file AgentDetox never took a snapshot of: left for review, not trusted here
+    try:
+        expected = json.dumps(claude_code_settings(json.loads(before) if before else {}, hook_command("claude-code")))
+    except ValueError:
+        return
+    if guarded_sections(path, expected) != guarded_sections(path, data.decode("utf-8", "replace")):
+        return
+    snapshot([cf], watched_roots(project), expected={str(path): hashlib.sha256(data).hexdigest()})
+
+
 def _install(args) -> int:
     project = args.project.expanduser().absolute()
     target = default_settings_path(args.agent_name, args.scope, project)
     if args.agent_name == "claude-code":
-        plugin = claude_code_plugin(project)
+        plugin, problem = plugin_state(project)
         if plugin:
             print(f"The {plugin} plugin is enabled in Claude Code and already runs AgentDetox's hooks. Adding "
-                  "them to settings as well would run every check twice, so nothing was changed.")
+                  "them to settings as well would run every check twice, so nothing was changed."
+                  + (f"\nNote: {problem}." if problem else ""))
             return 0
-        _, backup = install_claude_code(target, args.apply)
+        if problem:
+            print(f"Note: {problem}. The hooks are added to settings instead.")
         if not args.apply:
+            install_claude_code(target, False)
             added = claude_code_settings({}, hook_command("claude-code"))
             print(f"# Adds these hooks to {short_path(str(target))}, keeping everything else in it:\n"
                   f"{json.dumps(added, indent=2, ensure_ascii=False)}\n"
                   "Re-run with --apply to write it (the old file is backed up).")
             return 0
-        # Scan before trusting, so content that is already poisoned never becomes the baseline.
-        files = discover(project=project)
-        flagged = {f.doc_id for f in allowlist.unsuppressed(scan_context(files)) if f.severity == "high"}
-        trusted = [cf for cf in files if str(cf.path) not in flagged]
-        snapshot(trusted, watched_roots(project))
-        kinds = Counter(cf.kind for cf in trusted)
-        print(f"AgentDetox hooks added to {short_path(str(target))}"
-              + (f" (backup: {short_path(str(backup))})" if backup else "") + ".")
+        # With a snapshot already there (a second install, an upgrade), what changed outside the
+        # agent since it was taken is recorded for review first, exactly as the next session
+        # would: taking a new snapshot of everything here would trust all of it unseen.
+        latest = ledger.entries(limit=1)
+        known = bool(baseline_paths()) or bool(latest)
+        pending = session.check(project) if known else ""
+        outside = [e for e in ledger.entries(limit=200) if e.id > (latest[-1].id if latest else 0)
+                   and e.origin == "external"] if known else []
+        before = target.read_bytes() if target.exists() else None
+        _, backup = install_claude_code(target, True)
+        changed = target.read_bytes() != before
+        where = short_path(str(target)) + (f" (backup: {short_path(str(backup))})" if backup else "")
+        try:
+            if known:
+                _trust_own_install(target, project, before is not None)
+                first = ""
+            else:
+                # The first look, as the first session would take it: what is already flagged is
+                # recorded for review as found and never becomes the baseline; the rest does.
+                first = session.check(project)
+            watched = baseline_paths()
+            found = discover(project=project)
+            files = [cf for cf in found if str(cf.path) in watched]
+        except (StoreError, OSError, ValueError) as e:
+            # The settings are written; saying only "error" would leave the user to guess.
+            print(f"error: the hooks {'were added to' if changed else 'are in'} {where}, but AgentDetox's own "
+                  f"store could not be updated: {e}. Restart Claude Code to load the hooks; run `agentdetox "
+                  "doctor` to inspect the store.", file=sys.stderr)
+            return 2
+        kinds = Counter(cf.kind for cf in files)
+        print(f"AgentDetox hooks added to {where}." if changed
+              else f"AgentDetox hooks are already in {where}; nothing was changed.")
         print("Restart Claude Code to load them. From then on AgentDetox checks every write Claude Code makes to "
               "its memory, rules, skills and config, and reports changes made outside it at the next session.")
-        print(f"Watching {len(trusted)} context files ("
+        print(f"Watching {len(files)} context files ("
               + ", ".join(f"{kinds[k]} {k}" for k in KINDS if kinds[k]) + ").")
-        if flagged:
-            print(f"{len(flagged)} file(s) look suspicious and were left out of the snapshot; "
-                  "review them with `agentdetox agent scan`.")
+        if first:
+            print(f"{len(found) - len(files)} file(s) already hold text the rules flag. Nothing in them was changed; "
+                  "they are left out of the snapshot until reviewed. See them with `agentdetox review`:")
+            print("\n".join(line for line in first.splitlines() if line.startswith("- ")))
+        if outside:
+            print(f"Recorded {len(outside)} change(s) made outside the agent since AgentDetox last looked "
+                  "(`agentdetox review C<ID>` shows one):")
+            print("\n".join(f"- C{e.id} {display_path(e.path)}: {e.describe()}" for e in outside[:10])
+                  + (f"\n- and {len(outside) - 10} more: agentdetox log" if len(outside) > 10 else ""))
+        if pending:
+            print("These need review; this install did not accept them. See them with `agentdetox review`:")
+            print("\n".join(line for line in pending.splitlines() if line.startswith("- ")))
         print("See it catch an attack without touching your files: agentdetox demo\n"
               "Check on it any time: agentdetox status")
         return 0
@@ -564,6 +717,7 @@ def _agent(args) -> int:
 def _agent_command(args) -> int:
     if args.agent_command == "gc":
         freed = gc(force=True)
+        assert freed is not None    # only a run that is not forced can be skipped
         print(f"removed {freed['objects']} old snapshot cop{'y' if freed['objects'] == 1 else 'ies'} "
               f"({freed['bytes'] / 1024:.0f} KB); quarantined files are kept")
         return 0
@@ -628,11 +782,13 @@ def _agent_command(args) -> int:
         findings = allowlist.unsuppressed(hits)
         header = f"agentdetox {__version__}: {len(changes)} context file(s) changed since snapshot"
         for c in changes:
-            header += f"\n  {c.status:<8} {c.kind:<12} {c.path}"
+            header += f"\n  {c.status:<8} {c.kind:<12} {display_path(c.path)}"
         _print_findings(findings, header, args.format, len(hits) - len(findings),
                         extra={"changes": [{"path": c.path, "status": c.status, "kind": c.kind} for c in changes]},
                         found=found)
     if args.fail_on != "none" and (found.problems or any(at_least(f.severity, args.fail_on) for f in findings)):
+        if args.format == "text":
+            print(_exit_reason(findings, args.fail_on, bool(found.problems)))
         return 1
     return 0
 
@@ -648,15 +804,11 @@ def _inspect(args, project: Path | None) -> int:
     if args.format == "json":
         print(json.dumps({"version": __version__, "files": result["files"], "checkpointed": result["trusted"],
                           "complete": not incomplete, "items": items, "unread": result["unread"],
+                          "linked": result["linked"],
                           "coverage": inspection.coverage(found), "problems": found.problems},
                          ensure_ascii=False, indent=2))
     else:
-        print(f"agentdetox {__version__}: inspected {result['files']} context file(s)\n")
-        print("\n".join(inspection.render_coverage(found, short_path)))
-        if result["unread"]:
-            print("Not inspected (found, but not read):")
-            for row in result["unread"]:
-                print(f"  {short_path(row['path'])} ({row['error']})")
+        print(f"agentdetox {__version__}: inspected {result['files']} context file(s)")
         review_items = [item for item in items if item["state"] == "review"]
         if review_items:
             print("\nNeeds review (each id is bound to the exact version found):")
@@ -671,23 +823,35 @@ def _inspect(args, project: Path | None) -> int:
             print("\nRecorded, with nothing flagged:")
             for item in others:
                 print(f"  {item['changes'][0]:<6} {item['state']:<8} {display_path(item['path'])}")
-        print(f"\n{result['trusted']} file(s) have a recovery checkpoint of the version inspected. A checkpoint is "
-              "something to restore to, not an acceptance: a file with a clear-cut (high) finding gets none, and a "
-              "file with only lesser findings gets one while those findings stay open for review. Nothing was "
-              "allowed.")
+        recorded = list(dict.fromkeys(c for item in items for c in item["changes"]))
+        print(("\n" if items else "") + (f"Recorded: {', '.join(recorded)}. " if recorded else
+                                         "" if incomplete else "Nothing needs review. ")
+              + f"{result['trusted']} file(s) got a recovery checkpoint (a version to restore to, not an approval; "
+              "none for a file with a high finding). Nothing was allowed.")
         if review_items:
             first = review_items[0]["changes"][0]
-            print(f"Next: `agentdetox review {first}` shows a record; `agentdetox clean {first}` lists its lines, and "
-                  f"with --lines previews removing the ones you choose.\n"
-                  "A cleanup keeps a backup and can be undone with `agentdetox restore` on the record it prints. "
-                  "Config files are not cleaned line by line.")
+            print(f"Next: `agentdetox review {first}` shows what was found; `agentdetox clean {first}` lists its lines "
+                  "to choose which to remove." + (" Config files are not cleaned line by line."
+                                                  if any(item["kind"] == "config" for item in review_items) else ""))
+        print("\n" + "\n".join(inspection.render_coverage(found, short_path)))
+        if result["unread"]:
+            print("Not inspected (found, but not read):")
+            for row in result["unread"]:
+                print(f"  {short_path(row['path'])} ({row['error']})")
+        if result["linked"]:
+            print("Read through a symbolic link, as the client reads it (the file it points to was inspected):")
+            for row in result["linked"]:
+                print(f"  {short_path(row['path'])} -> {printable(short_path(row['target']))}")
         if incomplete:
             print("The inspection is incomplete: what is listed as not resolved or not inspected was not looked at"
                   + ("." if items else ", so finding nothing here does not mean nothing is there."))
-        elif not items:
-            print("Nothing needs review.")
     severities = [f["severity"] for item in items for f in item["findings"]]
     if args.fail_on != "none" and (incomplete or any(at_least(sev, args.fail_on) for sev in severities)):
+        worse = sum(at_least(sev, args.fail_on) for sev in severities)
+        if args.format == "text":
+            print(f"Exit status 1: {worse} finding(s) are {args.fail_on} severity"
+                  + (" or more" if args.fail_on != "high" else "") + "; `--fail-on` sets the level." if worse else
+                  "Exit status 1: the inspection is incomplete; see above.")
         return 1
     return 0
 
@@ -703,21 +867,57 @@ def _print_findings(findings, header: str, fmt: str, allowed: int, extra: dict, 
         print()
         return
     print(header + "\n")
-    if found is not None:
-        print("\n".join(inspection.render_coverage(found, short_path)) + "\n")
+    # Rules on the same line under one detector share an id, so they are allowed together;
+    # the most severe stands for them.
+    shown, seen = [], set()
     for f in findings:
-        print(f"{f.severity.upper():<6} {f.detector:<17} {f.source}  [{finding_id(f)}]")
+        if (f.doc_id, finding_id(f)) not in seen:
+            seen.add((f.doc_id, finding_id(f)))
+            shown.append(f)
+    where = _finding_lines(shown)
+    for f in shown:
+        line = where.get((f.doc_id, finding_id(f)))
+        print(f"{f.severity.upper():<6} {f.detector:<17} {display_path(f.source)}"
+              + (f" line {line}" if line else "") + f"  [{finding_id(f)}]")
         print(f"       {printable(f.message)}")
         if f.evidence:
             print(f"       > {printable(' '.join(f.evidence.split())[:160])}")
-    counts = Counter(f.severity for f in findings)
-    print(f"\n{counts['high']} high, {counts['medium']} medium, {counts['low']} low"
+    counts = Counter(f.severity for f in shown)
+    print(("\n" if shown else "") + f"{counts['high']} high, {counts['medium']} medium, {counts['low']} low"
           + (f"; {allowed} allowed and not shown (`agentdetox allow --list`)" if allowed else ""))
-    if found is not None and found.problems:
-        print("The scan is incomplete: the folders listed under \"Not resolved\" were not looked at.")
-    if findings:
+    if shown:
         print("To review and remove flagged lines: `agentdetox agent inspect` records them as review items for "
               "`agentdetox clean`.\nFalse positive? `agentdetox allow <id>` stops it being reported.")
+    if found is not None:
+        print("\n" + "\n".join(inspection.render_coverage(found, short_path)))
+    if found is not None and found.problems:
+        print("The scan is incomplete: the folders listed under \"Not resolved\" were not looked at.")
+
+
+def _finding_lines(findings) -> dict[tuple[str, str], int]:
+    """(file, finding id) to the line it is on, where the flagged line can be found again."""
+    from .agentscan import read_text
+
+    where: dict[tuple[str, str], int] = {}
+    for doc_id in dict.fromkeys(f.doc_id for f in findings):
+        try:
+            text = read_text(Path(doc_id))
+        except (OSError, ValueError):
+            continue
+        lines = review.finding_lines(text, [f for f in findings if f.doc_id == doc_id])
+        where.update({(doc_id, flag): line for flag, line in lines.items()})
+    return where
+
+
+def _exit_reason(findings, fail_on: str, incomplete: bool) -> str:
+    """The last line of a text report that exits 1: why it does."""
+    if fail_on == "none":
+        return ""
+    worse = len({(f.doc_id, finding_id(f)) for f in findings if at_least(f.severity, fail_on)})
+    if worse:
+        return (f"Exit status 1: {worse} finding(s) are {fail_on} severity" + (" or more" if fail_on != "high" else "")
+                + "; `--fail-on` sets the level.")
+    return "Exit status 1: the check is incomplete; see above." if incomplete else ""
 
 
 def _print_scan(result, fmt: str) -> None:
@@ -873,6 +1073,12 @@ def _library(args) -> int:
         if not held:
             raise StoreError("A library scan is already running. `agentdetox library status` shows its progress; "
                              "`agentdetox library cancel <folder>` stops it")
+        if not str(args.target).strip():
+            # An unset shell variable arrives as "", which would name the folder you are in.
+            raise ValueError("Name the folder to scan; an empty name was given")
+        if re.fullmatch(r"[Ll][1-9][0-9]{0,17}", str(args.target)) and Path(args.target).is_dir():
+            print(f"note: {args.target} is read as the id of a library, not as the folder of that name here; "
+                  f"to scan the folder, write ./{args.target}", file=sys.stderr)
         run = library.prepare(args.target, full=args.full, restart=args.restart)
         what = (f"Continuing run {run['run']} ({run['mode']})" if run["resumed"] else
                 f"Run {run['run']} ({run['mode']})") + f" of library {run['root']} · {short_path(run['path'])}"
@@ -961,6 +1167,9 @@ def _review_command(args) -> int:
             raise ValueError("Use agentdetox review dismiss F<ID>")
         review.dismiss(args.id)
         print(f"Dismissed {args.id}: the file is unchanged and no permanent exception was added.")
+    elif args.id:
+        raise ValueError(f"Unknown review action {printable(args.action)}: use `agentdetox review accept C<ID>` or "
+                         "`agentdetox review dismiss F<ID>`; `agentdetox review C<ID>` shows one change")
     elif args.action:
         detail = review.detail(args.action)
         print(json.dumps({"change": review.get(args.action), "detail": detail}, ensure_ascii=False, indent=2)

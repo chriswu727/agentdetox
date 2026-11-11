@@ -26,15 +26,15 @@ def record(event: str, **fields) -> None:
         with storage.connection(write=True) as db:
             storage.append_event(db, row)
         return
-    except (OSError, StoreError, sqlite3.Error):
-        pass
+    except (OSError, StoreError, sqlite3.Error, ValueError, TypeError):
+        pass    # ValueError: text the database cannot hold, such as a lone surrogate
     try:
         private_dir(store_dir())
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_BINARY", 0), 0o600)
         with os.fdopen(fd, "a", encoding="utf-8", newline="\n") as f:
             f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "event": event, **fields},
                                ensure_ascii=False) + "\n")
-    except OSError:  # TimeoutError from the lock is one too
+    except (OSError, ValueError, TypeError):  # TimeoutError from the lock is an OSError
         pass  # logging must never break a hook
 
 
@@ -52,7 +52,7 @@ def _read_file(path: Path, limit: int | None) -> list[dict]:
     if not path.exists():
         return []
     out = []
-    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    lines = [line for line in path.read_text(encoding="utf-8", errors="replace").split("\n") if line]
     for line in lines[-limit:] if limit else lines:
         try:
             row = json.loads(line)

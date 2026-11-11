@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -112,35 +113,70 @@ def _validate_claude_settings(data) -> None:
 
 
 def read_claude_settings(path: Path) -> dict:
+    return _read_settings(path)[0]
+
+
+def _read_settings(path: Path) -> tuple[dict, bytes | None]:
+    """The settings and the bytes they were read from (None when there is no file)."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        raw = path.read_bytes() if path.exists() else None
+        data = json.loads(raw.decode("utf-8")) if raw is not None else {}
         _validate_claude_settings(data)
     except ValueError as e:
         raise ValueError(f"{path}: {e}. Fix the settings file and retry; no settings were changed.") from None
-    return data
+    return data, raw
+
+
+def _as_written(data: dict, raw: bytes | None) -> str:
+    """`data` as JSON in the file's own layout: its indentation, its line ends and whether
+    it ends with one. Number and escape spellings are JSON's, not the file's."""
+    before = raw.decode("utf-8", "replace") if raw else ""
+    indent: int | str = 2
+    first = re.search(r"\n([ \t]+)\S", before)
+    if first:
+        indent = "\t" if first.group(1).startswith("\t") else len(first.group(1))
+    text = json.dumps(data, indent=indent, ensure_ascii=False)
+    if "\r\n" in before:
+        text = text.replace("\n", "\r\n")
+    if before.endswith("\r\n"):
+        return text + "\r\n"
+    # A file of one line, or none, gets the line end a new file is given.
+    return text + ("\n" if before.endswith("\n") or "\n" not in before.strip() else "")
 
 
 def install_claude_code(settings_path: Path, apply: bool) -> tuple[str, Path | None]:
-    existing = read_claude_settings(settings_path)
+    existing, raw = _read_settings(settings_path)
     merged = claude_code_settings(existing, hook_command("claude-code"))
-    text = json.dumps(merged, indent=2, ensure_ascii=False) + "\n"
-    return text, (_write_with_backup(settings_path, text) if apply else None)
+    if merged == existing and raw is not None:
+        return raw.decode("utf-8"), None        # already there: nothing to write or back up
+    text = _as_written(merged, raw)
+    return text, (_write_with_backup(settings_path, text, unchanged_since=raw) if apply else None)
 
 
 def uninstall_claude_code(settings_path: Path) -> tuple[bool, Path | None]:
     """Remove only AgentDetox's handlers, leaving every other setting as it is now."""
     if not settings_path.exists():
         return False, None
-    existing = read_claude_settings(settings_path)
+    existing, raw = _read_settings(settings_path)
     cleaned = remove_claude_code_hooks(existing)
     if cleaned == existing:
         return False, None
-    return True, _write_with_backup(settings_path, json.dumps(cleaned, indent=2, ensure_ascii=False) + "\n")
+    return True, _write_with_backup(settings_path, _as_written(cleaned, raw), unchanged_since=raw)
 
 
-def _write_with_backup(path: Path, text: str) -> Path | None:
+_UNCHECKED = object()
+
+
+def _write_with_backup(path: Path, text: str, unchanged_since: object = _UNCHECKED) -> Path | None:
+    """Replace `path` with `text`, keeping a copy of what was there beside it. A settings
+    file that is a link (kept in a dotfiles folder) is written where the link points, so
+    the link stays one. With `unchanged_since` (the bytes the new text was made from, None
+    for no file), nothing is written when the file has changed since: Claude Code rewrites
+    its settings too, and its change must not be lost."""
     backup = None
     path.parent.mkdir(parents=True, exist_ok=True)
+    target = Path(os.path.realpath(path)) if path.is_symlink() else path
+    target.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         fd, name = tempfile.mkstemp(prefix=f"{path.name}.agentdetox-backup-{time.strftime('%Y%m%d-%H%M%S')}-",
                                     dir=path.parent)
@@ -151,14 +187,21 @@ def _write_with_backup(path: Path, text: str) -> Path | None:
         except OSError:
             backup.unlink(missing_ok=True)
             raise
-    mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
-    fd, name = tempfile.mkstemp(prefix=f".{path.name}.agentdetox-", suffix=".tmp", dir=path.parent)
+    mode = target.stat().st_mode & 0o777 if target.exists() else 0o600
+    fd, name = tempfile.mkstemp(prefix=f".{target.name}.agentdetox-", suffix=".tmp", dir=target.parent)
     tmp = Path(name)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
             stream.write(text)
         os.chmod(tmp, mode)
-        tmp.replace(path)
+        if unchanged_since is not _UNCHECKED:
+            now = target.read_bytes() if target.exists() else None
+            if now != unchanged_since:
+                if backup is not None:
+                    backup.unlink(missing_ok=True)
+                raise ValueError(f"{path} changed while AgentDetox was updating it, so nothing was written. "
+                                 "Run the command again.")
+        tmp.replace(target)
     finally:
         tmp.unlink(missing_ok=True)
     return backup
@@ -174,11 +217,24 @@ def default_settings_path(agent: str, scope: str, project: Path) -> Path:
 
 
 PLUGIN = "agentdetox"
+# The plugin from this repository's marketplace. One of the same name from another marketplace
+# is someone else's code, and says nothing about whether AgentDetox's hooks run.
+OWN_PLUGIN = "agentdetox@agentdetox"
 
 
 def claude_code_plugin(project: Path) -> str | None:
-    """The id of the AgentDetox plugin if Claude Code has it enabled for this project.
-    Its hooks run in addition to any in settings: Claude Code does not merge the two."""
+    """The id of the AgentDetox plugin if Claude Code has it enabled for this project and it
+    is installed. Its hooks run in addition to any in settings: Claude Code does not merge
+    the two."""
+    return plugin_state(project)[0]
+
+
+def plugin_state(project: Path) -> tuple[str | None, str]:
+    """(the plugin's id when its hooks can be counted on, what is wrong otherwise or besides).
+
+    A key in `enabledPlugins` is only a wish: a project's own settings can carry one, so it
+    cannot stand for hooks being there. The plugin counts when Claude Code's record of
+    installed plugins has it and the folder it names holds a hooks file."""
     enabled: dict = {}
     for path in (claude_dir() / "settings.json", project / ".claude" / "settings.json",
                  project / ".claude" / "settings.local.json"):
@@ -188,7 +244,57 @@ def claude_code_plugin(project: Path) -> str | None:
             continue
         if isinstance(data, dict) and isinstance(data.get("enabledPlugins"), dict):
             enabled.update(data["enabledPlugins"])
-    return next((k for k, v in enabled.items() if v is True and k.split("@")[0] == PLUGIN), None)
+    named = [k for k, v in enabled.items() if v is True and isinstance(k, str) and k.split("@")[0] == PLUGIN]
+    if not named:
+        return None, ""
+    others = [k for k in named if k != OWN_PLUGIN]
+    foreign = (f"a plugin named {others[0]} is enabled, which is not AgentDetox's own ({OWN_PLUGIN}) and is not "
+               "counted as running its hooks") if others else ""
+    if OWN_PLUGIN not in named:
+        return None, foreign
+    record = claude_dir() / "plugins" / "installed_plugins.json"
+    try:
+        plugins = json.loads(record.read_text(encoding="utf-8")).get("plugins")
+        entries = plugins.get(OWN_PLUGIN) or []
+        folders = [Path(entry["installPath"]) for entry in entries if isinstance(entry, dict) and entry.get("installPath")]
+    except FileNotFoundError:
+        folders = []
+    except (OSError, ValueError, AttributeError, TypeError):
+        return None, (f"the {OWN_PLUGIN} plugin is enabled, but Claude Code's record of installed plugins "
+                      f"({record}) could not be read, so whether its hooks run is unknown")
+    for folder in folders:
+        try:
+            registered = json.loads((folder / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        missing = missing_hooks(registered)
+        outdated = (f"the {OWN_PLUGIN} plugin is an older version that does not register "
+                    + ", ".join(missing) + "; update it with `claude plugin update " + OWN_PLUGIN + "`") if missing else ""
+        return OWN_PLUGIN, "; ".join(filter(None, (outdated, foreign)))
+    return None, (f"the {OWN_PLUGIN} plugin is enabled in settings but is not installed, so it runs no hooks"
+                  + (f"; {foreign}" if foreign else ""))
+
+
+def missing_hooks(registered: object, own=None) -> list[str]:
+    """What this version registers that `registered` (the `hooks` of a settings file or of a
+    plugin) lacks: an event, or a tool in an event's matcher. With `own`, a test of a
+    handler's command, only the groups holding such a handler count: the user's other hooks
+    are theirs."""
+    expected = claude_code_settings({}, "agentdetox")["hooks"]
+    missing = []
+    for event, groups in expected.items():
+        have = registered.get(event) if isinstance(registered, dict) else None
+        have = [group for group in have or [] if isinstance(group, dict) and (own is None or any(
+            isinstance(h, dict) and own(str(h.get("command", ""))) for h in group.get("hooks") or []))]
+        tools = {tool for group in have for tool in str(group.get("matcher") or "").split("|")}
+        if not have:
+            missing.append(event)
+            continue
+        for group in groups:
+            lacking = sorted(set(str(group.get("matcher") or "").split("|")) - tools - {""})
+            if lacking:
+                missing.append(f"{event} for {'|'.join(lacking)}")
+    return missing
 
 
 def plugin_command() -> list[str] | None:

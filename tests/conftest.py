@@ -26,7 +26,7 @@ def _stdlib_passages(limit: int = 300) -> list[str]:
                 continue
             try:
                 mod = importlib.import_module(name)
-            except Exception:
+            except Exception:  # noqa: BLE001 - any stdlib module may fail to import here
                 continue
             objs = [mod] + [
                 v for k, v in sorted(vars(mod).items())

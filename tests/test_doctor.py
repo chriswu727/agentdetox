@@ -1,6 +1,7 @@
 import json
 import os
 import time
+from pathlib import Path
 
 import pytest
 
@@ -96,6 +97,61 @@ def test_doctor_is_read_only(env, capsys):
     assert before == {p: p.read_bytes() for p in home.rglob("*") if p.is_file()}
 
 
+def install_plugin(home, hooks=None, plugin="agentdetox@agentdetox"):
+    """What `claude plugin install` leaves: the plugin's folder and Claude Code's record of it."""
+    folder = home / ".claude/plugins/cache/agentdetox/agentdetox/0.0.0"
+    (folder / "hooks").mkdir(parents=True, exist_ok=True)
+    shipped = Path(__file__).resolve().parent.parent / "plugins/agentdetox/hooks/hooks.json"
+    (folder / "hooks/hooks.json").write_text(json.dumps({"hooks": hooks}) if hooks is not None
+                                             else shipped.read_text(encoding="utf-8"), encoding="utf-8")
+    (home / ".claude/plugins/installed_plugins.json").write_text(json.dumps(
+        {"version": 2, "plugins": {plugin: [{"scope": "user", "installPath": str(folder), "version": "0.0.0"}]}}),
+        encoding="utf-8")
+
+
+@pytest.mark.skipif(os.name != "posix", reason="stub executable is a shell script")
+def test_an_enabled_plugin_that_is_not_installed_runs_no_hooks(env, capsys):
+    home, project = env
+    exe = home / ".local/bin/agentdetox"
+    exe.parent.mkdir(parents=True)
+    exe.write_text(f"#!/bin/sh\necho agentdetox {__version__}\n", encoding="utf-8")
+    exe.chmod(0o755)
+    (project / ".claude").mkdir()
+    wish = project / ".claude/settings.json"
+    for key in ("agentdetox@agentdetox", "agentdetox@some-other-marketplace"):
+        wish.write_text(json.dumps({"enabledPlugins": {key: True}}), encoding="utf-8")
+        code, out = doctor(capsys, project)
+        assert code == 1 and "hooks not installed" in out and "hooks run by" not in out, out
+        assert ("is not installed" if key == "agentdetox@agentdetox" else "is not AgentDetox's own") in out
+    # Another marketplace's plugin does not count even when it is installed.
+    install_plugin(home, plugin="agentdetox@some-other-marketplace")
+    assert doctor(capsys, project)[0] == 1
+    assert main(["install", "claude-code", "--project", str(project), "--apply"]) == 0
+    out = capsys.readouterr().out
+    assert "added to settings instead" in out and "AgentDetox hooks added" in out
+    assert "hooks" in json.loads((home / ".claude/settings.json").read_text(encoding="utf-8"))
+
+
+@pytest.mark.skipif(os.name != "posix", reason="stub executable is a shell script")
+def test_an_older_plugin_is_said_to_be_missing_hooks(env, capsys):
+    home, project = env
+    exe = home / ".local/bin/agentdetox"
+    exe.parent.mkdir(parents=True)
+    exe.write_text(f"#!/bin/sh\necho agentdetox {__version__}\n", encoding="utf-8")
+    exe.chmod(0o755)
+    (home / ".claude/settings.json").write_text(json.dumps({"enabledPlugins": {"agentdetox@agentdetox": True}}),
+                                                encoding="utf-8")
+    command = {"type": "command", "command": 'sh "${CLAUDE_PLUGIN_ROOT}/scripts/hook"'}
+    install_plugin(home, hooks={"SessionStart": [{"hooks": [command]}],
+                                "PreToolUse": [{"matcher": "Write|Edit|MultiEdit|Bash", "hooks": [command]}],
+                                "PostToolUse": [{"matcher": "Write|Edit|MultiEdit", "hooks": [command]}]})
+    code, out = doctor(capsys, project)
+    assert code == 0 and "older version" in out and "PostToolUse for Bash" in out and "PostToolUseFailure" in out, out
+    (home / ".claude/plugins/installed_plugins.json").write_text("not json", encoding="utf-8")
+    code, out = doctor(capsys, project)
+    assert code == 1 and "could not be read" in out, out
+
+
 @pytest.mark.skipif(os.name != "posix", reason="stub executable is a shell script")
 def test_the_plugin_counts_as_installed_and_is_not_doubled(env, capsys):
     home, project = env
@@ -105,6 +161,7 @@ def test_the_plugin_counts_as_installed_and_is_not_doubled(env, capsys):
     exe.chmod(0o755)
     settings = home / ".claude/settings.json"
     settings.write_text(json.dumps({"enabledPlugins": {"agentdetox@agentdetox": True}}), encoding="utf-8")
+    install_plugin(home)
     code, out = doctor(capsys, project)
     assert code == 0 and "hooks run by the agentdetox@agentdetox plugin" in out, out
     assert main(["install", "claude-code", "--project", str(project), "--apply"]) == 0

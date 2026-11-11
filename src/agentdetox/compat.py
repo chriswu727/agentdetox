@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import posixpath
 import re
 import shlex
 from importlib import import_module
@@ -62,8 +63,9 @@ def program(token: str) -> str:
 def native_path(path: str) -> str:
     """A path from a shell command, as Python must spell it: Git Bash on Windows writes
     C:\\x as /c/x, which Python would take as a relative path."""
-    if WINDOWS and (drive := re.match(r"/([A-Za-z])(?=/|$)", path)):
-        return f"{drive[1]}:{path[2:] or '/'}"
+    normal = posixpath.normpath(path) if WINDOWS and path.startswith("/") else path
+    if WINDOWS and (drive := re.match(r"/([A-Za-z])(?=/|$)", normal)):
+        return f"{drive[1]}:{normal[2:] or '/'}"
     return path
 
 

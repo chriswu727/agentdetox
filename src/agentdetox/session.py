@@ -11,9 +11,9 @@ from . import allowlist, engine, events, ledger, review, storage
 from .agentscan import read_text, scan_context
 from .allowlist import contradiction_flag
 from .consistency import Contradiction
-from .context import discover, short_path, watched_roots
+from .context import ContextFile, discover, short_path, watched_roots
 from .findings import finding_id, printable
-from .integrity import Change, StoreError, baseline_paths, gc, snapshot, snapshot_text, verify
+from .integrity import UNREAD, Change, StoreError, baseline_paths, gc, snapshot, snapshot_text, verify
 
 # Items listed per section, so the guidance after them is never cut off by the limit on
 # what a session-start hook may add.
@@ -39,6 +39,13 @@ def notice(project: Path, contradiction_mode: str, cwd: Path | None = None) -> s
     return text
 
 
+def check(project: Path) -> str:
+    """The session-start comparison, run by a command: changes made outside the agent are
+    recorded for review and the rest is taken as the new snapshot. Returns the notice a
+    session would have been given, "" when nothing needs review. Errors are raised."""
+    return _check(project, "off")
+
+
 def _check(project: Path, mode: str, cwd: Path | None = None) -> str:
     # Only high findings interrupt a session. Medium ones (a user's own "commit without
     # asking" preference, a quoted attack example) stay visible in `agentdetox agent scan`
@@ -49,23 +56,36 @@ def _check(project: Path, mode: str, cwd: Path | None = None) -> str:
     roots = watched_roots(project)
     known = baseline_paths()
     first_run = not known and not ledger.entries(limit=1)
-    digests = {str(cf.path): _digest(cf.path) for cf in files}
+    # A file that cannot be read is set aside and said so; every other file is still
+    # compared. One unreadable file must never be a way to switch the whole check off.
+    digests: dict[str, str | None] = {}
+    unread: list[tuple[str, str]] = []
+    for candidate in files:
+        try:
+            digests[str(candidate.path)] = _digest(candidate.path)
+        except OSError as error:
+            unread.append((str(candidate.path), type(error).__name__))
+    files = [candidate for candidate in files if str(candidate.path) in digests]
+    later: list[tuple[ContextFile, str]] = []       # unreadable by the time it was scanned
     conflicts: list[Contradiction] = []
     background: list[tuple] = []
     changed = []
     told: set[str] = set()
     if first_run:
-        findings = [f for f in allowlist.unsuppressed(scan_context(files)) if f.severity == "high"]
+        findings = [f for f in allowlist.unsuppressed(scan_context(files, later)) if f.severity == "high"]
         all_findings = findings
         flagged = {f.doc_id for f in findings}
         changes = [Change(str(cf.path), "added", cf.kind) for cf in files if str(cf.path) in flagged]
         trusted = [cf for cf in files if str(cf.path) not in flagged]
     else:
         changes, all_findings = verify(files, roots)
+        by_name = {str(cf.path): cf for cf in files}
+        later += [(by_name[f.doc_id], f.evidence) for f in all_findings if f.detector == UNREAD and f.doc_id in by_name]
+        all_findings = [f for f in all_findings if f.detector != UNREAD]
         # A recovery can leave flagged text already present in the checkpoint, invisible to a diff scan.
         recovery_paths = review.pending_recovery_paths()
         seen = {(f.doc_id, finding_id(f)) for f in all_findings}
-        all_findings += [f for f in scan_context([cf for cf in files if str(cf.path) in recovery_paths])
+        all_findings += [f for f in scan_context([cf for cf in files if str(cf.path) in recovery_paths], later)
                          if (f.doc_id, finding_id(f)) not in seen]
         accepted = review.accepted_versions()
         handled = review.handled_findings()
@@ -85,7 +105,11 @@ def _check(project: Path, mode: str, cwd: Path | None = None) -> str:
             cf = by_path.get(c.path)
             if c.status == "deleted" or cf is None or c.path in flagged:
                 continue
-            text = read_text(cf.path)
+            try:
+                text = read_text(cf.path)
+            except OSError as error:
+                later.append((cf, type(error).__name__))
+                continue
             if mode == "record":
                 background.append((cf, snapshot_text(c.path) or ""))
             found = engine.contradictions(cf, snapshot_text(c.path) or "", text, project) if mode == "ask" else []
@@ -103,10 +127,16 @@ def _check(project: Path, mode: str, cwd: Path | None = None) -> str:
     def unchanged(path: str) -> bool:
         """Still the version checked above: a file written meanwhile (by the agent, whose
         hooks record it, or by anything else) is left for the next check, not trusted unread."""
-        return _digest(Path(path)) == digests.get(path)
+        try:
+            return _digest(Path(path)) == digests.get(path)
+        except OSError:
+            return False
 
+    unread += [(str(cf.path), error) for cf, error in later]
+    unreadable = {path for path, _ in unread}
+    trusted = [cf for cf in trusted if str(cf.path) not in unreadable]
     with storage.connection(write=True):
-        _record_external([c for c in changes if unchanged(c.path)], flagged, all_findings)
+        _record_external([c for c in changes if unchanged(c.path)], flagged, all_findings, found=first_run)
         for conflict in conflicts:
             latest = ledger.entries(conflict.new.source, limit=1)
             # Only on the record of the version that was checked; a newer or older one never had it.
@@ -116,17 +146,27 @@ def _check(project: Path, mode: str, cwd: Path | None = None) -> str:
         snapshot(trusted, roots, expected=digests)
     for cf, old in background:
         engine.record_in_background(cf, old, project)
+    skipped = _unread_lines(unread)
     if not findings and not conflicts:
-        return ""
+        return "\n".join(["AgentDetox notice.", *skipped]) if skipped else ""
     settings = [f for f in findings if f.doc_id in told]
     findings = [f for f in findings if f.doc_id not in told]
     lines = ["AgentDetox security notice." if findings or conflicts else "AgentDetox notice."]
     if first_run:
         lines.append("First scan of this agent's memory, rules and config found suspicious content:")
     elif findings:
-        lines.append("These agent context files were changed outside the agent since the last session "
-                     "and contain suspicious content:")
-        lines += [f"- {c.status}: {short_path(c.path)}" for c in changed[:LISTED]] + _more(len(changed))
+        # Found flagged at the first look and not reviewed since: nothing happened to it, and
+        # saying it was "added" would send the reader to undo a change that never was.
+        earlier = [c for c in changed if _found_earlier(c.path, digests.get(c.path))]
+        fresh = [c for c in changed if c not in earlier]
+        if fresh:
+            lines.append("These agent context files were changed outside the agent since the last session "
+                         "and contain suspicious content:")
+            lines += [f"- {c.status}: {short_path(c.path)}" for c in fresh[:LISTED]] + _more(len(fresh))
+        if earlier:
+            lines.append("These agent context files held suspicious content when AgentDetox first looked, and it "
+                         "has not been reviewed:")
+            lines += [f"- {short_path(c.path)}" for c in earlier[:LISTED]] + _more(len(earlier))
     listed = sorted(findings, key=lambda f: f.severity != "high")
     for f in listed[:LISTED]:
         lines.append(f"- {f.severity.upper()} {short_path(f.source)}: {printable(f.message)}"
@@ -164,13 +204,38 @@ def _check(project: Path, mode: str, cwd: Path | None = None) -> str:
                 lines.append(f"Review remaining findings: `agentdetox review C{latest[0].id}`. "
                              "This is a recovery record; restoring it would undo that recovery and may reintroduce "
                              "removed content. Inspect earlier changes with `agentdetox review` before further cleanup.")
+            elif latest[0].before is None:
+                lines.append(f"Review the new file: `agentdetox review C{latest[0].id}`. Remove chosen lines: "
+                             f"`agentdetox clean C{latest[0].id}`. `agentdetox restore C{latest[0].id}` removes the "
+                             "whole file; preview it, and add --apply only after review.")
             else:
                 lines.append(f"Review the diff: `agentdetox review C{latest[0].id}`. "
                              f"Preview recovery: `agentdetox restore C{latest[0].id}`; add --apply only after review.")
     if findings or conflicts:
         lines.append("Use review accept C<ID> for this exact version, or review dismiss F<ID> for one finding. "
                      "Neither grants a permanent source exception.")
-    return "\n".join(lines)
+    return "\n".join(lines + skipped)
+
+
+def _unread_lines(unread: list[tuple[str, str]]) -> list[str]:
+    """What to say about context files that could not be read: each once, since a file left
+    unreadable would otherwise be repeated at every start. All are recorded for `doctor`."""
+    fresh = []
+    for path, error in dict.fromkeys(unread):
+        with storage.connection() as db:
+            told = db is not None and db.execute(
+                "SELECT 1 FROM events WHERE event='context_unreadable' AND json_extract(data, '$.path')=? "
+                "AND json_extract(data, '$.error')=?", (path, error)).fetchone() is not None
+        if not told:
+            events.record("context_unreadable", path=path, error=error)
+            fresh.append((path, error))
+    if not fresh:
+        return []
+    return (["These context files could not be read, so they were not compared with their recorded versions "
+             "(every other file was):"]
+            + [f"- {short_path(path)} ({error})" for path, error in fresh[:LISTED]] + _more(len(fresh))
+            + ["A file made unreadable can hide a change to it. Mention this to the user once; AgentDetox will "
+               "not repeat it for the same file."])
 
 
 def upgrade_notice(project: Path) -> str:
@@ -205,15 +270,33 @@ def _digest(path: Path) -> str | None:
         return None
 
 
-def _record_external(changes: list[Change], flagged: set[str], findings=None) -> None:
+FOUND = "present when AgentDetox first looked; when and by what it was written is unknown"
+
+
+def _found_earlier(path: str, digest: str | None) -> bool:
+    latest = ledger.entries(path, limit=1)
+    return bool(latest) and latest[0].origin == "inspected" and latest[0].after == digest
+
+
+def _record_external(changes: list[Change], flagged: set[str], findings=None, found: bool = False) -> None:
     """Put changes made outside the agent's edit tools in the ledger. A flagged file keeps
-    its old snapshot and is found again every session; it is recorded once."""
+    its old snapshot and is found again every session; it is recorded once. At the first
+    look (`found`) nothing is known of any file before it, so a flagged one is recorded as
+    found as it was, not as added: there is no change to undo, and `restore`, which would
+    remove the file, is refused for it."""
     for c in changes:
         path = Path(c.path)
-        after = path.read_bytes() if c.status != "deleted" and path.is_file() else None
+        try:
+            after = path.read_bytes() if c.status != "deleted" and path.is_file() else None
+        except OSError:
+            continue    # unreadable since it was checked; the next check takes it up
         latest = ledger.entries(c.path, limit=1)
         digest = hashlib.sha256(after).hexdigest() if after is not None else None
         if latest and latest[0].after == digest:
+            continue
+        if found and after is not None:
+            ledger.record(c.path, "inspected", digest, after, findings=[f for f in findings or [] if f.doc_id == c.path],
+                          method=ledger.INSPECTION, actor="agentdetox, at its first look", attribution=FOUND)
             continue
         ledger.record(c.path, "external", engine.previous_version(c.path), after, flagged=c.path in flagged,
                       findings=[f for f in findings or [] if f.doc_id == c.path])

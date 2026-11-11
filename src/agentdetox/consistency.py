@@ -13,9 +13,10 @@ import importlib.util
 import os
 import re
 import zlib
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import numpy as np
@@ -143,7 +144,7 @@ class NLI:
     def __init__(self, model: str = NLI_MODEL, local_only: bool = True) -> None:
         self.model_name = model
         self.local_only = local_only
-        self._model = None
+        self._model: Any = None
 
     @staticmethod
     def installed() -> bool:
@@ -168,6 +169,7 @@ class NLI:
             self._tok = AutoTokenizer.from_pretrained(self.model_name, local_files_only=self.local_only)
             self._model = AutoModelForSequenceClassification.from_pretrained(
                 self.model_name, local_files_only=self.local_only).eval()
+            assert self._model is not None
             labels = {i: name.lower() for i, name in self._model.config.id2label.items()}
             self._contra = next(i for i, name in labels.items() if name.startswith("contra"))
         return self._model
@@ -297,7 +299,7 @@ def find_contradictions(new: list[Statement], existing: list[Statement], nli,
     return sorted(best.values(), key=lambda c: -c.probability)
 
 
-def store_statements(paths: list[Path], skip: set[str] = frozenset()) -> list[Statement]:
+def store_statements(paths: list[Path], skip: Collection[str] = frozenset()) -> list[Statement]:
     out: list[Statement] = []
     for p in paths:
         if str(p) in skip or not p.is_file():

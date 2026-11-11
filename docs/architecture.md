@@ -35,6 +35,8 @@ session-start check run from the command line for chosen clients (`agent inspect
 `hooks.py` wires these together and logs every decision that was not a plain allow to
 SQLite. Before a write, a file that no longer matches the last version AgentDetox knows is
 first recorded as changed outside the agent, so the agent is never credited with that change.
+For a config file, which rewrites its own counters and caches, that means a difference in the
+sections it guards; the snapshot then stays behind until the next session has reported it.
 After a write, the engine captures the file and ledger versions, computes attribution and findings
 without the store lock, then rechecks both versions before recording. Concurrent changes trigger
 a bounded retry; unchecked bytes never become a trusted checkpoint. Transcript indexes are local
@@ -82,13 +84,15 @@ left an I/O-blocked job queued. This queue carries contradiction checks only; li
 | `adapters.py` | Agent hook protocols: events, file changes, reply formats |
 | `engine.py` | The checks; knows nothing about agents or settings |
 | `policy.py` | Block, ask or record |
-| `hooks.py` | Entry point for hook calls; fails open |
+| `hooks.py` | Entry point for hook calls; fails open, except that an unchecked write to context asks |
 | `observation.py` | Scoped shell start states, end comparison, immediate review findings and notices |
 | `session.py` | The session-start check |
 | `context.py` | Which files each agent reloads; classifying a path; Claude Code's folder names |
 | `shell.py` | What a shell command writes or deletes, and whether it changes AgentDetox |
+| `paths.py` | Which file a path names: comparison by device and file number, not by spelling |
 | `persistence.py` | Rules for agent footholds, and the security-relevant parts of config files |
 | `hidden.py` | Hidden text and injection phrasing |
+| `budget.py` | The time one piece of text may be checked for, looked at between rules |
 | `provenance.py` | Reading the session transcript: copied text, and text the user wrote |
 | `consistency.py` | Splitting memory into statements and finding contradictions with an NLI model |
 | `daemon.py` | The model server (Unix socket), or a job queue where there is none (Windows) |
@@ -109,7 +113,10 @@ left an I/O-blocked job queued. This queue carries contradiction checks only; li
 See [PRIVACY.md](../PRIVACY.md) for what each file in `~/.agentdetox` holds. Writes to the store
 take `store.lock` and a SQLite transaction. Content objects are hash-validated and atomically
 replaced before metadata references them. Migration validates every referenced object, commits
-schema and metadata together, and preserves the original JSON files. A migration marker prevents
+schema and metadata together, and preserves the original JSON files. Lines of the old logs that are not records (cut short by a crash) are left out and counted
+in a `migration_skipped` event, as the old readers left them out; a database a failed
+migration could not fill is removed again, so the old files go on being read and what only
+they refer to is never taken for unreferenced. A migration marker prevents
 silent fallback to those stale files if the database later disappears.
 
 Recovery uses a durable operation record, a verified backup, and an atomic replacement. If the
@@ -138,7 +145,10 @@ findings, accepted versions, the latest per-file record and content needed for r
 `agentdetox library` inspects one folder the user names. Its state is `library.sqlite3`, apart
 from `state.sqlite3`: every write to the latter takes `store.lock`, which hooks wait on, and a
 scan commits thousands of batches. A scan never takes that lock, records no checkpoint and
-stores no file content. No hook, and no part of session start, loads the module or opens the
+stores no file content. Folders are read with no transaction open and what was read is
+saved in a short one, so a slow disk does not keep `cancel`, `dismiss` or a cleanup from
+the inventory. A reader that finds a journal left by a killed scan rolls it back through
+one write connection and then reads. No hook, and no part of session start, loads the module or opens the
 file; `agentdetox status` reads a few counts from it.
 
 ```

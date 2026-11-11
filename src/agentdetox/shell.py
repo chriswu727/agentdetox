@@ -8,10 +8,11 @@ target is resolved against the agent's working directory.
 
 from __future__ import annotations
 
+import functools
 import glob
+import itertools
 import posixpath
 import re
-import shlex
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -19,8 +20,8 @@ from pathlib import Path
 from . import compat
 from .context import home_dir
 
-SEGMENT_BREAKS = {"|", "||", "&&", ";", "&", "\n", "(", ")"}
-_REDIRECTS = {">", ">>", ">|", "&>", "&>>"}
+SEGMENT_BREAKS = {"|", "||", "&&", ";", ";;", ";&", ";;&", "&", "\n", "(", ")"}
+_REDIRECTS = {">", ">>", ">|", "&>", "&>>", ">&", "<>"}
 _COPY_COMMANDS = {"cp", "mv", "install", "ln", "rsync"}
 _DELETE_COMMANDS = {"rm", "rmdir", "unlink", "truncate", "shred"}
 _SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "fish"}
@@ -70,6 +71,10 @@ _CONTEXT_NAME = re.compile(
 _WRITES = re.compile(r"write|append|open\([^,)]*,\s*(?:mode\s*=\s*)?['\"][rb+]*[wax]|unlink|os\.remove|rmtree|rename"
                      r"|os\.replace|truncate"
                      r"|shutil|copyfile|\bmove\b|fs\.|>", re.I)
+# A quoted string in inline code that reads as a path: `~…`, `/…`, `./…`, `.name`, or with a `/` in it.
+_PATH_LITERAL = re.compile(r"""(['"])((?:~|\.{0,2}/|\.[A-Za-z_])[^'"\n]{0,300}|[^'"\n/]{1,100}/[^'"\n]{0,300})\1""")
+_REMOVES = re.compile(r"rmtree|rmdir|removedirs|rename|\bmove\b|os\.replace|rm\s+-[a-zA-Z]*r|rimraf|recursive", re.I)
+_MAX_LITERALS = 50
 _MAX_DEPTH = 3
 # Ends a target that acts on everything under it when it is a folder (`rm -r .claude`,
 # `git checkout -- .`); a copy's destination folder only receives the copied file. Shell
@@ -77,15 +82,319 @@ _MAX_DEPTH = 3
 TREE = "\0"
 
 
+# Longest first. `|&` is read as `|`: what matters here is which command comes next.
+_OPERATORS = (";;&", "&>>", "<<<", "<<-", ";;", ";&", "&&", "||", "|&", "&>", ">>", ">|", ">&", "<<", "<&", "<>",
+              ";", "&", "|", "(", ")", "<", ">")
+_PLAIN = re.compile(r"[^\s\\'\"`$;&|<>()#]+")
+_IN_DOUBLE = re.compile(r'[^"\\`$]+')
+# A newline after one of these continues the command list instead of ending a command.
+_CONTINUES = {"|", "||", "&&"}
+_MAX_NESTING = 4
+# Quotes inside substitutions inside quotes: past this the text counts as unreadable.
+_MAX_QUOTE_DEPTH = 40
+# Longer than this is not read as `$((arithmetic))`; looking further costs time for nothing.
+_MAX_ARITHMETIC = 2000
+
+
+def _backtick_end(text: str, i: int) -> int:
+    """Index of the backtick closing the one before `i`, or -1."""
+    while True:
+        j = text.find("`", i)
+        if j < 0:
+            return -1
+        if (j - len(text[:j].rstrip("\\"))) % 2 == 0:
+            return j
+        i = j + 1
+
+
+def _double_end(text: str, i: int, depth: int = 0) -> int:
+    """Index just past the double quote closing the one before `i`, or -1."""
+    if depth > _MAX_QUOTE_DEPTH:
+        return -1
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == '"':
+            return i + 1
+        if c == "\\":
+            i += 2
+        elif c == "`":
+            j = _backtick_end(text, i + 1)
+            if j < 0:
+                return -1
+            i = j + 1
+        elif text.startswith("$(", i) and not text.startswith("$((", i):
+            j = _paren_end(text, i + 2, depth + 1)
+            if j < 0:
+                return -1
+            i = j + 1
+        else:
+            i += 1
+    return -1
+
+
+def _paren_end(text: str, i: int, depth: int = 0) -> int:
+    """Index of the `)` closing a `$(` that ends just before `i`, or -1. A heredoc body in
+    between is data: its quotes and parentheses do not count."""
+    if depth > _MAX_QUOTE_DEPTH:
+        return -1
+    open_ = 1
+    n = len(text)
+    waiting: list[str] = []
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == "\n" and waiting:
+            i += 1
+            for end in waiting:
+                while i < n:
+                    stop = text.find("\n", i)
+                    stop = n if stop < 0 else stop
+                    line = text[i:stop].strip()
+                    if line == end:
+                        i = stop + 1
+                        break
+                    if line.startswith(end + ")"):
+                        # `EOF)` closes both; go on reading just after the word.
+                        i = text.index(end, i) + len(end)
+                        break
+                    i = stop + 1
+            waiting = []
+            continue
+        if text.startswith("<<", i) and not text.startswith("<<<", i):
+            end, j = _delimiter(text, i + (3 if text.startswith("<<-", i) else 2))
+            if end:
+                waiting.append(end)
+                i = j
+                continue
+        if text.startswith("<<<", i):
+            i += 3
+            continue
+        if c == "'":
+            j = text.find("'", i + 1)
+            if j < 0:
+                return -1
+            i = j + 1
+            continue
+        if c == '"':
+            j = _double_end(text, i + 1, depth + 1)
+            if j < 0:
+                return -1
+            i = j
+            continue
+        if c == "`":
+            j = _backtick_end(text, i + 1)
+            if j < 0:
+                return -1
+            i = j + 1
+            continue
+        if c == "(":
+            open_ += 1
+        elif c == ")":
+            open_ -= 1
+            if not open_:
+                return i
+        i += 1
+    return -1
+
+
+def _arithmetic_end(text: str, i: int) -> int:
+    """Index just past `$((…))` starting at `i`, or -1 when it is not arithmetic. A `;`, a
+    quote or a line break inside means a command substitution holding a subshell."""
+    j = text.find("))", i + 3, i + 3 + _MAX_ARITHMETIC)
+    if j < 0 or re.search(r"[;'\"`\n]", text[i + 3:j]):
+        return -1
+    return j + 2
+
+
+def _lex(text: str, nesting: int = 0) -> tuple[list[str], bool]:
+    """The command's words and operators as a POSIX shell splits them, and whether the text
+    could be read to its end. A command substitution inside quotes or backticks runs too:
+    its commands follow at the end, each in a subshell of its own."""
+    tokens: list[str] = []
+    word: list[str] | None = None
+    inner: list[str] = []
+    clean = True
+    i = 0
+    n = len(text)
+
+    def end_word() -> None:
+        nonlocal word
+        if word is not None:
+            tokens.append("".join(word))
+            word = None
+
+    def add(piece: str) -> None:
+        nonlocal word
+        if word is None:
+            word = []
+        word.append(piece)
+
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            if text.startswith("\\\n", i):
+                i += 2          # a continued line
+            elif i + 1 < n:
+                add(text[i + 1])
+                i += 2
+            else:
+                add("\\")
+                i += 1
+        elif c == "'":
+            j = text.find("'", i + 1)
+            if j < 0:
+                clean = False
+                j = n
+            add(text[i + 1:j])
+            i = j + 1
+        elif c == '"':
+            add("")
+            i += 1
+            while i < n and text[i] != '"':
+                d = text[i]
+                if d == "\\":
+                    following = text[i + 1:i + 2]
+                    if following == "\n":
+                        i += 2
+                    elif following and following in '$`"\\':
+                        add(following)
+                        i += 2
+                    else:
+                        add("\\")
+                        i += 1
+                elif d == "`":
+                    j = _backtick_end(text, i + 1)
+                    if j < 0:
+                        clean = False
+                        j = n
+                    inner.append(text[i + 1:j].replace("\\`", "`"))
+                    add(text[i:j + 1])
+                    i = j + 1
+                elif text.startswith("$(", i) and not text.startswith("$((", i):
+                    j = _paren_end(text, i + 2)
+                    if j < 0:
+                        clean = False
+                        j = n
+                    inner.append(text[i + 2:j])
+                    add(text[i:j + 1])
+                    i = j + 1
+                elif d == "$":
+                    add("$")
+                    i += 1
+                else:
+                    m = _IN_DOUBLE.match(text, i)
+                    assert m is not None
+                    add(m.group())
+                    i = m.end()
+            if i >= n:
+                clean = False
+            i += 1
+        elif c == "`":
+            j = _backtick_end(text, i + 1)
+            if j < 0:
+                clean = False
+                j = n
+            inner.append(text[i + 1:j].replace("\\`", "`"))
+            add(text[i:j + 1])
+            i = j + 1
+        elif c == "$":
+            j = _arithmetic_end(text, i) if text.startswith("$((", i) else -1
+            if j > 0:
+                add(text[i:j])
+                i = j
+            elif text.startswith("$'", i):
+                j = i + 2
+                while j < n and text[j] != "'":
+                    j += 2 if text[j] == "\\" else 1
+                if j >= n:
+                    clean = False
+                add(text[i + 2:j])
+                i = j + 1
+            else:
+                # `$(` stays as it was read before: the `(` after it opens a subshell.
+                add("$")
+                i += 1
+        elif c == "#":
+            if word is None:
+                j = text.find("\n", i)
+                i = n if j < 0 else j
+            else:
+                add("#")
+                i += 1
+        elif c == "\n":
+            end_word()
+            if tokens and tokens[-1] != "\n" and tokens[-1] not in _CONTINUES:
+                tokens.append("\n")
+            i += 1
+        elif c.isspace():
+            end_word()
+            i += 1
+        elif c in ";&|<>()":
+            end_word()
+            operator = next(o for o in _OPERATORS if text.startswith(o, i))
+            tokens.append("|" if operator == "|&" else operator)
+            i += len(operator)
+        else:
+            m = _PLAIN.match(text, i)
+            if m is None:       # a character Python calls space and the pattern does not
+                add(c)
+                i += 1
+            else:
+                add(m.group())
+                i = m.end()
+    end_word()
+    for script in inner:
+        if nesting >= _MAX_NESTING:
+            clean = False
+            continue
+        only, bodies = heredocs(script)
+        for text in (only, *_fed_to_shell(bodies)):
+            nested, nested_clean = _lex(heredocs(text)[0], nesting + 1)
+            clean &= nested_clean
+            tokens += [";", "(", *nested, ")"]
+    return tokens, clean
+
+
+@functools.lru_cache(maxsize=64)
+def _lexed(command: str) -> tuple[tuple[str, ...], bool]:
+    tokens, clean = _lex(command)
+    return tuple(tokens), clean
+
+
 def split(command: str) -> list[str]:
     """Quoted text is one token, so a prompt that merely contains `curl ... | bash` is
-    not mistaken for a pipeline, and `2>&1` is not a write."""
-    try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>()")
-        lexer.whitespace_split = True
-        return list(lexer)
-    except ValueError:
-        return []
+    not mistaken for a pipeline, and `2>&1` is not a write. An unquoted line break ends a
+    command, a `#` starts a comment only at the start of a word, and adjacent operators
+    are separate tokens, as in a shell. Heredoc bodies are left out, with the `<<WORD`
+    that starts them: they are data."""
+    return list(_lexed(heredocs(command)[0])[0])
+
+
+def names_context(text: str) -> bool:
+    """Whether the text spells a name an agent's context file could have. Folders split by
+    `\\` count as well, single or doubled as JSON writes them: this is what is asked when a
+    check has failed, and a Windows path must not be a way to have the answer be no."""
+    return bool(_CONTEXT_NAME.search(text)
+                or "\\" in text and _CONTEXT_NAME.search(text.replace("\\\\", "/").replace("\\", "/")))
+
+
+def _script(text: str) -> list[str]:
+    """The tokens of a script found inside a command (`bash -c '…'`, `eval`, a heredoc fed to
+    a shell): its own heredoc bodies are data, except those fed to a shell in turn."""
+    only, bodies = heredocs(text)
+    tokens = split(only)
+    for body in _fed_to_shell(bodies):
+        tokens += [";", "(", *_script(body), ")"]
+    return tokens
+
+
+def unreadable(command: str) -> bool:
+    """Whether the command could not be read to its end (an unclosed quote or substitution,
+    or substitutions nested too deep), so what `split` returns may be incomplete."""
+    return not _lexed(heredocs(command)[0])[1]
 
 
 def literal_printf(command: str) -> tuple[str, str, str] | None:
@@ -118,6 +427,23 @@ def literal_heredoc(command: str) -> tuple[str, str, str] | None:
     return match['target'].strip("'"), match['body'] + '\n', executable
 
 
+def _redirection(tokens: list[str], i: int) -> tuple[int, str | None]:
+    """How many tokens the output redirection at `i` takes (0 when there is none) and the
+    file it writes, if any."""
+    tok = tokens[i]
+    if tok not in _REDIRECTS and tok != "<&" or i + 1 >= len(tokens):
+        return 0, None
+    nxt = tokens[i + 1]
+    if nxt in SEGMENT_BREAKS:
+        return 1, None      # `>(command)`: the command inside is read on its own
+    if tok in (">&", "<&") and (nxt == "-" or nxt.isdigit()):
+        return 2, None      # a copy of a descriptor (`2>&1`), not a file
+    if tok == "<&":
+        return 0, None
+    # Normalised first: `/dev/../etc` is not a device.
+    return 2, None if posixpath.normpath(nxt).startswith("/dev/") else nxt
+
+
 def _segments(tokens: list[str]) -> list[tuple[list[str], list[str]]]:
     """Each simple command, with the files its output redirections write."""
     out: list[tuple[list[str], list[str]]] = []
@@ -126,11 +452,11 @@ def _segments(tokens: list[str]) -> list[tuple[list[str], list[str]]]:
     i = 0
     while i < len(tokens):
         tok = tokens[i]
-        if tok in _REDIRECTS and i + 1 < len(tokens):
-            nxt = tokens[i + 1]
-            if not nxt.startswith("/dev/") and nxt not in SEGMENT_BREAKS:
-                redirects.append(nxt)
-            i += 2
+        used, target = _redirection(tokens, i)
+        if used:
+            if target is not None:
+                redirects.append(target)
+            i += used
             continue
         if tok in SEGMENT_BREAKS:
             out.append((words, redirects))
@@ -214,7 +540,7 @@ def _unwrap_in(words: list[str], folder: str = "",
                 words = [*words[:i], "-S", value, *words[i + 1:]]
                 continue
             if name == "env" and word in ("-S", "--split-string") and i + 1 < len(words):
-                return _unwrap_in(["env", *(["-C", chdir] if chdir else []), *split(words[i + 1]), *words[i + 2:]],
+                return _unwrap_in(["env", *(["-C", chdir] if chdir else []), *_script(words[i + 1]), *words[i + 2:]],
                                   folder, written)
             if word.startswith("-") and word != "-":
                 options, used = _options(words, i, values)
@@ -261,6 +587,40 @@ def _inner(words: list[str]) -> str | None:
     return None
 
 
+def _stdin_script(command: list[str], feeder: list[str] | None) -> str | None:
+    """The script a shell with no script of its own reads: a here-string (`bash <<< '…'`),
+    or what the `echo` or `printf` piped into it prints. `feeder` is the command before the
+    pipe, if there is one."""
+    if not command or compat.program(command[0]) not in _SHELLS:
+        return None
+    rest = command[1:]
+    i = 0
+    while i < len(rest):
+        word = rest[i]
+        if word == "<<<":
+            return rest[i + 1] if i + 1 < len(rest) else None
+        if word in _SHELL_VALUES:
+            i += 2
+        elif word.startswith(("-", "+")):
+            i += 1
+        else:
+            break
+    if i < len(rest):
+        return None     # a script file, or input from somewhere this cannot see
+    printed = _unwrap(feeder) if feeder else []
+    name = compat.program(printed[0]) if printed else ""
+    if name == "echo":
+        return " ".join(a for a in printed[1:] if not re.fullmatch(r"-[neE]+", a))
+    if name == "printf":
+        given = printed[2:] if printed[1:2] == ["--"] else printed[1:]
+        if not given:
+            return None
+        # With a `%` the arguments are what is printed, one per use of the format.
+        text = "\n".join(given[1:]) if "%" in given[0] else given[0]
+        return text.replace("\\n", "\n")
+    return None
+
+
 def _agentdetox_args(words: list[str]) -> list[str] | None:
     """The arguments of an agentdetox call, however it is launched: directly, through
     uvx/uv/pipx, or as `python -m agentdetox`."""
@@ -285,15 +645,19 @@ def changes_agentdetox(tokens: list[str], depth: int = 0, replaced: Sequence[str
     with arguments only known at run time, but only if what is written out already pins
     a command that can only read. `replaced` holds the strings an enclosing xargs
     substitutes in the text being read."""
-    for words, _ in _segments(tokens):
+    feeder: list[str] | None = None
+    for words, _, before, _, _ in _commands(tokens):
+        fed_by, feeder = (feeder if before == "|" else None), words
         body = _unwrap(words)
         if not body:
             continue
         own = _xargs_replaced(words[:len(words) - len(body)])
         inner = _inner(body)
+        if inner is None:
+            inner = _stdin_script(body, fed_by)
         if inner is not None:
             # A script xargs appends to receives the arguments as "$@", which is unknown by itself.
-            if depth < _MAX_DEPTH and changes_agentdetox(split(inner), depth + 1, [*replaced, *(own or ())]):
+            if depth < _MAX_DEPTH and changes_agentdetox(_script(inner), depth + 1, [*replaced, *(own or ())]):
                 return True
             continue
         args = _agentdetox_args(body)
@@ -356,7 +720,8 @@ def _changes_trust(args: list[str]) -> bool:
     sub = words[0] if words else ""
     rest = args[args.index(sub) + 1:] if sub else []
     applies = any(a.startswith('--') and '--apply'.startswith(a) for a in rest)
-    return bool((sub in ("history", "restore", "clean", "install") and applies) or sub == "health"
+    # `_daemon` is how AgentDetox starts its own background worker; nothing else has cause to.
+    return bool((sub in ("history", "restore", "clean", "install") and applies) or sub in ("health", "_daemon")
                 or (sub == "review" and (any(a in ("accept", "dismiss") for a in rest)
                     or any(a.startswith('--') and '--interactive'.startswith(a) for a in rest))) or sub == "uninstall"
                 or (sub == "allow" and any(a not in ("--list", "-h", "--help") for a in rest))
@@ -384,11 +749,11 @@ def _commands(tokens: list[str]) -> list[tuple[list[str], list[str], str | None,
     i = 0
     while i < len(tokens):
         tok = tokens[i]
-        if tok in _REDIRECTS and i + 1 < len(tokens):
-            nxt = tokens[i + 1]
-            if not nxt.startswith("/dev/") and nxt not in SEGMENT_BREAKS:
-                redirects.append(nxt)
-            i += 2
+        used, target = _redirection(tokens, i)
+        if used:
+            if target is not None:
+                redirects.append(target)
+            i += used
             continue
         if tok in SEGMENT_BREAKS:
             end(tok)
@@ -419,12 +784,45 @@ class _Scope:
 
 
 UNKNOWN = "?/"   # prefix of a target whose folder is unknown; only its name can be checked
+# Stands for "a patch is applied here": Codex's apply_patch takes its file names from the
+# patch, relative to the folder it runs in, which is what this tells.
+PATCH = "\3"
+_PATCH_PROGRAMS = {"apply_patch", "applypatch"}
 # Ends a file a copy writes only if its destination is a folder (`cp x/CLAUDE.md dest`):
 # whether `dest` is one is known when the command is checked, not here.
 INTO = "\1"
 
 
-def write_targets(tokens: list[str], depth: int = 0) -> list[str]:
+def patch_folders(tokens: list[str]) -> list[str]:
+    """The folders a patch fed to `apply_patch` in this command may be applied in, relative
+    to where the command starts ("" for that folder itself): `cd .codex && apply_patch …`
+    applies it in .codex. A folder only known at run time is left out."""
+    found = []
+    for target in write_targets(tokens, patches=True):
+        if target.endswith(PATCH) and not target.startswith(UNKNOWN):
+            found.append(posixpath.dirname(target))
+    return list(dict.fromkeys(found))
+
+
+def patches_in(command: str, begin: str, depth: int = 0) -> list[str]:
+    """Every patch (text starting with `begin`) a command hands to `apply_patch`: on its
+    input from a heredoc, as an argument, or either of those inside a script it runs
+    (`bash -lc '…'`)."""
+    only, bodies = heredocs(command)
+    found = [body for _, body in bodies if body.lstrip().startswith(begin)]
+    for words, _, _, _, _ in _commands(split(only)):
+        program = _unwrap(words)
+        if not program:
+            continue
+        if compat.program(program[0]) in _PATCH_PROGRAMS:
+            found += [word for word in program[1:] if word.lstrip().startswith(begin)]
+        inner = _inner(program)
+        if inner is not None and depth < _MAX_DEPTH:
+            found += patches_in(inner, begin, depth + 1)
+    return found
+
+
+def write_targets(tokens: list[str], depth: int = 0, patches: bool = False) -> list[str]:
     """Paths a shell command writes to or deletes: redirect and tee targets, sed -i and
     perl -i files, the destination of cp/mv, rm arguments, git checkout/restore paths,
     curl/wget output files, files named by inline interpreter code that writes, and the
@@ -433,7 +831,9 @@ def write_targets(tokens: list[str], depth: int = 0) -> list[str]:
     as UNKNOWN plus the path, so the caller can still judge it by name."""
     targets: list[str] = []
     scopes = [_Scope([""], {"HOME": ["~"]})]        # one per `( … )` level
+    feeder: list[str] | None = None
     for words, redirects, before, after, level in _commands(tokens):
+        fed_by, feeder = (feeder if before == "|" else None), words
         while len(scopes) - 1 < level:
             scopes.append(scopes[-1].copy())
         del scopes[level + 1:]
@@ -479,8 +879,11 @@ def write_targets(tokens: list[str], depth: int = 0) -> list[str]:
                 command, folder = _unwrap_in(variant, written=wrapped)
                 found += wrapped
                 inner = _inner(command) if command else None
+                if inner is None:
+                    inner = _stdin_script(command, fed_by)
                 if inner is not None:
-                    found += [(folder, t) for t in write_targets(split(inner), depth + 1)] if depth < _MAX_DEPTH else []
+                    found += ([(folder, t) for t in write_targets(_script(inner), depth + 1, patches)]
+                              if depth < _MAX_DEPTH else [])
                 elif command and command[0].startswith(UNKNOWN):
                     # A program named at run time could be anything that writes its arguments.
                     found += [(folder, a) for a in command[1:] if not a.startswith("-")]
@@ -501,7 +904,26 @@ def write_targets(tokens: list[str], depth: int = 0) -> list[str]:
                     targets.append(UNKNOWN + value.removeprefix(UNKNOWN))
                 if not value.startswith(UNKNOWN):
                     targets += [_under(cwd, value) for cwd in scope.cwds]
-    return list(dict.fromkeys(t for t in targets if t != UNKNOWN))
+    return list(dict.fromkeys(b for t in targets if t != UNKNOWN and (patches or not t.endswith(PATCH))
+                              for b in _braces(t)))
+
+
+_BRACE = re.compile(r"(?<!\$)\{([^{}]*,[^{}]*)\}")
+_MAX_BRACES = 32
+
+
+def _braces(value: str) -> list[str]:
+    """`a{,.local}.json` as the shell expands it. Quotes are gone by now, so a quoted brace
+    is expanded too: an extra name to judge at worst."""
+    match = _BRACE.search(value)
+    if not match:
+        return [value]
+    out: list[str] = []
+    for part in match.group(1).split(","):
+        out += _braces(value[:match.start()] + part + value[match.end():])
+        if len(out) > _MAX_BRACES:
+            return [value]
+    return out
 
 
 def _cd_operands(words: list[str]) -> list[str] | None:
@@ -626,10 +1048,18 @@ def _segment_targets(seg: list[str], work_trees: Sequence[str] = ()) -> list[tup
         return _git_targets(seg[1:], work_trees)
     if name in _COPY_COMMANDS:
         return [("", t) for t in _copy_targets(name, seg[1:])]
-    if name == "tee":
+    if name in _PATCH_PROGRAMS:
+        found = [PATCH]
+    elif name == "tee":
         found = args
-    elif name == "sed" and any(a.startswith("-i") for a in seg[1:]):
+    elif name == "sed" and any(_sed_in_place(a) for a in seg[1:]):
         found = args[1:]
+    elif name == "sort":
+        found = _option_values(seg[1:], "o", "--output")
+    elif name in ("awk", "gawk") and _awk_in_place(seg[1:]):
+        found = args[1:]
+    elif name == "patch":
+        found = _patch_targets(seg[1:])
     elif name in _DELETE_COMMANDS:
         found = [a + TREE for a in args]
     elif name == "dd":
@@ -641,6 +1071,57 @@ def _segment_targets(seg: list[str], work_trees: Sequence[str] = ()) -> list[tup
     else:
         found = []
     return [("", t) for t in found]
+
+
+def _sed_in_place(word: str) -> bool:
+    """`-i`, `-i.bak`, a bundle such as `-Ei` or `-ni`, and `--in-place[=SUFFIX]`. A letter
+    after `-e`, `-f` or `-l` in a bundle is that option's value."""
+    if word.startswith("--"):
+        return word.split("=")[0] == "--in-place"
+    if not word.startswith("-"):
+        return False
+    for letter in word[1:]:
+        if letter == "i":
+            return True
+        if letter in "efl":
+            return False
+    return False
+
+
+def _option_values(args: list[str], short: str, long: str) -> list[str]:
+    """The values of one option, however it is written: `-o file`, `-ofile`, in a bundle
+    (`-sSLo file`), `--output file` and `--output=file`."""
+    out = []
+    for i, a in enumerate(args):
+        bundle = re.fullmatch(rf"-[A-Za-z]*?{short}(.*)", a) if not a.startswith("--") else None
+        if bundle and bundle.group(1):
+            out.append(bundle.group(1))
+        elif (bundle or a == long) and i + 1 < len(args):
+            out.append(args[i + 1])
+        elif a.startswith(long + "="):
+            out.append(a.split("=", 1)[1])
+    return out
+
+
+def _awk_in_place(args: list[str]) -> bool:
+    """gawk's `-i inplace` (also `--include inplace` and `-iinplace`)."""
+    return any(a in ("-iinplace", "--include=inplace") or a in ("-i", "--include") and args[i + 1:i + 2] == ["inplace"]
+               for i, a in enumerate(args))
+
+
+def _patch_targets(args: list[str]) -> list[str]:
+    """The file `patch FILE [PATCHFILE]` changes, and `-o FILE`. Without a file it takes the
+    names from the patch, which is only known when it runs."""
+    values = {"-i", "-p", "-d", "-D", "-F", "-o", "-r", "-B", "-b", "-V", "-z", "-Y", "-g"}
+    operands = []
+    i = 0
+    while i < len(args):
+        if args[i].startswith("-") and args[i] != "-":
+            i += 2 if args[i] in values else 1
+            continue
+        operands.append(args[i])
+        i += 1
+    return [*operands[:1], *_option_values(args, "o", "--output")]
 
 
 # Copy options that take the next word as their value.
@@ -694,8 +1175,14 @@ def _copy_targets(name: str, args: list[str]) -> list[str]:
             return [*written, dest]
         # Several sources, or a destination written as a folder, can only be a folder.
         certain = len(sources) > 1 or dest.endswith("/") or posixpath.basename(dest) in (".", "..")
-        return [*written, dest, *(_inside(name, dest, s, recursive) + ("" if certain else INTO) for s in sources)]
-    return [*written, *(_inside(name, folder, s, recursive) for s in operands)]
+        return [*written, *_moved(name, sources), dest,
+                *(_inside(name, dest, s, recursive) + ("" if certain else INTO) for s in sources)]
+    return [*written, *_moved(name, operands), *(_inside(name, folder, s, recursive) for s in operands)]
+
+
+def _moved(name: str, sources: list[str]) -> list[str]:
+    """A move takes its sources away from where they were."""
+    return [s + TREE for s in sources] if name == "mv" else []
 
 
 # BSD cp, as on macOS, copies what is in `src/` rather than the folder itself; GNU cp does not.
@@ -732,76 +1219,274 @@ def _git_targets(args: list[str], work_trees: Sequence[str]) -> list[tuple[str, 
             folder = _join(folder, value)
         elif name == "--work-tree" and value:
             trees.append(_join(folder, value))
-    return [(f, t + TREE) for t in _git_paths(args[i:]) for f in dict.fromkeys([folder, *trees])]
+    return [(f, t) for t in _git_paths(args[i:]) for f in dict.fromkeys([folder, *trees])]
+
+
+# Checkout options that take the next word as their value.
+_CHECKOUT_VALUES = {"-b", "-B", "--orphan", "--conflict", "--pathspec-from-file", "--recurse-submodules"}
 
 
 def _git_paths(args: list[str]) -> list[str]:
+    """Paths a git command rewrites or removes in the work tree, each ending in TREE when it
+    may name a folder."""
     sub = args[0] if args else ""
-    if sub not in ("checkout", "restore"):
+    if sub not in ("checkout", "restore", "rm", "mv"):
         return []
     rest = args[1:]
     options = rest[:rest.index("--")] if "--" in rest else rest
     if sub == "restore" and any(a in ("-S", "--staged") for a in options) and not any(
             a in ("-W", "--worktree") for a in options):
         return []  # the index only
+    if sub == "rm" and "--cached" in options:
+        return []  # the index only
     if "--" in rest:
-        return rest[rest.index("--") + 1:]
+        return [a + TREE for a in rest[rest.index("--") + 1:]]
     if sub == "checkout":
-        # Without `--` a word may be a branch; `.` and `./…` can only be paths.
-        return [a for a in rest if a == "." or a.startswith("./")]
-    if sub == "restore":
-        skip = {i + 1 for i, a in enumerate(rest) if a in ("-s", "--source")}
-        return [a for i, a in enumerate(rest) if not a.startswith("-") and i not in skip]
-    return []
+        if any(a in ("-b", "-B", "--orphan") for a in rest):
+            return []   # a new branch: nothing in the work tree is replaced
+        skip = {i + 1 for i, a in enumerate(rest) if a in _CHECKOUT_VALUES}
+        words = [a for i, a in enumerate(rest) if not a.startswith("-") and i not in skip]
+        # Without `--` the first word may be a branch or a path. As a branch it names no
+        # file, so judging it as a file costs nothing; `.`, a path with a folder in it and
+        # every later word can be folders.
+        return [a + TREE if n or a.startswith(".") or "/" in a else a for n, a in enumerate(words)]
+    skip = {i + 1 for i, a in enumerate(rest) if a in ("-s", "--source")}
+    return [a + TREE for i, a in enumerate(rest) if not a.startswith("-") and i not in skip]
+
+
+def _curl_remote_name(word: str) -> bool:
+    """`-O` alone or in a bundle (`-LO`). A letter after an option that takes a value
+    (`-XPOST`, `-HOrigin:`) belongs to that value."""
+    if word.startswith("--") or not word.startswith("-"):
+        return False
+    for letter in word[1:]:
+        if letter == "O":
+            return True
+        if letter in "AbcCdDeEFhHKmoPQrTuUwxXYyz":
+            return False
+    return False
 
 
 def _download_targets(name: str, args: list[str]) -> list[str]:
-    short, long = ("o", "--output") if name == "curl" else ("O", "--output-document")
-    out = []
-    for i, a in enumerate(args):
-        # Short options bundle (`-sSLo file`), and the value may follow the letter (`-ofile`).
-        bundle = re.fullmatch(rf"-[A-Za-z]*?{short}(.*)", a) if not a.startswith("--") else None
-        if bundle and bundle.group(1):
-            out.append(bundle.group(1))
-        elif (bundle or a == long) and i + 1 < len(args):
-            out.append(args[i + 1])
-        elif a.startswith(long + "="):
-            out.append(a.split("=", 1)[1])
-    return out
+    """The files a download writes: the one named (`curl -o`, `wget -O`), or the last part
+    of each address when the server's name is kept (`curl -O`, plain `wget`), in the folder
+    given (`curl --output-dir`, `wget -P`)."""
+    urls = [a for a in args if re.match(r"[A-Za-z][A-Za-z0-9+.-]*://", a)]
+    kept = [posixpath.basename(u.split("?")[0].split("#")[0].rstrip("/")) for u in urls]
+    if name == "curl":
+        named = _option_values(args, "o", "--output")
+        folders = [a.split("=", 1)[1] if "=" in a else nxt for a, nxt in zip(args, [*args[1:], ""])
+                   if a.split("=")[0] == "--output-dir"]
+        remote = any(a in ("--remote-name", "--remote-name-all") or _curl_remote_name(a) for a in args)
+        found = named + (kept if remote else [])
+    else:
+        named = _option_values(args, "O", "--output-document")
+        folders = _option_values(args, "P", "--directory-prefix")
+        found = named or kept
+    found = [f for f in found if f and f != "-"]
+    return [f"{folder.rstrip('/')}/{f}" for folder in folders[-1:] for f in found if _relative(f)] or found
 
 
 def _interpreter_targets(name: str, args: list[str]) -> list[str]:
     code_flags = ("-c",) if name.startswith("python") else ("-e", "-E", "--eval", "-r")
     codes = [args[i + 1] for i, a in enumerate(args[:-1]) if a in code_flags or re.fullmatch(r"-[a-zA-Z]*e", a)]
     out = [m for code in codes if _WRITES.search(code) for m in _CONTEXT_NAME.findall(code)]
-    if name == "perl" and any(re.match(r"-[a-zA-Z]*i", a) for a in args):
+    for code in codes:
+        if _WRITES.search(code):
+            # Any path the code spells out may be what it writes; one that is not agent
+            # context is dropped when the targets are judged. A folder counts with what is
+            # in it only when the code removes or moves something.
+            tree = TREE if _REMOVES.search(code) else ""
+            out += [m.group(2) + tree for m in itertools.islice(_PATH_LITERAL.finditer(code), _MAX_LITERALS)]
+    in_place = (any(re.match(r"-[a-zA-Z]*i", a) for a in args) if name == "perl"
+                else any(re.fullmatch(r"-[pnlaw]*i(\..*)?", a) for a in args) if name == "ruby" else False)
+    if in_place:
         skip = {i + 1 for i, a in enumerate(args) if re.fullmatch(r"-[a-zA-Z]*e", a)}
         out += [a for i, a in enumerate(args) if not a.startswith("-") and i not in skip]
     return out
 
 
-_HEREDOC = re.compile(r"(?<!<)<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+_HEREDOC_PLAIN = re.compile(r"[^\\'\"`$#<\n]+")
+_DELIMITER_END = re.compile(r"[\s;&|<>()]")
+
+
+def _delimiter(text: str, i: int) -> tuple[str, int]:
+    """The word naming a heredoc's end, quotes removed, and where it stops."""
+    n = len(text)
+    while i < n and text[i] in " \t":
+        i += 1
+    parts: list[str] = []
+    while i < n and not _DELIMITER_END.match(text[i]):
+        c = text[i]
+        if c in "'\"":
+            j = text.find(c, i + 1)
+            if j < 0:
+                return "", i
+            parts.append(text[i + 1:j])
+            i = j + 1
+        elif c == "\\" and i + 1 < n:
+            parts.append(text[i + 1])
+            i += 2
+        else:
+            parts.append(c)
+            i += 1
+    return "".join(parts), i
+
+
+def _quoted_heredocs(quoted: str) -> tuple[str, list[tuple[str, str]]]:
+    """A double-quoted string without the heredoc bodies of the command substitutions in it
+    (`"$(cat <<'EOF' … EOF)"`), and those bodies. `<<` in the quoted text itself starts none."""
+    if "<<" not in quoted:
+        return quoted, []
+    out: list[str] = []
+    bodies: list[tuple[str, str]] = []
+    i = 0
+    n = len(quoted)
+    while i < n:
+        if quoted[i] == "\\":
+            out.append(quoted[i:i + 2])
+            i += 2
+        elif quoted.startswith("$(", i) and not quoted.startswith("$((", i):
+            j = _paren_end(quoted, i + 2)
+            if j < 0:
+                break
+            script, inside = heredocs(quoted[i + 2:j])
+            if script.strip() == "cat" and len(inside) == 1:
+                # `"$(cat <<'EOF' … EOF)"` is the body itself, so `bash -c` of it is read as
+                # the script it is. An unquoted end word leaves `$(…)` in the body to run.
+                feeding, body = inside[0]
+                literal = bool(re.search(r"<<-?[ \t]*['\"\\]", feeding))
+                body = body.replace("\\", "\\\\") if literal else body
+                body = re.sub(r'(["$`])' if literal else r'(")', r"\\\1", body)
+                out.append(body)
+            else:
+                bodies += inside
+                out.append(f"$({script})")
+            i = j + 1
+        else:
+            out.append(quoted[i])
+            i += 1
+    out.append(quoted[i:])
+    return "".join(out), bodies
 
 
 def heredocs(command: str) -> tuple[str, list[tuple[str, str]]]:
-    """The command without its heredoc bodies, and each body with the line that feeds it.
-    A body is data unless the command reading it is a shell or an interpreter."""
-    lines = command.split("\n")
+    """The command without its heredocs, and each body with the line that feeds it as it
+    was written. A body is data unless the command reading it is a shell or an interpreter.
+    `<<` inside quotes, a comment or arithmetic starts none; one in a command substitution
+    does, also inside double quotes."""
     kept: list[str] = []
+    line: list[str] = []
+    waiting: list[str] = []
     bodies: list[tuple[str, str]] = []
     i = 0
-    while i < len(lines):
-        line = lines[i]
-        kept.append(line)
-        i += 1
-        for m in _HEREDOC.finditer(line):
-            body: list[str] = []
-            while i < len(lines) and lines[i].strip() != m.group(2):
-                body.append(lines[i])
-                i += 1
+    n = len(command)
+    while i < n:
+        c = command[i]
+        if c == "\n":
+            feeding = "".join(line)
             i += 1
-            bodies.append((line, "\n".join(body)))
-    return "\n".join(kept), bodies
+            for end in waiting:
+                body: list[str] = []
+                while i <= n:
+                    stop = command.find("\n", i)
+                    stop = n if stop < 0 else stop
+                    text = command[i:stop]
+                    i = stop + 1
+                    if text.strip() == end:
+                        break
+                    body.append(text)
+                    if stop == n:
+                        break
+                bodies.append((feeding, "\n".join(body)))
+            waiting = []
+            if i <= n:      # a body that ran to the end of the text took the line break with it
+                kept.append("\n")
+            line = []
+            continue
+        if c == "\\" and i + 1 < n:
+            j = i + 2
+        elif c == "'":
+            j = command.find("'", i + 1)
+            j = n if j < 0 else j + 1
+        elif c == '"':
+            j = _double_end(command, i + 1)
+            j = n if j < 0 else j
+            quoted, inside = _quoted_heredocs(command[i:j])
+            bodies += inside
+            kept.append(quoted)
+            line.append(quoted)
+            i = j
+            continue
+        elif c == "`":
+            j = _backtick_end(command, i + 1)
+            j = n if j < 0 else j + 1
+            script, inside = heredocs(command[i + 1:j - 1]) if j - 1 > i else ("", [])
+            if inside:
+                bodies += inside
+                kept.append(f"`{script}`")
+                line.append(f"`{script}`")
+                i = j
+                continue
+        elif c == "$":
+            j = _arithmetic_end(command, i) if command.startswith("$((", i) else -1
+            j = i + 1 if j < 0 else j
+        elif c == "#" and (i == 0 or command[i - 1].isspace() or command[i - 1] in ";&|()"):
+            j = command.find("\n", i)
+            j = n if j < 0 else j
+        elif command.startswith("<<<", i):
+            j = i + 3
+        elif command.startswith("<<", i):
+            end, j = _delimiter(command, i + (3 if command.startswith("<<-", i) else 2))
+            if end:
+                # Left out of the kept text, so reading that text again finds no heredoc.
+                waiting.append(end)
+                line.append(command[i:j])
+                i = j
+                continue
+        elif c in "\\#<":
+            j = i + 1
+        else:
+            m = _HEREDOC_PLAIN.match(command, i)
+            j = m.end() if m else i + 1
+        piece = command[i:j]
+        kept.append(piece)
+        line.append(piece)
+        i = j
+    feeding = "".join(line)
+    bodies += [(feeding, "") for _ in waiting]
+    return "".join(kept), bodies
+
+
+def _fed_to_shell(bodies: list[tuple[str, str]]) -> list[str]:
+    """The heredoc bodies a shell runs: fed to it directly, or through `cat <<EOF | sh`."""
+    scripts: list[str] = []
+    feeds: dict[str, bool] = {}     # one line may start many heredocs; read it once
+    for line, body in bodies:
+        if line not in feeds:
+            feeds[line] = _feeds_shell(line)
+        if feeds[line]:
+            scripts.append(body)
+    return scripts
+
+
+def _feeds_shell(line: str) -> bool:
+    # Read as written: `split` would leave out the `<<` this looks for.
+    commands = _commands(list(_lexed(line)[0]))
+    for position, (words, _, _, after, _) in enumerate(commands):
+        if "<<" not in words and "<<-" not in words:
+            continue
+        command = _unwrap(words)
+        name = compat.program(command[0]) if command else ""
+        if name == "cat" and after == "|" and position + 1 < len(commands):
+            reader = _unwrap(commands[position + 1][0])
+            if _stdin_script(reader, ["echo"]) is not None:
+                name = compat.program(reader[0])
+        # A script fed to an interpreter is too varied to judge from its text (it may only
+        # mention CLAUDE.md); the check after the command sees what it wrote.
+        if name in _SHELLS:
+            return True
+    return False
 
 
 def heredoc_targets(bodies: list[tuple[str, str]]) -> tuple[list[str], bool]:
@@ -809,17 +1494,10 @@ def heredoc_targets(bodies: list[tuple[str, str]]) -> tuple[list[str], bool]:
     AgentDetox."""
     targets: list[str] = []
     changes = False
-    for line, body in bodies:
-        for words, _, _, _, _ in _commands(split(line)):
-            if "<<" not in words and "<<-" not in words:
-                continue
-            command = _unwrap(words)
-            name = compat.program(command[0]) if command else ""
-            # A script fed to an interpreter is too varied to judge from its text (it may only
-            # mention CLAUDE.md); the check after the command sees what it wrote.
-            if name in _SHELLS:
-                targets += write_targets(split(body), 1)
-                changes |= changes_agentdetox(split(body), 1)
+    for body in _fed_to_shell(bodies):
+        tokens = _script(body)
+        targets += write_targets(tokens, 1)
+        changes |= changes_agentdetox(tokens, 1)
     return targets, changes
 
 

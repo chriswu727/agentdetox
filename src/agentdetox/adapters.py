@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 from pathlib import Path
 
 from . import patch as patches
@@ -61,7 +62,10 @@ class Adapter:
         if str(payload.get("tool_name", "")).lower() not in SHELL_TOOLS:
             return None
         command = (payload.get("tool_input") or {}).get("command", "")
-        return " ".join(map(str, command)) if isinstance(command, list) else command
+        # A command given as its words is quoted word by word: joined with spaces, the
+        # script of `["bash", "-lc", "cd x && rm y"]` would read as three commands of the
+        # outer shell instead of one argument.
+        return shlex.join(map(str, command)) if isinstance(command, list) else command
 
     def writes(self, payload: dict, project: Path) -> list[Write]:
         """The file changes a tool call would make, from the edit tools' various inputs. A

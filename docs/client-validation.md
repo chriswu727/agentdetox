@@ -48,7 +48,8 @@ estimate of real-world accuracy. Their labels and the older frozen fixtures were
 
 ## Performance
 
-On the development Mac at `f3c18f6`, all **12 original budgets passed**, with 100 samples per case
+On the development Mac at `f3c18f6` (the pull-request branch, merged into `main` squashed as
+`6ccc798`), all **12 original budgets passed**, with 100 samples per case
 ([complete measurements](../bench/results/hooks-clients-2026-11-10.json)). No builds, test
 suites or other benchmarks ran alongside the measurement.
 

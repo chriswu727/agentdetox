@@ -2,11 +2,22 @@
 
 Each entry records a choice someone might later want to undo, and what it would cost.
 
-## ADR 1: Hooks fail open
+## ADR 1: Hooks fail open, except on a write they exist to check
 
 If AgentDetox errors, the agent's action proceeds. A security hook that broke every tool call
 would be removed within a day, leaving no protection at all. Trade-off: a crash is a silent gap,
 so `doctor` and `status` must show it.
+
+One case is decided the other way (after the 2026-11-10 audit). What a write check reads is
+chosen by whoever steers the agent: the content, the command, the session transcript, a config
+file's shape. Three such inputs made the check raise, and "proceed on error" turned each into a
+way past it. So when the call being checked is a write to agent context or to AgentDetox's own
+state, or a shell command that names either, an error asks the user, or refuses where the agent
+cannot ask. The message names the error and `doctor` records it. Every other call still
+proceeds: the target is worked out first and cheaply, so a fault in a check cannot stop
+ordinary work. Recording the decision is separate from making it; a log that cannot be written
+does not change the answer. Trade-off: a bug in a check now shows as a question on context
+writes until it is fixed, which is the visible failure this ADR already asked for.
 
 ## ADR 2: Never delete; never trust what was flagged
 

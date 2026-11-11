@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from . import budget
 from .consistency import find_contradictions, statements, store_statements
 from .context import ContextFile, related_files
 from .corpus import Doc
 from .findings import Finding, line_at, pair_anchor, snippet
 from .hidden import normalize, outside_code, prose_view, scan_doc
-from .persistence import config_commands, own_env_keys, text_findings, text_matches
+from .persistence import config_commands, config_instructions, own_env_keys, text_findings, text_matches
 
 
 def read_text(path) -> str:
@@ -17,7 +18,23 @@ def read_text(path) -> str:
 
 
 def scan_text(doc_id: str, source: str, text: str, kind: str) -> list[Finding]:
-    """Findings for one piece of context text. `kind` is a ContextFile kind."""
+    """Findings for one piece of context text. `kind` is a ContextFile kind. Raises
+    budget.OverBudget when checking takes too long: the text then counts as not checked."""
+    with budget.limit():
+        return _scan_text(doc_id, source, text, kind)
+
+
+def scan_stored(scan, doc_id: str, source: str, text: str, kind: str) -> list[Finding]:
+    """`scan` (a module's `scan_text`) for text that is already on disk. Nothing can be asked
+    about it any more, so text that took too long to check is a clear-cut finding of its
+    own: a file that was not checked must not come to be trusted."""
+    try:
+        return scan(doc_id, source, text, kind)
+    except budget.OverBudget:
+        return [Finding(doc_id, source, "scan-incomplete", "high", "took too long to check, so it was not checked")]
+
+
+def _scan_text(doc_id: str, source: str, text: str, kind: str) -> list[Finding]:
     if kind == "config":
         return _scan_config(doc_id, source, text)
     prose = kind in {"memory", "instructions"}
@@ -40,9 +57,14 @@ def scan_text(doc_id: str, source: str, text: str, kind: str) -> list[Finding]:
 def _scan_config(doc_id: str, source: str, text: str) -> list[Finding]:
     findings = []
     for where, command in config_commands(Path(source), text):
-        for severity, label, _ in text_findings(command):
+        budget.check()
+        for severity, label in dict.fromkeys((severity, label) for severity, label, _ in text_findings(command)):
             findings.append(Finding(doc_id, source, "config-command", severity, f"{label} ({where})", command[:200],
                                     anchor=command))
+    for where, said in config_instructions(Path(source), text):
+        for finding in _scan_text(doc_id, source, said, "instructions"):
+            finding.message = f"{finding.message} ({where})"
+            findings.append(finding)
     for name in own_env_keys(Path(source), text):
         findings.append(Finding(doc_id, source, "config-command", "high",
                                 "sets AgentDetox's own settings through the agent's environment", name, anchor=name))
@@ -74,9 +96,17 @@ def consistency_findings(files: list[ContextFile], project: Path | None, nli) ->
     return out
 
 
-def scan_context(files: list[ContextFile]) -> list[Finding]:
+def scan_context(files: list[ContextFile], unread: list[tuple[ContextFile, str]] | None = None) -> list[Finding]:
+    """Findings in every file. One that cannot be read is added to `unread` with the error's
+    name and the rest are still scanned; without `unread` the error is raised."""
     findings: list[Finding] = []
     for cf in files:
-        text = read_text(cf.path)
-        findings.extend(scan_text(str(cf.path), str(cf.path), text, cf.kind))
+        try:
+            text = read_text(cf.path)
+        except OSError as error:
+            if unread is None:
+                raise
+            unread.append((cf, type(error).__name__))
+            continue
+        findings.extend(scan_stored(scan_text, str(cf.path), str(cf.path), text, cf.kind))
     return findings

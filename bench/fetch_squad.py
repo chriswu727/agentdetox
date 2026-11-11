@@ -26,7 +26,7 @@ def main() -> None:
                 with urllib.request.urlopen(API.format(p * stride), timeout=30) as r:
                     rows = json.load(r)["rows"]
                 break
-            except Exception:
+            except Exception:  # noqa: BLE001 - any download error falls back to the next source
                 time.sleep(2 * (attempt + 1))
         else:
             print(f"skipping page {p}")

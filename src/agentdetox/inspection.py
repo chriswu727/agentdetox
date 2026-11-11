@@ -10,7 +10,8 @@ A checkpoint is something to restore to, not an acceptance. A file with a clear-
 (high) finding open gets none and keeps whatever checkpoint it had; a file with only
 lesser findings is checkpointed, as at session start, with those findings left open for
 review. Nothing is allowed. Files outside the chosen clients are not read, recorded or
-re-trusted.
+re-trusted, with one exception that is listed in the result: a context file that is a
+symbolic link is read through the link, as the client reads it, wherever it points.
 """
 
 from __future__ import annotations
@@ -20,10 +21,9 @@ import os
 from pathlib import Path
 
 from . import allowlist, engine, events, ledger, review, storage
-from .agentscan import scan_text
+from .agentscan import scan_stored, scan_text
 from .context import ContextFile, Survey, classify, survey, watched_roots
 from .findings import Finding, finding_id
-from .hidden import normalize
 from .integrity import baseline_entries, object_text, snapshot, store_lock
 from .persistence import guarded_sections
 
@@ -36,17 +36,20 @@ def run(agents: list[str] | None, project: Path | None) -> dict:
     accepted, handled = review.accepted_versions(), review.handled_findings()
     read: list[tuple[ContextFile, bytes, str, str, list[Finding]]] = []
     unread: list[dict] = []
+    linked: list[dict] = []
     for cf in found.files:
         try:
             data = cf.path.read_bytes()
         except OSError as error:
             unread.append({"path": str(cf.path), "error": type(error).__name__})
             continue
+        if cf.path.is_symlink():
+            linked.append({"path": str(cf.path), "target": os.path.realpath(cf.path)})
         digest = hashlib.sha256(data).hexdigest()
         # Scan the bytes that were hashed, with universal newlines as a text read gives.
         text = data.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
         name = str(cf.path)
-        flagged = [f for f in allowlist.unsuppressed(scan_text(name, name, text, cf.kind))
+        flagged = [f for f in allowlist.unsuppressed(scan_stored(scan_text, name, name, text, cf.kind))
                    if f.severity in ("medium", "high") and accepted.get(name) != digest
                    and (name, digest, finding_id(f)) not in handled]
         read.append((cf, data, digest, text, flagged))
@@ -87,7 +90,7 @@ def run(agents: list[str] | None, project: Path | None) -> dict:
                 trusted.append(cf)
                 digests[name] = digest
             if pending or recorded:
-                where = _lines(text, flagged)
+                where = review.finding_lines(text, flagged)
                 items.append({
                     "path": name, "agent": cf.agent, "kind": cf.kind,
                     "state": "review" if pending else "changed",
@@ -115,7 +118,8 @@ def run(agents: list[str] | None, project: Path | None) -> dict:
         review_ids = [c for item in items if item["state"] == "review" for c in item["changes"]]
         events.record("context_inspected", agents=agents or [], project=str(project) if project else "",
                       files=len(read), review=review_ids)
-    return {"files": len(read), "trusted": len(trusted), "items": items, "unread": unread, "survey": found}
+    return {"files": len(read), "trusted": len(trusted), "items": items, "unread": unread, "linked": linked,
+            "survey": found}
 
 
 def _digest(path: Path) -> str | None:
@@ -123,21 +127,6 @@ def _digest(path: Path) -> str | None:
         return hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError:
         return None
-
-
-def _lines(text: str, findings: list[Finding]) -> dict[str, int]:
-    """The line of the inspected version each finding is on, where the flagged line can be
-    found again: the number `agentdetox clean` takes."""
-    lines = [" ".join(normalize(line).split()) for line in text.split("\n")]
-    where: dict[str, int] = {}
-    for finding in findings:
-        wanted = next((" ".join(normalize(part).split()) for part in finding.anchor.split("\n") if part.strip()), "")
-        if not wanted:
-            continue
-        hits = [i for i, line in enumerate(lines, 1) if wanted in line]
-        if len(hits) == 1:
-            where[finding_id(finding)] = hits[0]
-    return where
 
 
 def coverage(found: Survey) -> list[dict]:
@@ -158,8 +147,12 @@ def render_coverage(found: Survey, short=str) -> list[str]:
     if found.problems:
         lines.append("Not resolved (these were asked for and could not be looked at):")
         lines += [f"  {problem}" for problem in found.problems]
-    limits = [f"  {c.agent}: {limit}" for c in found.clients for limit in c.limits]
-    if limits:
+    present = [c for c in found.clients if c.files or any(r["exists"] for r in c.roots if r["scope"] == "user")]
+    limits = [f"  {c.agent}: {limit}" for c in present for limit in c.limits]
+    absent = [c.agent for c in found.clients if c not in present and c.limits]
+    if limits or absent:
         lines.append("Not covered by any file check:")
         lines += limits
+    if absent:
+        lines.append(f"  ({', '.join(absent)}: not found on this machine; `--format json` lists the limits of each)")
     return lines

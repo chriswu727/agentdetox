@@ -3,7 +3,7 @@
 Notable changes to AgentDetox. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 before 1.0, a minor version may change commands, settings or the snapshot store.
 
-## [Unreleased]
+## [0.5.0] - 2026-11-10
 
 ### Added
 
@@ -60,33 +60,40 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ### Security
 
-- `restore`, `agent restore` and `clean` could write outside the reviewed location: a parent
-  folder replaced by a symbolic link, before applying or at the final rename, redirected the
-  write to a file with the same content elsewhere. On macOS and Linux they now open the file's
-  folder once, without following links the user could repoint, and read, back up, replace and
-  delete through that open folder; quarantine copies are written the same way and verified
-  before the target is touched. A folder moved during a recovery leaves a failed operation with
-  its backup, and nothing at the path's new target. **Behavior change:** a path that passes
-  through a user-owned folder link (a linked project or `~/.claude`) is refused by these
-  commands; system links such as `/tmp` on macOS are followed. Windows checks the path before
-  and after each step, which narrows the gap without closing it. No compare-and-swap is claimed
-  against another same-user program changing the same file in the same folder.
-- An agent needs approval to run `library cancel`, `library scan --restart`, `library dismiss`
-  or `library reopen`.
-- An agent could run a command that changes what AgentDetox trusts without the approval
-  question by leaving the deciding words out of the command text: `printf 'allow <id>' | xargs
-  agentdetox`, `xargs -I{} agentdetox library {} …`, `A=allow; agentdetox $A <id>`, and the same
-  through `python -m`, wrappers, `bash -c` and `xargs sh -c '… "$@"'`. An `agentdetox` call
-  with arguments supplied by `xargs` (appended, or substituted for a token, including BSD
-  `-J`) or by shell expansion (variables, command substitution, file name patterns, braces)
-  now needs approval unless what is written out is a command that can only read. **Behavior
-  change:** such calls of non-reading commands ask even when harmless, for example
-  `agentdetox review --project "$PWD"`; reading commands such as `library review "$ID"` stay
-  free. Still not recognized: a program name built at run time (a variable or alias for
-  `agentdetox`, a command line given to `xargs sh -c`).
+- Upgrade to 0.5.0 to fix gaps in approval, monitoring and recovery for protected agent files.
+  See the [security advisory](https://github.com/chriswu727/agentdetox/security/advisories/GHSA-j3cm-77h3-cmm7)
+  for affected versions, impact and upgrade instructions.
+- The shell check recognizes more writes, moves and removals involving protected context or trust
+  settings. If a protected operation cannot be checked, AgentDetox asks for approval or refuses
+  it on clients that cannot ask. Unrelated hook failures remain visible in doctor and status.
+- Protected files and settings are recognized across more path spellings, client locations and
+  configuration keys. The scanner checks each relevant occurrence and bounds the work per hook.
+- Reinstallation checks existing files for external changes before writing its own settings.
+  Session start reports files it could not inspect. Checkpoints, dismissals and recovery records
+  are tied to the content and scope the user reviewed.
+- Recovery and quarantine use a pinned directory on macOS and Linux. Windows rechecks the path
+  before and after each operation. Recovery refuses a path through a user-controlled directory
+  link. Keep a backup of the store and review outstanding changes after upgrading.
 
 ### Changed
 
+- Ordinary sentences that shared a word with a rule are no longer refused: a nested file that
+  "should override any rules from the parent folder", `--force` overriding rules in a linter's
+  config, a `</dev/tcp/host/port` port check, a certificate read from the keychain,
+  `post-install` copying `.env.example`, `rsync --exclude .env`, password reset mail, a token
+  count posted to a metrics URL, Hugo's `config.toml` and `.vscode/settings.json`. Seven such
+  sentences are still refused and are listed in `bench/rule_variants.py` as declared false
+  alarms, beside two declared misses (a script downloaded in one command and run in the next;
+  a secret carried in the address of a request about something else).
+- `numpy` is no longer installed by default. Only `agentdetox scan` with passage comparison,
+  `agentdetox trace` and the optional contradiction model use it; install it with
+  `pip install 'agentdetox[kb]'` (the `st` and `nli` extras include it). `scan --no-cluster`
+  works without it, and the other two say what to install. The hooks, and the plugin's `uvx`
+  fallback, no longer download it.
+- `agent inspect` lists the context files it read through a symbolic link, with where each
+  points; JSON output carries them as `linked`.
+- Classifying a written path resolves each watched folder once: about four times faster for a
+  file that is not agent context, which is most writes.
 - Codex `apply_patch` calls are modelled as the tool applies them (add, update with context hunks,
   delete, move, end of file). A patch that does not fit the file or leaves the grammar is not
   guessed at: every file it names is checked against what it adds and, for a move, what it would
@@ -123,6 +130,79 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 
 ### Fixed
 
+- A context file that already held flagged text when AgentDetox first looked, at `install` or
+  at the first session, was reported at the next session as added outside the agent, and the
+  notice pointed to `restore`: its preview showed the whole file as added, and `--apply` removed
+  the file and answered "Restored" (the copy stayed in quarantine). Affects every earlier
+  release. Such a file is now recorded as found as it was: `restore` refuses it, the notice names
+  `clean`, and `review` shows its flagged lines. A file that really appeared later still restores
+  to no file, and the preview and the result now say that it is removed.
+- `clean` without `--lines` named `--lines 3,5-7` as its example whatever the file held; it now
+  names the lines the rules flag.
+- The hidden-text check took minutes on a file ending in thousands of unclosed tags on Python
+  before 3.11.13, 3.12.11 and 3.13.5, whose HTML parser reread the rest of the file for each
+  one. A deeply nested path (thousands of `cd` in one command) took seconds to look up.
+- Every command ends an ordinary mistake with one line and status 2 instead of a traceback: an id
+  or page number too large to exist, `blame` of a folder, a damaged store under `log`, `events`
+  and `blame`, a store path that is a file. Names shown in such messages have control characters
+  escaped.
+- `agentdetox scan` no longer stops at one line that is not a JSON object, a byte that is not
+  UTF-8 or a file it cannot read: these are left out and counted on stderr. It does not follow a
+  file link out of the folder it was given. `--k`, `--min-clique`, `--z` and `--top-k` out of
+  range are refused (`--k 0` used to put `NaN` into JSON output).
+- `agentdetox demo` ignores `CLAUDE_PROJECT_DIR` and the other variables that point a client's
+  folders elsewhere; with one set it failed and read the folder it named.
+- `library scan ""` (an unset shell variable) scanned the current folder; an empty name is
+  refused. A relative `AGENTDETOX_HOME` named a different store from every working directory and
+  broke library commands; it is made absolute. `events -n 0` shows nothing instead of everything.
+- `install` and `uninstall` replaced a settings file that is a symbolic link (kept in a dotfiles
+  folder) with a regular file. They now write where the link points, keep the file's
+  indentation and line ends, write and back up nothing when there is nothing to change, and
+  refuse to write over a change Claude Code made to the file in the meantime.
+- When the store could not be updated after `install --apply` had written the hooks, the output
+  was a bare error; it now says the hooks were added and what to check.
+- `doctor` passed (with a warning about an older version) when the hook that checks writes was
+  missing. It now names the missing hooks and fails when `SessionStart` or `PreToolUse` is one.
+- `doctor` compared the hook's version with Python's when the hook runs as
+  `python -I -m agentdetox`, reported a bare `agentdetox` found on `PATH` as missing, ended in a
+  traceback on a hook command it could not split, did not look in `.claude/settings.local.json`,
+  did not warn about hooks registered in two settings files with different commands, and
+  reported a broken Claude Code hook as "not set up on this machine" when another agent's hook
+  was present.
+- `restore` of a version with no recorded permissions set the file to 0600, although the preview
+  says permissions are kept: a hook script stopped being executable. The file keeps the
+  permissions it has.
+- A recovery stopped between staging and renaming left `.agentdetox-restore-*` beside the file
+  for good; the next restore or clean in that folder removes it. `doctor` names an unfinished
+  recovery's backup only when one was written.
+- The model server measured its socket path in characters, so a store path with non-ASCII names
+  could never start it; its fallback folder in the temp directory is no longer followed, or
+  re-permissioned, through a link another user could have left there. A client that connects
+  and sends nothing no longer keeps the server, and the loaded model, alive.
+- `agentdetox _daemon --job FILE` moved any file it was given into the job queue, where it was
+  later deleted. Only a job file inside the store is taken, and the command needs approval when
+  an agent runs it.
+- A store from before 0.3 with one line cut short in `events.jsonl` or `ledger.jsonl` could not be
+  migrated, and `agentdetox agent gc` then deleted every recovery copy only the old ledger
+  referred to. Such lines are left out and counted (as the old readers did), a database a failed
+  migration could not fill is removed again, and the recovery copies the old ledger refers to
+  are kept until the history is in the database.
+- An emptied `state.sqlite3` in a migrated store was rebuilt from the files of before the
+  migration, bringing back a stale snapshot without a word; it is now reported, as a deleted one
+  was. `agent snapshot --reset` gets out of a deleted, emptied or unreadable database (it ended
+  in an error or a traceback), keeping what is left under other names.
+- The copy of the database made before a one-way upgrade is written to a temporary name first; an
+  empty one left by a killed upgrade is made again instead of being taken for the backup.
+- `agentdetox review` kept the database open while it sized each change, which could take
+  seconds per change; a hook writing at that moment waited ten seconds and lost its record.
+- `library cancel`, `library dismiss` and a library cleanup failed with "database is locked" while
+  a scan was listing folders on a slow disk; folders are now read with no transaction open.
+- After a scan was killed while committing, `library status` and `review` reported the inventory
+  as damaged until the next scan; a reader now recovers it.
+- A library scan whose folder was replaced while a large folder was being listed recorded the
+  entries read so far; the folder is now checked before every commit.
+- Recording a change to a long file compares only the lines around the edit: one edited line in
+  a 20,000-line file took two seconds to attribute.
 - A Codex patch could move a file with planted text onto `AGENTS.md`, delete a config that
   registers AgentDetox, or remove `approval_policy` and `sandbox_mode` without being checked,
   while an ordinary `config.toml` edit was blocked as a broken config.
@@ -171,6 +251,40 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
   changing between separate text/hash reads can no longer hide the version just observed.
 - Default the entire test suite to a temporary user home as well as a temporary store, so
   tests that omit their own home fixture cannot read the host's Claude context.
+
+### Quality checks
+
+- Type checking covers the whole package (45 modules, up from 19), and lint adds the rules for
+  likely bugs, unexplained `except Exception` and invisible characters in source.
+- CI runs Python 3.13 and 3.14 beside 3.11 and 3.12, checks that `uv.lock` matches
+  `pyproject.toml`, sweeps every rule for inputs that cost more than their length
+  (`bench/rule_cost.py`), and checks that result files a document links to exist and that the
+  latencies the READMEs quote are in a recorded result (`scripts/check_evidence.py`).
+- A differential test runs 1,266 generated shell commands in real `bash` and `zsh` and compares
+  what changed on disk with what the shell check said.
+- `bench/heldout/` is a blind set: 90 attack texts and 90 ordinary ones written without sight
+  of the rules, half of it sealed until the rules were final. On the sealed half the rules
+  stopped 12 of 37 attacks and none of the paraphrased ones, and asked about 1 of 44 ordinary
+  texts; text that reached the session through a tool and was saved unasked was stopped 37 of
+  37 times whatever it said ([results and what they mean](bench/ACCURACY.md#blind-held-out-set-2026-11-10)).
+- `bench/rule_variants.py` holds the rule variants and benign controls from the 2026-11-10
+  audit and from an independent review of the changes it led to, each beside the control it was
+  derived from. Of the audit's 72 cases, 16 of 45 attack spellings were caught and 10 of 26
+  benign sentences were quiet before the rule changes
+  ([before](bench/results/rule-variants-before-2026-11-10.json)); of the 121 cases now, 82 of 82
+  and 30 of 37 ([now](bench/results/rule-variants-after-2026-11-10.json)). It is a tuning set,
+  written from the rules and used while changing them: the blind set above shows how little
+  that carries over. The test suite runs it; a declared miss or false alarm that starts to pass
+  fails until its mark is removed.
+- Generated tests (`tests/test_properties.py`, with `hypothesis`) draw their inputs instead of
+  listing them: a cleanup removes exactly the chosen lines whatever was edited since; a path
+  spelled another way is classified the same; no config value, event, transcript, command or
+  library file makes a check fail; a planted line is never let through whatever surrounds it or
+  whatever the transcript holds; and an error while checking a write to agent context is never
+  an allow. Runs are repeatable; `AGENTDETOX_PROPERTY_EXAMPLES` draws more.
+- `bench/hook_latency.py` records the commit and command of a run in its result file.
+- `scripts/check_dist.py` compares the whole version (0.4.10 no longer passes as 0.4.1), and the
+  installed-wheel journey clears every variable that points a client's folders elsewhere.
 
 ### Documentation
 
@@ -460,7 +574,8 @@ Released on GitHub as `ragscan`. It scans RAG knowledge bases for hidden prompt 
 PoisonedRAG-style poisoning (CleanBase clique detection), and traces wrong answers back to the
 passages responsible.
 
-[Unreleased]: https://github.com/chriswu727/agentdetox/compare/v0.4.0...HEAD
+[0.5.0]: https://github.com/chriswu727/agentdetox/releases/tag/v0.5.0
+[0.4.1]: https://github.com/chriswu727/agentdetox/releases/tag/v0.4.1
 [0.4.0]: https://github.com/chriswu727/agentdetox/releases/tag/v0.4.0
 [0.3.0]: https://github.com/chriswu727/agentdetox/releases/tag/v0.3.0
 [0.2.0]: https://github.com/chriswu727/agentdetox/releases/tag/v0.2.0

@@ -1211,3 +1211,33 @@ def test_settings_created_outside_the_agent_are_checked_except_in_a_new_project(
     (fresh / ".claude/settings.json").write_text(json.dumps({"hooks": {"Stop": [{"hooks": [
         {"type": "command", "command": "make lint"}]}]}}), encoding="utf-8")
     assert session("claude-code", fresh) == ""
+
+
+def test_uninstall_accepts_apply_and_names_the_file_as_install_does(env, capsys):
+    home, project, _ = env
+    main(["install", "claude-code", "--project", str(project), "--apply"])
+    capsys.readouterr()
+    assert main(["uninstall", "claude-code", "--project", str(project), "--apply"]) == 0
+    out = capsys.readouterr().out
+    shown = out.replace(os.sep, "/")       # paths are shown with the platform's separator
+    assert shown.startswith("AgentDetox hooks removed from ~/.claude/settings.json (backup: ~/.claude/") and str(home) not in out
+    assert main(["uninstall", "claude-code", "--project", str(project), "--apply"]) == 0
+    assert capsys.readouterr().out.replace(os.sep, "/") == "No AgentDetox hooks found in ~/.claude/settings.json; nothing was changed.\n"
+    with pytest.raises(SystemExit):
+        main(["uninstall", "--help"])
+    assert "accepted and ignored" in " ".join(capsys.readouterr().out.split())
+
+
+def test_installing_again_lists_what_changed_outside_the_agent(env, capsys):
+    _, project, _ = env
+    main(["install", "claude-code", "--project", str(project), "--apply"])
+    instructions = project / "CLAUDE.md"
+    instructions.write_text(instructions.read_text(encoding="utf-8") + "Also prefer uv.\n", encoding="utf-8")
+    capsys.readouterr()
+    assert main(["install", "claude-code", "--project", str(project), "--apply"]) == 0
+    out = capsys.readouterr().out
+    listed = [line for line in out.splitlines() if line.startswith("- C")]
+    assert "Recorded 1 change(s) made outside the agent" in out
+    assert len(listed) == 1 and listed[0].endswith("CLAUDE.md: changed outside the agent's edit tools")
+    assert main(["install", "claude-code", "--project", str(project), "--apply"]) == 0
+    assert "Recorded" not in capsys.readouterr().out

@@ -32,12 +32,13 @@ import sqlite3
 import subprocess
 import sys
 import time
+import unicodedata
 from collections import Counter
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import __version__, allowlist, cleanup, compat, safefs
+from . import __version__, allowlist, budget, cleanup, compat, paths, safefs
 from .agentscan import scan_text
 from .context import home_dir, short_path
 from .findings import SEVERITY_ORDER, finding_id, printable
@@ -114,7 +115,19 @@ _REASONS = {
     "unreadable": "could not be read", "changed-during-read": "changed while being read",
     "vanished": "disappeared before it was read", "path-escape": "its folder became a link",
     "invalid-path": "has a path AgentDetox will not use",
+    "too-slow": "took too long to check",
 }
+
+
+@dataclass
+class _Listing:
+    """One folder as it was read: how it ended, and what was not saved yet."""
+    rel: str
+    state: str                  # "listed", "failed" or "symlink"
+    error: str | None
+    pending: list[tuple[str, str]] = field(default_factory=list)
+    counts: Counter = field(default_factory=Counter)
+    exts: Counter = field(default_factory=Counter)
 
 
 class RootReplaced(StoreError):
@@ -144,7 +157,7 @@ def _now() -> str:
 # Everything that decides what a library file's bytes are and what is said about them: the
 # rules, and this module with the file access it reads through. Their source is the
 # fingerprint, so a change to any of it, with or without a new release, is a new detector.
-_SOURCES = ("agentscan.py", "findings.py", "hidden.py", "persistence.py", "library.py", "safefs.py")
+_SOURCES = ("agentscan.py", "budget.py", "findings.py", "hidden.py", "persistence.py", "library.py", "safefs.py")
 
 
 @functools.cache
@@ -153,7 +166,10 @@ def detector_id() -> str:
     source of the rules and of this implementation. Conclusions are bound to it. Only the
     text of the source counts (not its timestamps, nor how a checkout ends its lines), so
     reinstalling the same code keeps earlier conclusions."""
-    digest = hashlib.sha256(f"{PROFILE}\0{__version__}\0{MAX_BYTES}\0{MAX_FINDINGS}".encode())
+    # The rules fold case and compatibility forms with Python's Unicode tables, which change
+    # with the interpreter.
+    digest = hashlib.sha256(f"{PROFILE}\0{__version__}\0{MAX_BYTES}\0{MAX_FINDINGS}\0"
+                            f"{unicodedata.unidata_version}".encode())
     for name in _SOURCES:
         source = (Path(__file__).parent / name).read_bytes().replace(b"\r\n", b"\n")
         digest.update(name.encode() + b"\0" + hashlib.sha256(source).digest())
@@ -183,7 +199,19 @@ def connect(*, write: bool = False) -> Iterator[sqlite3.Connection | None]:
         raise StoreError(f"The library inventory is unavailable: {e}") from e
     try:
         db.row_factory = sqlite3.Row
-        version = db.execute("PRAGMA user_version").fetchone()[0]
+        try:
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+        except sqlite3.OperationalError:
+            if write:
+                raise
+            # A scan killed while committing leaves a journal that only a connection allowed
+            # to write may roll back. Do that once, then read as intended.
+            db.close()
+            with contextlib.closing(sqlite3.connect(path, timeout=30, isolation_level=None)) as writer:
+                writer.execute("SELECT count(*) FROM sqlite_master").fetchone()
+            db = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=30, isolation_level=None)
+            db.row_factory = sqlite3.Row
+            version = db.execute("PRAGMA user_version").fetchone()[0]
         if version > VERSION:
             raise StoreError(_NEWER)
         if version == 0:
@@ -289,11 +317,13 @@ def _canonical(directory: Path | str) -> Path:
 
 
 def _check_scope(root: Path) -> None:
+    # By what the folders are, not how the path is spelled: another case, another Unicode
+    # form or another name for the volume reach the same home folder and the same store.
     store = Path(os.path.realpath(store_dir()))
-    if root == Path(root.anchor) or root == Path(os.path.realpath(home_dir())):
+    if root == Path(root.anchor) or os.path.ismount(root) or paths.inside(home_dir(), root):
         raise ValueError(f"Choose the folder that holds the memory files, not {_shown(root)}: a library is one "
-                         "explicit folder, never a whole disk or home folder")
-    if root == store or store.is_relative_to(root) or root.is_relative_to(store):
+                         "explicit folder, never a whole disk, the home folder or a folder that holds it")
+    if paths.inside(store, root) or paths.inside(root, store):
         raise ValueError(f"{_shown(root)} overlaps AgentDetox's own store ({_shown(store)}); choose a folder "
                          "that does not")
 
@@ -408,9 +438,24 @@ class _Root:
 
 def _root_row(db: sqlite3.Connection, target: Path | str):
     text = str(target)
-    if re.fullmatch(r"[Ll][1-9][0-9]*", text):
+    if re.fullmatch(r"[Ll][1-9][0-9]{0,17}", text):
         return db.execute("SELECT * FROM roots WHERE id=?", (int(text[1:]),)).fetchone()
-    return db.execute("SELECT * FROM roots WHERE path=?", (str(_canonical(target)),)).fetchone()
+    row = db.execute("SELECT * FROM roots WHERE path=?", (str(_canonical(target)),)).fetchone()
+    if row is None:
+        # The same folder under another spelling is the same library, not a second one.
+        try:
+            found = _identity(os.stat(_canonical(target)))
+        except (OSError, ValueError):
+            return None
+        for known in db.execute("SELECT * FROM roots WHERE dev=? AND ino=? ORDER BY id", found).fetchall():
+            # Only while its recorded path still names that folder: one that was moved is
+            # registered afresh, as it was before.
+            try:
+                if _identity(os.stat(known["path"])) == found:
+                    return known
+            except (OSError, ValueError):
+                continue
+    return row
 
 
 def _known_root(db: sqlite3.Connection | None, target: Path | str):
@@ -437,7 +482,7 @@ def prepare(target: Path | str, *, full: bool = False, restart: bool = False) ->
         with _tx(db):
             row = _root_row(db, target)
             if row is None:
-                if re.fullmatch(r"[Ll][1-9][0-9]*", str(target)):
+                if re.fullmatch(r"[Ll][1-9][0-9]{0,17}", str(target)):
                     raise ValueError(f"Unknown library {target}")
                 path = _canonical(target)
                 if not path.is_dir():
@@ -579,7 +624,11 @@ def judge(label: str, data: bytes) -> _Result:
         return _Result(0, "state", "uninspected", "not-utf8", digest, len(data))
     found: dict[str, tuple] = {}
     lines: list[str] | None = None
-    for f in scan_text(label, label, text.replace("\r\n", "\n").replace("\r", "\n"), "memory"):
+    try:
+        findings = scan_text(label, label, text.replace("\r\n", "\n").replace("\r", "\n"), "memory")
+    except budget.OverBudget:
+        return _Result(0, "state", "uninspected", "too-slow", digest, len(data))
+    for f in findings:
         flag = finding_id(f)
         if flag in found and SEVERITY_ORDER[found[flag][2]] >= SEVERITY_ORDER[f.severity]:
             continue
@@ -611,7 +660,6 @@ class _Runner:
         self.stop = stop or (lambda: False)
         self._checked = 0.0
         self._cancel = False
-        self._saved = 0
         try:
             self._store: tuple[str, str] | None = _identity(os.stat(store_dir()))
         except OSError:
@@ -629,88 +677,90 @@ class _Runner:
     # Listing folders: the frontier is the dirs rows with todo=1.
 
     def enumerate(self) -> bool:
-        """Small folders share a transaction (a commit per folder would cost a disk flush
-        each); a folder is still marked listed in the transaction that saves its last entry."""
+        """Folders are read with no transaction open, so a slow disk never keeps another
+        command from the inventory; what was read is then saved in one short transaction.
+        Small folders share it (a commit per folder would cost a disk flush each); a folder
+        is still marked listed in the transaction that saves its last entry."""
         db, root = self.db, self.root.id
         listed = 0
         while True:
             if self.stopping():
                 return False
-            db.execute("BEGIN IMMEDIATE")
-            try:
-                self._saved, started, row = 0, time.monotonic(), None
-                while self._saved < DIR_CHUNK and time.monotonic() - started < GROUP_SECONDS:
-                    row = db.execute("SELECT rel FROM dirs WHERE root_id=? AND todo=1 ORDER BY rel LIMIT 1",
-                                     (root,)).fetchone()
-                    if row is None:
-                        break
-                    if not self._list(row["rel"]):
-                        db.execute("COMMIT")
-                        return False
-                    listed += 1
+            started = time.monotonic()
+            read: list[_Listing] = []
+            entries = 0
+            stopped = False
+            rows = db.execute("SELECT rel FROM dirs WHERE root_id=? AND todo=1 ORDER BY rel LIMIT ?",
+                              (root, DIR_CHUNK)).fetchall()
+            for row in rows:
+                listing = self._read_folder(row["rel"])
+                if listing is None:
+                    stopped = True
+                    break
+                read.append(listing)
+                entries += 1 + len(listing.pending)
+                if entries >= DIR_CHUNK or time.monotonic() - started >= GROUP_SECONDS:
+                    break
+            with _tx(db):
+                for listing in read:
+                    self._record_folder(listing)
                 self.root.verify()
                 db.execute("UPDATE runs SET heartbeat=? WHERE id=?", (_now(), self.run))
-            except BaseException:
-                if db.in_transaction:
-                    db.execute("ROLLBACK")
-                raise
-            db.execute("COMMIT")
+            listed += len(read)
             self.progress(phase="enumerate", folders=listed)
-            if row is None:
+            if stopped:
+                return False
+            if not rows:
                 return True
 
-    def _folder_state(self, rel: str, state: str, error: str | None) -> None:
-        self._saved += 1
-        self.db.execute("UPDATE dirs SET state=?, todo=0, error=? WHERE root_id=? AND rel=?",
-                        (state, error, self.root.id, rel))
-
-    def _list(self, rel: str) -> bool:
-        """List one folder inside the open transaction. Every DIR_CHUNK entries, whatever
-        they are, what was found is committed and a request to stop is heeded. The folder
-        counts as listed, and its counters are saved, only with its last entry, so a listing
-        cut short is done again from the start and nothing is counted twice. False when
-        told to stop part-way."""
+    def _read_folder(self, rel: str) -> _Listing | None:
+        """What one folder holds, read outside any transaction. A folder larger than
+        DIR_CHUNK is saved as it is read, a chunk per transaction, and a request to stop is
+        heeded between chunks; its last entries, its counters and its state are left to the
+        caller, so a listing cut short is done again from the start and nothing is counted
+        twice. None when told to stop part-way."""
         try:
             parts = _parts(rel) if rel else []
             handle = self.root.folder(parts)
         except ValueError:
-            self._folder_state(rel, "failed", "invalid-path")
-            return True
+            return _Listing(rel, "failed", "invalid-path")
         except safefs.UnsafePath:
-            self._folder_state(rel, "symlink", None)
-            return True
+            return _Listing(rel, "symlink", None)
         except OSError as e:
-            self._folder_state(rel, "failed", _errname(e))
-            return True
-        counts: Counter = Counter()
-        exts: Counter = Counter()
-        pending: list[tuple[str, str]] = []
+            return _Listing(rel, "failed", _errname(e))
+        listing = _Listing(rel, "listed", None)
         try:
             with os.scandir(handle) as entries:
                 for seen, entry in enumerate(entries, 1):
-                    op = self._entry(rel, len(parts), entry, counts, exts)
+                    op = self._entry(rel, len(parts), entry, listing.counts, listing.exts)
                     if op is not None:
-                        pending.append(op)
+                        listing.pending.append(op)
                     if seen % DIR_CHUNK == 0:
-                        self._save(rel, pending)
-                        pending = []
-                        self.db.execute("COMMIT")
-                        self.db.execute("BEGIN IMMEDIATE")
+                        with _tx(self.db):
+                            self._save(rel, listing.pending)
+                            self.root.verify()
+                        listing.pending = []
                         if self.stopping():
-                            return False
+                            return None
         except OSError as e:
-            self._folder_state(rel, "failed", _errname(e))
-            return True
+            return _Listing(rel, "failed", _errname(e))
         finally:
             if isinstance(handle, int):
                 os.close(handle)
-        self._save(rel, pending)
-        self._saved += 1
+        return listing
+
+    def _record_folder(self, listing: _Listing) -> None:
+        """Save a folder that was read to its end, inside the caller's transaction."""
+        if listing.state != "listed":
+            self.db.execute("UPDATE dirs SET state=?, todo=0, error=? WHERE root_id=? AND rel=?",
+                            (listing.state, listing.error, self.root.id, listing.rel))
+            return
+        self._save(listing.rel, listing.pending)
+        counts = listing.counts
         self.db.execute("UPDATE dirs SET state='listed', todo=0, listed_run=?, error=NULL, excluded=?, links=?, "
                         "special=?, exts=? WHERE root_id=? AND rel=?",
                         (self.run, counts["excluded"], counts["links"], counts["special"],
-                         json.dumps(exts, ensure_ascii=False), self.root.id, rel))
-        return True
+                         json.dumps(listing.exts, ensure_ascii=False), self.root.id, listing.rel))
 
     def _entry(self, rel: str, depth: int, entry: os.DirEntry, counts: Counter, exts: Counter) -> tuple[str, str] | None:
         def excluded(kind: str) -> None:
@@ -748,7 +798,6 @@ class _Runner:
 
     def _save(self, parent: str, ops: list[tuple[str, str]]) -> None:
         db, root, run = self.db, self.root.id, self.run
-        self._saved += len(ops)
         for kind, rel in ops:
             if kind == "file":
                 db.execute("INSERT INTO files(root_id, rel, parent, state, todo, seen_run) VALUES (?, ?, ?, 'new', 1, ?) "
@@ -1302,7 +1351,7 @@ def render_page(data: dict) -> str:
 
 
 def _file_row(db: sqlite3.Connection | None, file_ref: str):
-    if not re.fullmatch(r"[Mm][1-9][0-9]*", file_ref):
+    if not re.fullmatch(r"[Mm][1-9][0-9]{0,17}", file_ref):
         raise ValueError("Expected a library file id, such as M42")
     row = db.execute("SELECT f.*, r.path AS root_path, r.dev, r.ino FROM files f JOIN roots r ON r.id=f.root_id "
                      "WHERE f.id=?", (int(file_ref[1:]),)).fetchone() if db is not None else None

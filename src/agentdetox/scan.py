@@ -4,7 +4,6 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from .cluster import ClusterResult, detect_clusters
 from .corpus import Doc
 from .findings import Finding, snippet
 from .hidden import normalize, scan_doc
@@ -20,7 +19,18 @@ _SENTENCE_BREAK_RE = re.compile(r"(?<!\b[A-Z])[.。]\s")
 
 def opens_with_question(text: str) -> bool:
     m = _LEADING_QUESTION_RE.match(text)
-    return bool(m) and not _SENTENCE_BREAK_RE.search(m.group(0))
+    return m is not None and not _SENTENCE_BREAK_RE.search(m.group(0))
+
+
+@dataclass
+class ClusterResult:
+    """What the similarity pass found. Defined here, apart from the pass itself, so a scan
+    that skips it needs no numpy."""
+    groups: list[list[int]] = field(default_factory=list)
+    cliques: list[list[int]] = field(default_factory=list)
+    tau: float | None = None
+    mu: float | None = None
+    sigma: float | None = None
 
 
 @dataclass
@@ -62,6 +72,8 @@ def scan(
             )
 
     findings.extend(_question_template_findings(docs, unique_texts, members, min_clique))
+
+    from .cluster import detect_clusters
 
     if hasattr(embedder, "fit"):
         embedder.fit(unique_texts)

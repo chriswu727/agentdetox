@@ -1,5 +1,31 @@
 # Hook latency
 
+## Hardening complete, 2026-11-10
+
+The [complete report](results/hooks-hardening-final-2026-11-10.json) measures `7369419`, the
+end of the hardening branch (store, install, other clients' shell paths, rule spellings, more
+watched folders): **12/12 original budgets pass**, with 100 samples per case on the
+development Mac. Ordinary Bash pre/post P95 is 126.7 ms; startup with 1,000 unchanged files is
+132.6 ms; four protected writes plus a Bash pair is 293.6 ms. These are higher than the run
+below, and most of that is the machine on the day: run back to back, 40 samples each and twice
+over (not recorded here), the commit measured below, the commit before the rule changes and
+this one had medians within 3 ms of each other in every case, with this one the slowest by
+1 to 3 ms per hook. About 1 ms of that is importing the larger rules. Windows failures below
+are not addressed by this run.
+
+## Prevention hardening, 2026-11-10
+
+The [complete report](results/hooks-hardening-2026-11-10.json) measures `d845926`, the branch
+that rewrites the shell command reader, asks when a context write cannot be checked, compares
+paths by file identity and bounds the work one hook does: **12/12 original budgets pass**, with
+100 samples per case on the development Mac and nothing else running. Ordinary Bash pre/post
+P95 is 114.9 ms; startup with 1,000 unchanged files is 123.8 ms; four protected writes plus a
+Bash pair is 255.1 ms. Every case is within a few milliseconds of the run below, mostly under
+it; this is not a paired comparison, so the difference is not a measured speed-up. The result
+file names its commit and command, as every result recorded from here on does
+(`scripts/check_evidence.py` checks that, and that the figures the READMEs quote are in a
+recorded result). Windows failures below are not addressed by this run.
+
 ## Cross-client disinfection, 2026-11-10
 
 The [complete report](results/hooks-clients-2026-11-10.json) measures the unreleased cross-client

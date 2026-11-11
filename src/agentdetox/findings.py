@@ -64,7 +64,7 @@ def make_id(kind: str, *parts: str) -> str:
     """Short stable id for something AgentDetox flags. The same flagged line gets the same
     id whether it is found in a write check (added text only) or a full scan (whole file)."""
     data = "\0".join([kind, *map(_norm, parts)])
-    return hashlib.sha256(data.encode()).hexdigest()[:ID_LENGTH]
+    return hashlib.sha256(data.encode("utf-8", "replace")).hexdigest()[:ID_LENGTH]
 
 
 def finding_id(f: Finding) -> str:

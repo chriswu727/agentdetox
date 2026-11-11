@@ -12,7 +12,9 @@ license-files = ["LICENSE"]
 authors = [{name = "Yichen Wu"}]
 requires-python = ">=3.11"
 # json5 reads OpenClaw's config, which is documented as JSON5; it is imported only for a file that is not plain JSON.
-dependencies = ["numpy>=1.24", "json5>=0.9.25"]
+# numpy is not here: only the knowledge-base scanner and the optional contradiction model
+# use it, and a hook installed through `uvx` should not have to download it.
+dependencies = ["json5>=0.9.25"]
 keywords = ["ai-agents", "agent-memory", "claude-code", "rag", "llm", "security", "prompt-injection",
             "data-poisoning", "mcp"]
 classifiers = [
@@ -20,6 +22,8 @@ classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.11",
@@ -35,9 +39,11 @@ Issues = "https://github.com/chriswu727/agentdetox/issues"
 Changelog = "https://github.com/chriswu727/agentdetox/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-st = ["sentence-transformers>=2.2"]
-nli = ["transformers>=4.40", "torch>=2.1"]
-dev = ["pytest>=7", "ruff>=0.15", "mypy>=1.18", "pip-audit>=2.7"]
+# `agentdetox scan` (with passage comparison) and `agentdetox trace`.
+kb = ["numpy>=1.24"]
+st = ["numpy>=1.24", "sentence-transformers>=2.2"]
+nli = ["numpy>=1.24", "transformers>=4.40", "torch>=2.1"]
+dev = ["numpy>=1.24", "pytest>=7", "ruff>=0.15", "mypy>=1.18", "pip-audit>=2.7", "hypothesis>=6"]
 
 [project.scripts]
 agentdetox = "agentdetox.entrypoint:main"
@@ -61,19 +67,27 @@ target-version = "py311"
 line-length = 120
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "I"]
+# B: likely bugs. BLE: an `except Exception` has to say why (`# noqa: BLE001 - reason`).
+# PLE: errors, among them invisible and direction-changing characters in source.
+select = ["E4", "E7", "E9", "F", "I", "B", "BLE", "PLE"]
+# zip() over lists built together a few lines above; strict= would say nothing new.
+ignore = ["B905"]
+
+[tool.ruff.lint.per-file-ignores]
+# These hold the invisible characters they look for, or test with.
+"src/agentdetox/hidden.py" = ["PLE2502", "PLE2515"]
+"tests/*" = ["PLE2502", "PLE2515"]
+"bench/compare.py" = ["PLE2502", "PLE2515"]
 
 [tool.mypy]
 python_version = "3.11"
-# The hook path's contracts, typed strictly first; the rest of the package follows.
-files = ["src/agentdetox/engine.py", "src/agentdetox/policy.py", "src/agentdetox/adapters.py",
-         "src/agentdetox/context.py", "src/agentdetox/shell.py", "src/agentdetox/compat.py",
-         "src/agentdetox/settings.py", "src/agentdetox/hooks.py", "src/agentdetox/session.py",
-         "src/agentdetox/storage.py", "src/agentdetox/review.py", "src/agentdetox/ledger.py",
-         "src/agentdetox/integrity.py", "src/agentdetox/review_ui.py", "src/agentdetox/observation.py",
-         "src/agentdetox/safefs.py", "src/agentdetox/library.py", "src/agentdetox/patch.py",
-         "src/agentdetox/inspection.py"]
+files = ["src/agentdetox"]
 follow_imports = "silent"
 check_untyped_defs = true
 warn_unused_ignores = true
 no_implicit_optional = true
+
+[[tool.mypy.overrides]]
+# Optional extras, imported only where a feature that needs them runs.
+module = ["torch.*", "transformers.*", "huggingface_hub.*", "sentence_transformers.*"]
+ignore_missing_imports = true

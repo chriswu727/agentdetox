@@ -20,25 +20,51 @@ def load_corpus(
     text_field: str = "text",
     id_field: str = "id",
     chunk_chars: int = 0,
+    skipped: dict[str, int] | None = None,
 ) -> list[Doc]:
-    files = [path] if path.is_file() else sorted(p for p in path.rglob("*") if p.is_file())
+    """The documents under `path`. What cannot be read is left out and counted in `skipped`
+    (by kind) instead of ending the scan: one bad line in an export is not a reason to scan
+    nothing. A file that is a symbolic link is not followed out of the folder."""
+    skipped = {} if skipped is None else skipped
+
+    def skip(what: str) -> None:
+        skipped[what] = skipped.get(what, 0) + 1
+
+    if path.is_file():
+        files = [path]
+    else:
+        files = []
+        for p in sorted(path.rglob("*")):
+            if p.is_symlink():
+                skip("symbolic link(s), not followed")
+            elif p.is_file():
+                files.append(p)
     docs: list[Doc] = []
     for p in files:
-        for doc in _load_file(p, path, text_field, id_field):
-            docs.extend(chunk_doc(doc, chunk_chars) if chunk_chars > 0 else [doc])
+        try:
+            for doc in _load_file(p, path, text_field, id_field, skip):
+                docs.extend(chunk_doc(doc, chunk_chars) if chunk_chars > 0 else [doc])
+        except OSError:
+            skip("file(s) that could not be read")
     return docs
 
 
-def _load_file(p: Path, root: Path, text_field: str, id_field: str):
+def _load_file(p: Path, root: Path, text_field: str, id_field: str, skip=lambda what: None):
     suffix = p.suffix.lower()
     rel = p.name if root.is_file() else str(p.relative_to(root))
     if suffix == ".jsonl":
-        with p.open(encoding="utf-8") as f:
+        with p.open(encoding="utf-8", errors="replace") as f:
             for lineno, line in enumerate(f, 1):
                 line = line.strip()
                 if not line:
                     continue
-                rec = json.loads(line)
+                try:
+                    rec = json.loads(line)
+                except (ValueError, RecursionError):
+                    rec = None
+                if not isinstance(rec, dict):
+                    skip("line(s) that are not JSON objects")
+                    continue
                 text = rec.get(text_field)
                 if not isinstance(text, str):
                     continue

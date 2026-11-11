@@ -41,10 +41,17 @@ def entries() -> dict[str, dict]:
         data = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
     except (OSError, ValueError):
         return {}
-    if not isinstance(data, dict) or data.get("version", SCHEMA_VERSION) > SCHEMA_VERSION:
+    if not isinstance(data, dict) or _newer(data.get("version", SCHEMA_VERSION)) is not False:
         return {}
     allowed = data.get("allowed")
     return allowed if isinstance(allowed, dict) else {}
+
+
+def _newer(version: object) -> bool | None:
+    """Whether the file was written by a newer AgentDetox; None when its version is not a number."""
+    if isinstance(version, bool) or not isinstance(version, int):
+        return None
+    return version > SCHEMA_VERSION
 
 
 def _save(allowed: dict[str, dict]) -> None:
@@ -54,7 +61,10 @@ def _save(allowed: dict[str, dict]) -> None:
             data = json.loads(p.read_text(encoding="utf-8"))
         except ValueError:
             raise ValueError(f"{p} is not valid JSON; fix or delete it first") from None
-        if isinstance(data, dict) and data.get("version", SCHEMA_VERSION) > SCHEMA_VERSION:
+        newer = _newer(data.get("version", SCHEMA_VERSION)) if isinstance(data, dict) else False
+        if newer is None:
+            raise ValueError(f"{p} has a version that is not a number; fix or delete it first")
+        if newer:
             raise ValueError(f"{p} was written by a newer AgentDetox; upgrade agentdetox")
     tmp = private_dir(store_dir()) / "allowlist.json.tmp"
     write_private(tmp, json.dumps({"version": SCHEMA_VERSION, "allowed": allowed}, indent=1,

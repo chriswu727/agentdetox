@@ -113,7 +113,7 @@ def entries(path: str | None = None, limit: int | None = None) -> list[Entry]:
     if not log.exists():
         return []
     out = []
-    for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in log.read_text(encoding="utf-8", errors="replace").split("\n"):
         try:
             data = json.loads(line)
             entry = Entry(**{k: v for k, v in data.items() if k in Entry.__dataclass_fields__})
@@ -131,8 +131,11 @@ def last_version(path: str) -> str | None:
 
 
 def referenced() -> set[str]:
-    if storage.exists():
-        return storage.references()
+    """Every stored copy a recorded change needs. From the old-format ledger whenever the
+    database does not hold the history yet (not created, or created and never migrated)."""
+    found = storage.references() if storage.exists() else None
+    if found is not None:
+        return found
     return {d for e in entries() for d in (e.before, e.after) if d}
 
 

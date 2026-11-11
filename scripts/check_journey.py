@@ -24,8 +24,10 @@ def journey(wheel: Path, completed: list[str]) -> None:
         home, project, environment = root / 'home', root / 'project', root / 'environment'
         project.mkdir(parents=True)
         home.mkdir()
+        # Nothing that points AgentDetox or a client at this machine's own folders.
         env = {k: v for k, v in os.environ.items()
-               if not k.startswith(('AGENTDETOX_', 'PYTHON', 'CLAUDE_', 'PIP_'))}
+               if not k.startswith(('AGENTDETOX_', 'PYTHON', 'CLAUDE_', 'PIP_', 'CODEX_', 'CURSOR_', 'OPENCLAW_'))
+               and k != 'XDG_CONFIG_HOME'}
         env.update(AGENTDETOX_USER_HOME=str(home), AGENTDETOX_HOME=str(root / 'store'),
                    AGENTDETOX_NLI='0', AGENTDETOX_CONTRADICTION='off', PYTHONUTF8='1', PIP_CONFIG_FILE=os.devnull)
 

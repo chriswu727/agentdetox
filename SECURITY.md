@@ -5,6 +5,8 @@
 Security fixes are made on the latest published AgentDetox release. Upgrade before reporting a
 problem so the report reflects the current code.
 
+See the [0.5.0 security advisory](https://github.com/chriswu727/agentdetox/security/advisories/GHSA-j3cm-77h3-cmm7) for affected versions and upgrade instructions.
+
 ## Reporting a vulnerability
 
 Do not open a public issue for a vulnerability that could put users at risk, such as a way to get
@@ -50,10 +52,13 @@ Out of scope; see the [full limitations](docs/user-guide.md#what-it-does-not-cat
 
 ## Design choices that affect security
 
-- **Hooks fail open.** If AgentDetox itself errors, the agent's action proceeds, and `doctor` and
-  `status` show the failure. A security tool that broke every tool call would be uninstalled.
+- **Hooks fail open, except on a write they exist to check.** If AgentDetox itself errors, the
+  agent's action proceeds, and `doctor` and `status` show the failure. A security tool that
+  broke every tool call would be uninstalled. A write to agent context or to AgentDetox's own
+  state that could not be checked is the exception: it asks, or is refused where the agent
+  cannot ask, so an input that makes a check fail is not a way past it.
 - **Nothing is deleted.** A restore moves the current file to `~/.agentdetox/quarantine`.
-- **Recovery cannot be pointed elsewhere by swapping a folder** (development `main`, macOS and
+- **Recovery cannot be pointed elsewhere by swapping a folder** (0.5.0, macOS and
   Linux). `restore` and `clean` open the folder holding the file without following links the
   user could repoint, and read, back up and replace through that open folder; a path through
   such a link is refused. This does not stop a program running as the user from changing the
@@ -62,17 +67,25 @@ Out of scope; see the [full limitations](docs/user-guide.md#what-it-does-not-cat
   user names. The name given is resolved once, when the folder is first scanned, and that
   resolved folder is the library; no link found inside it is followed (links are counted). A
   scan records no checkpoint and never reports a file as clean. A finding dismissed in a
-  library (development `main`) is set aside for one file at the exact bytes and detector
+  library (0.5.0) is set aside for one file at the exact bytes and detector
   reviewed; it is not an allowlist entry, and hooks never read it.
 - **The store is private.** `~/.agentdetox` is created 0700 and its files 0600.
+- **Paths are compared by the file they name.** Whether a write touches AgentDetox's own store
+  or a watched file is decided by the device and file number of the folders above it, not by
+  how the path is spelled, so another case, another Unicode form, a link or a second name for
+  the volume is no way around a check.
 - **No imports from the project.** Background processes and the `python -m` hook fallback start
   Python with `-I`, so a repository cannot plant an `agentdetox` package for the hook to import.
 - **Local checks.** Hooks and checks make no network calls. Installation, the plugin's `uvx`
   fallback and optional model downloads require network access. The fallback fetches a release
   pinned by version, not by hash. See [PRIVACY.md](PRIVACY.md).
-- **The shell check reads, it does not run.** A command is checked before it runs by parsing it;
-  where the parse is uncertain (a `cd` that may fail, a variable set elsewhere) it assumes the
-  worse case or judges the target by its file name. A script file or a path built at run time
+- **The shell check reads, it does not run.** A command is checked before it runs by parsing it
+  as a shell splits it: every line, every command after an operator, and substitutions also
+  inside double quotes. Where the parse is uncertain (a `cd` that may fail, a variable set
+  elsewhere) it assumes the worse case or judges the target by its file name, and a command it
+  cannot read to its end asks when it names agent context or AgentDetox. The reader is tested
+  against real `bash` and `zsh` on generated commands; it models the forms listed in the
+  [user guide](docs/user-guide.md#what-it-does-not-catch), not the whole shell language. A script file or a path built at run time
   is checked right after the command instead. An `agentdetox` call whose arguments are not all
   written out (supplied by `xargs`, by a variable, a command substitution, a file name pattern
   or braces) needs approval unless what is written out is already a command that can only
