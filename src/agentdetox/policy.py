@@ -22,6 +22,7 @@ from .engine import (
     CONTRADICTION,
     COPIED,
     DELETION,
+    DISPUTED,
     GUARDRAILS,
     JUDGE,
     OWN_STATE,
@@ -59,7 +60,7 @@ def decide(signals: list[Signal], can_ask: bool, modes: dict[str, str]) -> Decis
     planted = [s for s in signals if s.check == PLANTED]
     if planted:
         return Decision("deny", with_ids(" ".join(s.reason for s in planted), flags), flags)
-    typed = [s for s in signals if s.check == USER_WRITTEN]
+    typed = [s for s in signals if s.check in (USER_WRITTEN, DISPUTED)]
     if typed:
         return Decision("ask" if can_ask else "deny", with_ids(" ".join(s.reason for s in typed), flags), flags)
     guards = [s for s in signals if s.check in _DENY_HINT

@@ -63,10 +63,10 @@ What the numbers do not say:
   from): 4 of 51 Chinese items against 1 of 203 in English. The second set, with twenty
   Chinese ordinary texts on the same subjects, did not repeat that (1 of 20 against 1 of 39),
   so the lean is not established.
-- **The model and the rules disagree on ordinary files, and the rules win.** All five whole
-  files the rules refuse (a vendor's install one-liner, a threat model with quoted examples,
-  two memory notes, an onboarding skill) the model calls fine. The check can only add a
-  question, so those refusals stand.
+- **The model and the rules disagree on ordinary files.** All five whole files the rules
+  refuse (a vendor's install one-liner, a threat model with quoted examples, two memory notes,
+  an onboarding skill) the model calls fine. With the check on, such a refusal of readable text
+  becomes a question to the user; it never becomes a pass, and hidden text stays refused.
 
 ## Blind held-out set, 2026-11-10
 

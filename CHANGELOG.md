@@ -15,7 +15,8 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
   remove one; a text it flagged stays flagged; a failed call is no opinion and shows in
   `doctor`. With it on, a session start also reads what changed outside the agent, and
   `agentdetox agent inspect --judge` reads every memory, rules and skill file on request.
-  Measured with real calls: 89 of 90 texts of the blind set and 60 of 60 written to get past a
+  A write the rules would refuse for readable text, which the model finds nothing against,
+  is asked about instead of refused. Measured with real calls: 89 of 90 texts of the blind set and 60 of 60 written to get past a
   model were flagged (the rules alone: about a third), with 3 of 150 short ordinary texts and
   2 of 120 whole ordinary files. It costs a model call of two to four seconds per text and
   sends that text to the model

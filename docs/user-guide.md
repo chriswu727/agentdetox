@@ -636,8 +636,11 @@ What keeps the check from becoming a way in:
   being checked is not asked.
 - Only one of a few fixed words is taken from its answer. The sentence you see is AgentDetox's,
   so a text cannot use the model to tell you, or the agent, anything.
-- It is asked after the rules and can only add a question. What the rules or the text's origin
-  already stop stays stopped; when the model says a text is fine, nothing else is relaxed.
+- It is asked after the rules and removes no question. One thing does change when it says a
+  text is fine: a write the rules would refuse outright, for text you can read, is put to you
+  as a question instead, since on whole ordinary files the rules refuse about one in
+  twenty-five (a vendor's install line, a quoted attack in a threat model). Hidden text is
+  refused whatever the model says, and so is everything with an agent that cannot ask.
 - An answer that cannot be read counts as a flag. A call that fails (no client, not logged in,
   no network, over 30 seconds) counts as no opinion: the write is decided by the other checks,
   the failure is recorded, and `doctor` shows it.
@@ -660,8 +663,8 @@ What it is not:
   and can only add.
 - **False flags are mostly notes about where a secret is kept**, and in the first tests more
   often Chinese ones than English (4 of 51 against 1 of 203); a later set did not repeat that.
-- **It does not soften the rules.** A file the rules refuse stays refused when the model
-  finds it fine.
+- **At a session start it does not soften the rules.** A file the rules flag there stays
+  flagged when the model finds it fine.
 - With an agent that cannot be asked (Codex, Cursor), a flag is recorded, as for the other
   configurable checks.
 - Tested on macOS. On Windows the call has not been run.

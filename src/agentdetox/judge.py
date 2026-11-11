@@ -13,8 +13,8 @@ What keeps the question from becoming a way in:
 - The text is handed over as data, and the only answer taken is one of a few fixed words.
   Nothing the model writes freely reaches the user or the agent, so a text cannot use the
   judge to say something to them.
-- It can add a question to a write and never take one away: it is asked after the rules,
-  and what they stop stays stopped. An answer that cannot be read counts as a flag. A call
+- It never takes a question away. It is asked after the rules, and the most its "fine" can
+  do is turn their refusal of readable text into a question. An answer that cannot be read counts as a flag. A call
   that fails (no client, no login, no network, too slow) counts as no opinion and is
   recorded, so `doctor` shows it.
 - It is asked without the reasoning a model otherwise does before it answers. With it, the
