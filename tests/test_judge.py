@@ -217,6 +217,7 @@ def test_the_client_is_started_with_nothing_it_could_act_through(tmp_path, monke
     assert command[command.index("--setting-sources") + 1] == "project,local"
     assert command[command.index("--system-prompt") + 1] == judge.POLICY and "some text" not in " ".join(command)
     assert "some text" in seen["input"] and not any(name.startswith("AGENTDETOX_") for name in seen["env"])
+    assert seen["env"]["MAX_THINKING_TOKENS"] == "0"        # steadier answers, in half the time
     assert not seen["cwd"].exists()      # the working folder is gone again
 
 
