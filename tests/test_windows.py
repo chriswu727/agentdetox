@@ -243,3 +243,14 @@ def test_cli_output_survives_a_cp1252_pipe(monkeypatch):
     assert main(["events", "--format", "json"]) == 0
     sys.stdout.flush()
     assert "预发布检查已经取消" in raw.getvalue().decode("utf-8")
+
+
+def test_a_replacement_beside_a_deep_file_is_named_in_the_long_form():
+    from agentdetox import safefs
+
+    deep = "C:\\Users\\me\\" + "x" * 240 + "\\memory\\.agentdetox-restore-0123456789abcdef"
+    assert safefs.extended(deep, windows=True) == "\\\\?\\" + deep
+    assert safefs.extended("\\\\?\\" + deep, windows=True) == "\\\\?\\" + deep
+    assert safefs.extended("\\\\server\\share\\a.md", windows=True) == "\\\\?\\UNC\\server\\share\\a.md"
+    assert safefs.extended("/home/me/a.md", windows=False) == "/home/me/a.md"
+

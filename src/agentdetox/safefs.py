@@ -30,6 +30,16 @@ PINNED = (sys.platform != "win32" and os.open in os.supports_dir_fd and os.renam
           and os.stat in os.supports_dir_fd and os.unlink in os.supports_dir_fd
           and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"))
 TEMP_PREFIX = ".agentdetox-restore-"
+
+
+def extended(path: Path | str, windows: bool = os.name == "nt") -> str:
+    """`path` in Windows' extended-length form (`\\\\?\\C:\\...`), which is not cut off at 260
+    characters whatever the machine's long-path setting; elsewhere, the path as it is."""
+    text = os.fspath(path)
+    if not windows or text.startswith("\\\\?\\"):
+        return text
+    text = os.path.abspath(text) if os.name == "nt" else text
+    return "\\\\?\\UNC\\" + text[2:] if text.startswith("\\\\") else "\\\\?\\" + text
 # A staged replacement older than this (seconds) belongs to a recovery that is not running.
 STALE_TEMP = 600.0
 MAX_LINK_HOPS = 16
@@ -276,19 +286,25 @@ class Pin:
         """Write the replacement beside the file and return its name."""
         self.ensure_folder()
         temp = TEMP_PREFIX + os.urandom(8).hex()
-        write_new(temp if PINNED else self.path.with_name(temp), data, self._fd, mode)
+        write_new(temp if PINNED else self._beside(temp), data, self._fd, mode)
         return temp
+
+    def _beside(self, name: str) -> str:
+        """The path of `name` in the file's folder, where no folder is held open (Windows).
+        In the form that may be longer than 260 characters: the replacement's name is longer
+        than most files', and a memory note's folder already repeats its project's whole path."""
+        return extended(self.path.with_name(name))
 
     def commit(self, temp: str) -> None:
         if PINNED:
             os.replace(temp, self.name, src_dir_fd=self._fd, dst_dir_fd=self._fd)
         else:
             self.verify()
-            os.replace(self.path.with_name(temp), self.path)
+            os.replace(self._beside(temp), self._beside(self.path.name))
 
     def discard(self, temp: str) -> None:
         with contextlib.suppress(OSError):
-            os.unlink(temp if PINNED else self.path.with_name(temp), dir_fd=self._fd)
+            os.unlink(temp if PINNED else self._beside(temp), dir_fd=self._fd)
 
     def sweep(self, older_than: float = STALE_TEMP) -> int:
         """Remove replacements an earlier recovery staged in this folder and never used: it
@@ -302,7 +318,7 @@ class Pin:
         for name in names:
             if not name.startswith(TEMP_PREFIX):
                 continue
-            target, dir_fd = (name, self._fd) if PINNED else (self.path.with_name(name), None)
+            target, dir_fd = (name, self._fd) if PINNED else (self._beside(name), None)
             try:
                 found = os.stat(target, dir_fd=dir_fd, follow_symlinks=False)
                 if stat.S_ISREG(found.st_mode) and time.time() - found.st_mtime > older_than:
