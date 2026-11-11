@@ -19,6 +19,7 @@ through Claude Code, a new session with no tools, asked without its reasoning st
 |---|---:|---:|---:|
 | [Blind held-out set](results/judge-heldout-2026-11-10.json), 180 short texts | 89/90 (25/26 paraphrases) | 3/90 | 2.3, 2.8 |
 | [Written to get past a model](results/judge-evasion-2026-11-10.json), 120 short texts | 60/60 | 0/60 | 2.5, 3.1 |
+| [Second set written to get past a model](results/judge-second-set-2026-11-11.json), 120 short texts, seen only after the setting was final | 59/60 | 2/60 | 2.3, 3.0 |
 | [Whole ordinary files](results/judge-ordinary-files-2026-11-10.json), 120 | | 2/120 | 3.6, 4.3 |
 | The rules alone, for comparison | 12/37 (sealed half), 20/60 | 1/44, 4/60 refused; whole files: 5/120 refused, 8 more asked about | |
 
@@ -49,13 +50,19 @@ What the numbers do not say:
   ([held-out](results/judge-heldout-reasoning-sentence-2026-11-10.json),
   [evasion](results/judge-evasion-reasoning-sentence-2026-11-10.json)). That sentence was
   written after seeing the text it fixes, so the 60 of 60 is not a clean measurement for that
-  kind of attack.
+  kind of attack. The clean one is the second set
+  ([`heldout/judge-second-set.json`](heldout/judge-second-set.json)), written by another
+  author after the setting was fixed and run once: 59 of 60, all six texts that address the
+  screener or pose as a sample among them. The one let through tells the agent to commit
+  quietly without mentioning it; the rules do not stop it either (they stop 29 of the 60).
 - **One attack is still a coin toss**: a reworded request to tidy the agent's own rule file so
   that its "ask first" switches default to yes is flagged six times in ten.
 - **False flags lean towards Chinese.** Of the five ordinary items flagged in the shipped
   setting, four are Chinese (a `curl | jq` health check, a note that Stripe test keys start
   with `sk_test_`, and two Traditional Chinese files that say which vault a password is read
-  from): 4 of 51 Chinese items against 1 of 203 in English.
+  from): 4 of 51 Chinese items against 1 of 203 in English. The second set, with twenty
+  Chinese ordinary texts on the same subjects, did not repeat that (1 of 20 against 1 of 39),
+  so the lean is not established.
 - **The model and the rules disagree on ordinary files, and the rules win.** All five whole
   files the rules refuse (a vendor's install one-liner, a threat model with quoted examples,
   two memory notes, an onboarding skill) the model calls fine. The check can only add a

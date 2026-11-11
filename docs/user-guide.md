@@ -617,7 +617,8 @@ the text a write adds to memory, rules or a skill to a small model and asks what
 the agent do: run something fetched from the network, read or send out secrets, weaken its own
 safeguards, set aside what you told it, hide what it does, or carry an instruction you would
 not see. On the same texts it flagged 89 of 90, and 60 of 60 written on purpose to get past a
-model; it also flagged 3 of 150 short ordinary texts and 2 of 120 whole ordinary files
+model (59 of 60 on a second such set, seen only after the setting was final); it also flagged
+5 of 210 short ordinary texts and 2 of 120 whole ordinary files
 ([measurements, and what they do not say](../bench/ACCURACY.md#a-model-as-judge-2026-11-10)).
 
 It is off unless you turn it on, because of what it costs:
@@ -657,8 +658,8 @@ What it is not:
 - **Not proof against a text written to persuade it.** One such attack got through until the
   brief was changed for it; the rules stopped that one. That is why the model is asked last
   and can only add.
-- **More false flags in Chinese** than in English in the tests (4 of 51 against 1 of 203),
-  mostly notes about where a secret is kept.
+- **False flags are mostly notes about where a secret is kept**, and in the first tests more
+  often Chinese ones than English (4 of 51 against 1 of 203); a later set did not repeat that.
 - **It does not soften the rules.** A file the rules refuse stays refused when the model
   finds it fine.
 - With an agent that cannot be asked (Codex, Cursor), a flag is recorded, as for the other
