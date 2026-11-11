@@ -119,6 +119,21 @@ def program() -> str | None:
     return named if named else shutil.which("claude")
 
 
+def logged_in() -> bool | None:
+    """Whether the client says it is logged in; None when it cannot be asked. Being logged
+    in to the desktop app is not enough: the command-line client has its own login."""
+    client = program()
+    if client is None:
+        return None
+    try:
+        done = subprocess.run([client, "auth", "status"], capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=15)
+        said = json.loads(done.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    return said.get("loggedIn") if isinstance(said, dict) and isinstance(said.get("loggedIn"), bool) else None
+
+
 def opinion(text: str, kind: str, timeout: float = TIMEOUT) -> Opinion:
     """What the model makes of `text`, which is or is about to be in a file of `kind`."""
     client = program()
@@ -140,8 +155,11 @@ def opinion(text: str, kind: str, timeout: float = TIMEOUT) -> Opinion:
     except ValueError:
         reply, failed = {}, True
     if failed:
-        said = reply.get("result") if isinstance(reply, dict) else None
-        return Opinion(None, error=f"the client answered with an error (exit {code}): {str(said or out)[:200]}")
+        said = str((reply.get("result") if isinstance(reply, dict) else None) or out)[:200]
+        if "not logged in" in said.lower():
+            return Opinion(None, error="Claude Code's command-line client is not logged in (the desktop app's login "
+                                       "does not carry over); run `claude auth login` in a terminal")
+        return Opinion(None, error=f"the client answered with an error (exit {code}): {said}")
     return _read(reply["result"])
 
 

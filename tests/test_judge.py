@@ -155,6 +155,17 @@ def test_without_the_client_no_write_is_held_up_and_doctor_says_so(project, monk
     assert "FAIL" in out and "no write is being read by a model" in out
 
 
+def test_a_client_that_is_not_logged_in_is_said_plainly(project, asked, monkeypatch, capsys):
+    monkeypatch.setenv("AGENTDETOX_JUDGE", "ask")
+    asked.answer = (1, "Not logged in \N{MIDDLE DOT} Please run /login")
+    assert write(project, REWORDED) == ("allow", "")
+    assert "claude auth login" in errors()[0]["error"]
+    monkeypatch.setattr(judge, "logged_in", lambda: False)
+    main(["doctor", "--project", str(project)])
+    out = capsys.readouterr().out
+    assert "FAIL" in out and "not logged in" in out and "claude auth login" in out
+
+
 def test_record_mode_and_clients_that_cannot_ask_record_it(project, asked, monkeypatch):
     asked.answer = '{"verdict": "flag", "category": "conceal"}'
     monkeypatch.setenv("AGENTDETOX_JUDGE", "record")

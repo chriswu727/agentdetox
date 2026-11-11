@@ -248,6 +248,10 @@ def _judge() -> list[Check]:
     if judge.program() is None:
         return [Check("fail", "the model check of each write is on, but Claude Code (the `claude` command) was not "
                               "found, so no write is being read by a model; install it or set AGENTDETOX_JUDGE_COMMAND")]
+    if judge.logged_in() is False:
+        return [Check("fail", "the model check of each write is on, but Claude Code's command-line client is not "
+                              "logged in, so no write is being read by a model (the desktop app's login does not "
+                              "carry over); run `claude auth login` in a terminal")]
     return [Check("ok", "a model reads each write to memory, rules and skills and "
                         + ("asks you about what it flags" if how == "ask" else "records what it flags")
                         + f" ({os.environ.get('AGENTDETOX_JUDGE_MODEL') or judge.MODEL}, through {judge.program()})")]
