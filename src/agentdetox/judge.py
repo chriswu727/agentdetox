@@ -33,7 +33,6 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from .context import claude_dir
 from .integrity import private_dir, store_dir, store_lock, write_private
 
 # What a flag is about, in words that are ours: the model picks the key, never the sentence.
@@ -181,7 +180,9 @@ def _forget(folder: Path) -> None:
     name = "".join(c if c.isascii() and c.isalnum() else "-" for c in real)
     if _MARK not in name or len(name) > 200:
         return
-    left = claude_dir() / "projects" / name
+    # Where the client that was just run keeps its folder: by its own settings, not by
+    # AgentDetox's, which were kept from it.
+    left = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects" / name
     with contextlib.suppress(OSError):
         for stub in left.iterdir():
             if stub.suffix == ".jsonl" and stub.is_file() and stub.stat().st_size < 4096 and _only_titles(stub):

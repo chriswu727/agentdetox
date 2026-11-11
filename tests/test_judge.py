@@ -222,7 +222,8 @@ def test_the_client_is_started_with_nothing_it_could_act_through(tmp_path, monke
 
 def test_only_the_stub_the_client_leaves_is_removed(tmp_path, monkeypatch):
     home = tmp_path / "home"
-    monkeypatch.setenv("AGENTDETOX_USER_HOME", str(home))
+    monkeypatch.setenv("AGENTDETOX_USER_HOME", str(tmp_path / "elsewhere"))     # not where the client looks
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home / ".claude"))
     projects = home / ".claude" / "projects"
     kept = projects / "-Users-me-work"
     kept.mkdir(parents=True)
