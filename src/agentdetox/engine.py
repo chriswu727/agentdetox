@@ -14,7 +14,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import allowlist, budget, events, ledger, paths, shell, storage
+from . import allowlist, budget, events, judge, ledger, paths, shell, storage
 from .agentscan import scan_stored, scan_text
 from .allowlist import Flag, contradiction_flag, copy_flag, finding_flag, source_id
 from .consistency import (
@@ -56,7 +56,7 @@ GUARDRAILS = "guardrails"    # an agent changing its own hooks, MCP servers or p
 SHELL_WRITE = "shell-write"  # a shell command writing agent context past the write check
 DELETION = "deletion"        # an edit tool removing a memory, rules or skill file
 UNREAD = "unread"            # a write to agent context whose content could not be worked out
-SUSPICIOUS, COPIED, CONTRADICTION = "suspicious", "copied", "contradiction"
+SUSPICIOUS, COPIED, CONTRADICTION, JUDGE = "suspicious", "copied", "contradiction", "judge"
 
 
 @dataclass
@@ -143,10 +143,31 @@ def check_write(write: Write, project: Path, run: set[str], transcript: str | No
     if conflicts:
         signals.append(Signal(CONTRADICTION, _conflict_reason(cf, conflicts),
                               [contradiction_flag(c) for c in conflicts]))
+    if JUDGE in run and added.strip():
+        signals += _judged(cf, added)
     if write.unknown:
         signals.append(Signal(UNREAD, f"AgentDetox: only the text this write adds to the agent's {cf.kind} file "
                                       f"{short_path(str(path))} was checked, not the result: {printable(write.unknown)}."))
     return signals
+
+
+def _judged(cf: ContextFile, added: str) -> list[Signal]:
+    """What a model makes of the text a write adds, when it would stop it. Asked last, so
+    that it can only add to what the rules and the text's origin already say."""
+    finding = Finding(str(cf.path), str(cf.path), "judge", "medium", "a model read this text as one that would turn "
+                      "the agent against you", anchor=added)
+    if not allowlist.unsuppressed([finding]):
+        return []       # this very text was allowed before; the model is not asked again
+    said = judge.opinion(added, cf.kind)
+    if said.flag is None:
+        events.record("hook_error", stage="judge", error=said.error[:300])
+        return []
+    if not said.flag:
+        return []
+    cut = f" Only its first {judge.LIMIT} characters were read." if len(added) > judge.LIMIT else ""
+    return [Signal(JUDGE, f"AgentDetox: a model read the text this write adds to the agent's {cf.kind} file "
+                          f"{short_path(str(cf.path))} and flagged it: {said.about}.{cut} Content like this, once "
+                          "saved, is obeyed in every later session.", [finding_flag(finding)])]
 
 
 def _inside(folder: Path, project: Path) -> list[ContextFile]:

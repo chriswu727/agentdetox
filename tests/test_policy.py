@@ -6,7 +6,7 @@ from agentdetox import policy
 from agentdetox.allowlist import Flag
 from agentdetox.engine import CONTRADICTION, COPIED, GUARDRAILS, OWN_STATE, PLANTED, SHELL_WRITE, SUSPICIOUS, Signal
 
-ASK = {SUSPICIOUS: "ask", COPIED: "ask", CONTRADICTION: "ask"}
+ASK = {SUSPICIOUS: "ask", COPIED: "ask", CONTRADICTION: "ask", "judge": "ask"}
 RECORD = {k: "record" for k in ASK}
 OFF = {k: "off" for k in ASK}
 
@@ -59,8 +59,8 @@ def test_an_ask_names_every_flagged_id_so_each_can_be_allowed():
 
 
 def test_record_mode_contradictions_are_left_to_the_background():
-    assert policy.checks_to_run(ASK) == {SUSPICIOUS, COPIED, CONTRADICTION}
-    assert policy.checks_to_run(RECORD) == {SUSPICIOUS, COPIED}
+    assert policy.checks_to_run(ASK) == {SUSPICIOUS, COPIED, CONTRADICTION, "judge"}
+    assert policy.checks_to_run(RECORD) == {SUSPICIOUS, COPIED, "judge"}
     assert policy.checks_to_run(OFF) == set()
 
 
