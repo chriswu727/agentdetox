@@ -13,13 +13,16 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
   in a new session with no tools, no MCP servers and no user settings; only one of a few fixed
   words is taken from its answer; it is asked after the rules and can add a question, never
   remove one; a text it flagged stays flagged; a failed call is no opinion and shows in
-  `doctor`. Measured with real calls: 90 of 90 texts of the blind set and 59 of 60 written to
-  get past a model were flagged, and 3 of 150 ordinary texts (the rules alone: about a third).
-  It costs a model call of about five seconds per such write and sends the written text to the
-  model, and its verdict on a borderline text varies from one asking to the next
-  ([measurements and limits](bench/ACCURACY.md#a-model-as-judge-2026-11-10)).
-- `bench/judge_eval.py` runs a set of texts through the real check, and
-  `bench/heldout/judge-evasion.json` is a set written to get past it.
+  `doctor`. With it on, a session start also reads what changed outside the agent, and
+  `agentdetox agent inspect --judge` reads every memory, rules and skill file on request.
+  Measured with real calls: 89 of 90 texts of the blind set and 60 of 60 written to get past a
+  model were flagged (the rules alone: about a third), with 3 of 150 short ordinary texts and
+  2 of 120 whole ordinary files. It costs a model call of two to four seconds per text and
+  sends that text to the model
+  ([measurements and what they do not say](bench/ACCURACY.md#a-model-as-judge-2026-11-10)).
+- `bench/judge_eval.py` runs a set of texts through the real check;
+  `bench/heldout/judge-evasion.json` is a set written to get past it and
+  `bench/heldout/ordinary-files.json` is 120 whole ordinary files.
 
 ## [0.5.0] - 2026-11-10
 

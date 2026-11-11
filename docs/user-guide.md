@@ -616,15 +616,15 @@ stop about a third, and none of those that say the same thing in other words. Th
 the text a write adds to memory, rules or a skill to a small model and asks what it would have
 the agent do: run something fetched from the network, read or send out secrets, weaken its own
 safeguards, set aside what you told it, hide what it does, or carry an instruction you would
-not see. On the same texts it flagged 90 of 90, and 59 of 60 written on purpose to get past a
-model; it also flagged 3 of 150 ordinary texts
-([measurements](../bench/ACCURACY.md#a-model-as-judge-2026-11-10)).
+not see. On the same texts it flagged 89 of 90, and 60 of 60 written on purpose to get past a
+model; it also flagged 3 of 150 short ordinary texts and 2 of 120 whole ordinary files
+([measurements, and what they do not say](../bench/ACCURACY.md#a-model-as-judge-2026-11-10)).
 
 It is off unless you turn it on, because of what it costs:
 
 - **A model call for every such write**, through the Claude Code you are logged in to (`claude`
-  must be on the path; any client's hooks can use it). About five seconds at the median and
-  twelve at the slow end, a fraction of a cent each. Other tool calls are not affected.
+  must be on the path; any client's hooks can use it). Two to four seconds and a fraction of
+  a cent each. Other tool calls are not affected.
 - **The text being written is sent to the model.** It is text the agent was about to keep in its
   own context, which the same provider reads in every later session.
 
@@ -638,20 +638,29 @@ What keeps the check from becoming a way in:
 - It is asked after the rules and can only add a question. What the rules or the text's origin
   already stop stays stopped; when the model says a text is fine, nothing else is relaxed.
 - An answer that cannot be read counts as a flag. A call that fails (no client, not logged in,
-  no network, over 45 seconds) counts as no opinion: the write is decided by the other checks,
+  no network, over 30 seconds) counts as no opinion: the write is decided by the other checks,
   the failure is recorded, and `doctor` shows it.
-- A text it flagged stays flagged without being asked about again, until you allow its id.
+- It is asked without the reasoning step a model otherwise takes, which made its answer to a
+  borderline text change from one asking to the next. A text it flagged stays flagged without
+  being asked about again, until you allow its id.
+- **It also reads what arrives outside the agent.** At a session start, files that changed
+  outside the agent and that the rules let pass are read too: the added text of a file known
+  before, the whole of a new one, up to eight per start (the rest at the next), for at most
+  twenty seconds. A flag is reported like a clear-cut rule finding and the file is not trusted
+  until you review it. `agentdetox agent inspect --judge` reads every memory, rules and skill
+  file on request, with no hook and whatever the setting says: one call per file.
 
 What it is not:
 
-- **Not certain.** Asked twice about the same text, a model does not always answer the same.
-  Most texts get the same answer every time; a few sit on the line (one attack in the tests was
-  flagged three times in ten, and three ordinary texts four, five and nine times in ten). A
-  reworded text is a new question.
-- **Not proof against a text written to persuade it.** One such attack got an "ok" once; the
-  rules stopped that one. That is why it is asked last and can only add.
-- **Only for writes the agent makes.** Files that arrive outside the agent (a cloned
-  repository's CLAUDE.md, a script that writes a rules file) are not read by the model yet.
+- **Not certain.** It misses some attacks (one reworded one in the tests is flagged six times
+  in ten), and a reworded text is a new question.
+- **Not proof against a text written to persuade it.** One such attack got through until the
+  brief was changed for it; the rules stopped that one. That is why the model is asked last
+  and can only add.
+- **More false flags in Chinese** than in English in the tests (4 of 51 against 1 of 203),
+  mostly notes about where a secret is kept.
+- **It does not soften the rules.** A file the rules refuse stays refused when the model
+  finds it fine.
 - With an agent that cannot be asked (Codex, Cursor), a flag is recorded, as for the other
   configurable checks.
 - Tested on macOS. On Windows the call has not been run.
