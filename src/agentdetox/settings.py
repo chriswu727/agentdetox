@@ -54,8 +54,8 @@ contradiction = "{contradiction}"
 # Have a small model read each write to agent memory, rules or skills and say whether it
 # would turn the agent against you. It reads meaning where the rules read wording, so it
 # catches what is said another way. Off by default, because every such write then costs
-# one short model call through your Claude Code login (a few seconds, a fraction of a
-# cent) and sends the text being written to the model. It can only add a question.
+# one short model call through your Claude Code login (about five seconds, a fraction of
+# a cent) and sends the text being written to the model. It can only add a question.
 judge = "{judge}"
 """
 

@@ -169,6 +169,9 @@ AgentDetox 提供检查和恢复，**不构成安全边界，也不验证事实�
   会在各客户端实际存放（或迁移到）的位置查找 Claude Code、Codex、Cursor 和 OpenClaw 的记忆、规则与技能文件，
   并把被标记的内容记录为审核条目，因此无需任何钩子即可使用 `clean` 和 `restore`。它检查的是文件本身，
   不代表客户端一定会触发钩子，也不判断记忆内容是否属实。[集成矩阵（英文）](docs/user-guide.md#other-agents)。
+- **模型判读（开发版 `main`，默认关闭）：**`agentdetox config judge ask` 让一个小模型读取每次写入记忆、规则和技能的新增文本，
+  判断它会让代理做什么；它能发现规则的固定措辞漏掉的内容，并且只会增加询问，不会取消其他检查。
+  [代价与限制（英文）](docs/user-guide.md#a-models-reading-of-each-write-optional-development-main)。
 - **矛盾检测：**可选本地 NLI，因仍有误报，默认在后台记录。[配置与限制（英文）](docs/user-guide.md#contradiction-detection-experimental)。
 - **已有记忆库（0.5.0）：**`agentdetox library scan <文件夹>` 为你指定的文件夹建立清单，
   用逐文件规则检查其中的文本文件，中断后可继续，且从不把文件报告为“干净”；`clean M<ID>` 删除经审核的行并保留备份，

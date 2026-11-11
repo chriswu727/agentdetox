@@ -196,6 +196,10 @@ store, including `objects/`, and review retention before deleting history.
   `clean` and `restore` work without any hook. It checks files, not whether a client delivers hook
   events or whether remembered text is true.
   [Integration matrix](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#other-agents).
+- **A model's reading (development `main`, off by default):** `agentdetox config judge ask` has a
+  small model read each write to memory, rules and skills for what it would make the agent do;
+  it catches what the rules' wordings miss and can only add a question.
+  [What it costs and what it is not](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#a-models-reading-of-each-write-optional-development-main).
 - **Contradiction checks:** optional local NLI, recorded in the background by default because of
   false positives. [Setup and limits](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#contradiction-detection-experimental).
 - **Existing memory libraries (0.5.0):** `agentdetox library scan <folder>` inventories

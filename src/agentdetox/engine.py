@@ -158,12 +158,17 @@ def _judged(cf: ContextFile, added: str) -> list[Signal]:
                       "the agent against you", anchor=added)
     if not allowlist.unsuppressed([finding]):
         return []       # this very text was allowed before; the model is not asked again
-    said = judge.opinion(added, cf.kind)
-    if said.flag is None:
-        events.record("hook_error", stage="judge", error=said.error[:300])
-        return []
-    if not said.flag:
-        return []
+    before = judge.remembered(finding_flag(finding).id)
+    if before is not None:
+        said = judge.Opinion(True, before)      # flagged once, flagged still: trying again changes nothing
+    else:
+        said = judge.opinion(added, cf.kind)
+        if said.flag is None:
+            events.record("hook_error", stage="judge", error=said.error[:300])
+            return []
+        if not said.flag:
+            return []
+        judge.remember(finding_flag(finding).id, said.category)
     cut = f" Only its first {judge.LIMIT} characters were read." if len(added) > judge.LIMIT else ""
     return [Signal(JUDGE, f"AgentDetox: a model read the text this write adds to the agent's {cf.kind} file "
                           f"{short_path(str(cf.path))} and flagged it: {said.about}.{cut} Content like this, once "

@@ -3,6 +3,24 @@
 Notable changes to AgentDetox. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 before 1.0, a minor version may change commands, settings or the snapshot store.
 
+## [Unreleased]
+
+### Added
+
+- An optional model check of each write to memory, rules and skills: `agentdetox config judge
+  ask` (or `record`; off by default). The text a write adds is read by a small model, through
+  the Claude Code the user is logged in to, for what it would make the agent do. It is asked
+  in a new session with no tools, no MCP servers and no user settings; only one of a few fixed
+  words is taken from its answer; it is asked after the rules and can add a question, never
+  remove one; a text it flagged stays flagged; a failed call is no opinion and shows in
+  `doctor`. Measured with real calls: 90 of 90 texts of the blind set and 59 of 60 written to
+  get past a model were flagged, and 3 of 150 ordinary texts (the rules alone: about a third).
+  It costs a model call of about five seconds per such write and sends the written text to the
+  model, and its verdict on a borderline text varies from one asking to the next
+  ([measurements and limits](bench/ACCURACY.md#a-model-as-judge-2026-11-10)).
+- `bench/judge_eval.py` runs a set of texts through the real check, and
+  `bench/heldout/judge-evasion.json` is a set written to get past it.
+
 ## [0.5.0] - 2026-11-10
 
 ### Added

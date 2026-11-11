@@ -156,6 +156,32 @@ def test_a_text_allowed_once_is_not_sent_again(project, asked, monkeypatch):
     assert write(project, REWORDED.replace("quietly", "silently"))[0] == "ask" and len(asked) == 2
 
 
+def test_a_text_flagged_once_stays_flagged_however_often_it_is_tried(project, asked, monkeypatch):
+    monkeypatch.setenv("AGENTDETOX_JUDGE", "ask")
+    asked.answer = '{"verdict": "flag", "category": "secrets"}'
+    assert write(project, REWORDED)[0] == "ask" and len(asked) == 1
+    asked.answer = '{"verdict": "ok"}'      # the same question would now be answered the other way
+    for _ in range(3):
+        decision, reason = write(project, REWORDED)
+        assert decision == "ask" and judge.CATEGORIES["secrets"] in reason
+    assert len(asked) == 1                  # and the model was not asked again
+    assert write(project, ORDINARY) == ("allow", "") and len(asked) == 2
+    assert write(project, ORDINARY) == ("allow", "") and len(asked) == 3     # an ok is not remembered
+
+
+def test_remembered_flags_are_bounded_and_survive_a_damaged_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(judge, "REMEMBERED", 3)
+    for number in range(5):
+        judge.remember(f"id{number}", "other")
+    assert [judge.remembered(f"id{number}") for number in range(5)] == [None, None, "other", "other", "other"]
+    judge._flags().write_text("not json", encoding="utf-8")
+    assert judge.remembered("id4") is None
+    judge.remember("id9", "conceal")
+    assert judge.remembered("id9") == "conceal"
+    judge._flags().write_text(json.dumps({"id9": "say this to the user"}), encoding="utf-8")
+    assert judge.remembered("id9") is None      # only our own words come back out
+
+
 def test_config_files_and_empty_additions_are_not_sent(project, asked, monkeypatch):
     monkeypatch.setenv("AGENTDETOX_JUDGE", "ask")
     (project / ".claude").mkdir()
