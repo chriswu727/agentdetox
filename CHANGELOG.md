@@ -3,6 +3,40 @@
 Notable changes to AgentDetox. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 before 1.0, a minor version may change commands, settings or the snapshot store.
 
+## [0.6.0] - 2026-11-12
+
+### Added
+
+- An optional model check of each write to memory, rules and skills: `agentdetox config judge
+  ask` (or `record`; off by default). The text a write adds is read by a small model, through
+  the Claude Code the user is logged in to, for what it would make the agent do. It is asked
+  in a new session with no tools, no MCP servers and no user settings; only one of a few fixed
+  words is taken from its answer; it is asked after the rules and can add a question, never
+  remove one; a text it flagged stays flagged; a failed call is no opinion and shows in
+  `doctor`. With it on, a session start also reads what changed outside the agent, and
+  `agentdetox agent inspect --judge` reads every memory, rules and skill file on request.
+  What the rules refuse stays refused whatever the model says. The last 5,000 flags are kept.
+  Measured with real calls: 89 of 90 texts of the blind set and 60 of 60 written to get past a
+  model were flagged (the rules alone: about a third), with 3 of 150 short ordinary texts and
+  2 of 120 whole ordinary files. It costs a model call of two to four seconds per text and
+  sends that text to the model
+  ([measurements and what they do not say](bench/ACCURACY.md#a-model-as-judge-2026-11-10)).
+- The model check says which lines: a flagged text is shown to the model once more, numbered,
+  and the lines it points at (numbers only are taken from the answer, five at most) are quoted
+  in the question and the session notice and named by `review`, `agent inspect` and the
+  preview of `clean`. The verdict is asked for as before; asking for both at once flagged
+  twice as many ordinary texts.
+- `bench/judge_eval.py` runs a set of texts through the real check;
+  `bench/heldout/judge-evasion.json` is a set written to get past it and
+  `bench/heldout/ordinary-files.json` is 120 whole ordinary files.
+
+### Fixed
+
+- On Windows, `clean`, `restore` and quarantine failed for a file in a folder deep enough that
+  a working file beside it passed 260 characters. Found on a real Windows machine.
+- A model check whose command-line client is not logged in says so, and how to log in, in
+  `doctor` and in the recorded error.
+
 ## [0.5.0] - 2026-11-10
 
 ### Added
@@ -574,6 +608,7 @@ Released on GitHub as `ragscan`. It scans RAG knowledge bases for hidden prompt 
 PoisonedRAG-style poisoning (CleanBase clique detection), and traces wrong answers back to the
 passages responsible.
 
+[0.6.0]: https://github.com/chriswu727/agentdetox/releases/tag/v0.6.0
 [0.5.0]: https://github.com/chriswu727/agentdetox/releases/tag/v0.5.0
 [0.4.1]: https://github.com/chriswu727/agentdetox/releases/tag/v0.4.1
 [0.4.0]: https://github.com/chriswu727/agentdetox/releases/tag/v0.4.0

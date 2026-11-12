@@ -12,8 +12,9 @@ from .agentscan import read_text, scan_context
 from .allowlist import contradiction_flag
 from .consistency import Contradiction
 from .context import ContextFile, discover, short_path, watched_roots
-from .findings import finding_id, printable
+from .findings import Finding, finding_id, printable
 from .integrity import UNREAD, Change, StoreError, baseline_paths, gc, snapshot, snapshot_text, verify
+from .settings import mode as setting
 
 # Items listed per section, so the guidance after them is never cut off by the limit on
 # what a session-start hook may add.
@@ -71,11 +72,14 @@ def _check(project: Path, mode: str, cwd: Path | None = None) -> str:
     background: list[tuple] = []
     changed = []
     told: set[str] = set()
+    unjudged: set[str] = set()
     if first_run:
         findings = [f for f in allowlist.unsuppressed(scan_context(files, later)) if f.severity == "high"]
-        all_findings = findings
+        read, unjudged = _read_by_model([(cf, None) for cf in files if str(cf.path) not in {f.doc_id for f in findings}], later)
+        all_findings = findings + read
+        findings = findings + [f for f in read if f.severity == "high"]
         flagged = {f.doc_id for f in findings}
-        changes = [Change(str(cf.path), "added", cf.kind) for cf in files if str(cf.path) in flagged]
+        changes = [Change(str(cf.path), "added", cf.kind) for cf in files if str(cf.path) in {f.doc_id for f in all_findings}]
         trusted = [cf for cf in files if str(cf.path) not in flagged]
     else:
         changes, all_findings = verify(files, roots)
@@ -89,6 +93,14 @@ def _check(project: Path, mode: str, cwd: Path | None = None) -> str:
                          if (f.doc_id, finding_id(f)) not in seen]
         accepted = review.accepted_versions()
         handled = review.handled_findings()
+        # What changed outside the agent and the rules let pass is read by the model, when
+        # that is turned on: the changed text of a file known before, the whole of a new one.
+        stopped = {f.doc_id for f in all_findings if f.severity == "high"}
+        read, unjudged = _read_by_model(
+            [(by_name[c.path], snapshot_text(c.path) if c.status == "modified" else None) for c in changes
+             if c.status != "deleted" and c.path in by_name and c.path not in stopped
+             and accepted.get(c.path) != digests.get(c.path)] if setting("judge") != "off" else [], later)
+        all_findings += read
         findings = [f for f in allowlist.unsuppressed(all_findings) if f.severity == "high"
                     and not (f.doc_id in accepted and accepted[f.doc_id] == digests.get(f.doc_id))
                     and (f.doc_id, digests.get(f.doc_id), finding_id(f)) not in handled]
@@ -134,7 +146,8 @@ def _check(project: Path, mode: str, cwd: Path | None = None) -> str:
 
     unread += [(str(cf.path), error) for cf, error in later]
     unreadable = {path for path, _ in unread}
-    trusted = [cf for cf in trusted if str(cf.path) not in unreadable]
+    # A file the model was to read and gave no opinion on is not trusted yet; it comes up again.
+    trusted = [cf for cf in trusted if str(cf.path) not in unreadable | unjudged]
     with storage.connection(write=True):
         _record_external([c for c in changes if unchanged(c.path)], flagged, all_findings, found=first_run)
         for conflict in conflicts:
@@ -271,6 +284,31 @@ def _digest(path: Path) -> str | None:
 
 
 FOUND = "present when AgentDetox first looked; when and by what it was written is unknown"
+JUDGE_WAIT = 20.0       # seconds a session start waits for the model's reading of what changed
+
+
+def _read_by_model(candidates: list[tuple[ContextFile, str | None]],
+                   later: list[tuple[ContextFile, str]]) -> tuple[list[Finding], set[str]]:
+    """What the model check, when it is on, makes of files that came to be as they are
+    outside the agent: findings for those it flags, and the paths it gave no opinion on.
+    Each candidate comes with the text of its last known version, or None for a file with
+    none, which is read whole. A few are read per session start, the instructions first."""
+    how = setting("judge")
+    texts: list[tuple[ContextFile, str]] = []
+    for cf, old in candidates if how != "off" else []:
+        if cf.kind == "config":
+            continue
+        try:
+            text = read_text(cf.path)
+        except OSError as error:
+            later.append((cf, type(error).__name__))
+            continue
+        texts.append((cf, text if old is None else engine._added_text(old, text)))
+    if not texts:
+        return [], set()
+    found, undecided = engine.judged(texts, "high" if how == "ask" else "medium", limit=engine.JUDGED_AT_ONCE,
+                                     timeout=JUDGE_WAIT)
+    return found, undecided
 
 
 def _found_earlier(path: str, digest: str | None) -> bool:

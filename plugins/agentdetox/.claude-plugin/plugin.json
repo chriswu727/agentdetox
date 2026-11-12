@@ -1,6 +1,6 @@
 {
   "name": "agentdetox",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Checks Claude Code memory, instructions, skills and config; records changes and source evidence; helps you review and restore earlier versions.",
   "author": {"name": "Yichen Wu"},
   "homepage": "https://github.com/chriswu727/agentdetox",

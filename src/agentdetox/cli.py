@@ -186,6 +186,9 @@ def main(argv: list[str] | None = None) -> int:
                                                 "(C ids) that `review` and `clean` take; nothing flagged is trusted")
     agent_args(a_inspect)
     a_inspect.add_argument("--fail-on", choices=["low", "medium", "high", "none"], default="high", help=fail_on_help)
+    a_inspect.add_argument("--judge", action="store_true",
+                           help="also have a small model read each memory, rules and skill file for what it would make "
+                                "the agent do: one model call per file through Claude Code, whatever `config judge` says")
     a_snap = asub.add_parser("snapshot", help="record recovery checkpoints for current context files")
     agent_args(a_snap)
     a_snap.add_argument("--reset", action="store_true",
@@ -796,7 +799,7 @@ def _agent_command(args) -> int:
 def _inspect(args, project: Path | None) -> int:
     from . import inspection
 
-    result = inspection.run(args.agent, project)
+    result = inspection.run(args.agent, project, model=args.judge)
     found = result["survey"]
     items = result["items"]
     # Incomplete: a folder that was asked for was not looked in, or a file found was not read.

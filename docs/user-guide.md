@@ -2,7 +2,7 @@
 
 [Documentation](README.md) · [Project home](../README.md) · [简体中文入门](../README.zh-CN.md)
 
-Applies to **AgentDetox 0.5.0**, released 2026-11-10. Claude Code is the supported integration;
+Applies to **AgentDetox 0.6.0**, released 2026-11-12. Claude Code is the supported integration;
 other integrations and optional semantic checks have the limits described below.
 
 [Install](#install) · [Review](#day-to-day) · [Limits](#what-it-does-not-catch) ·
@@ -440,7 +440,8 @@ folders only; see the [large-memory protocol](../bench/LARGE_MEMORY.md).
 
 - Detection is not a security boundary. An adaptive attacker who knows these rules can evade them,
   and a plausible-looking false fact with nothing to contradict passes.
-- Planted text the model rewrites in its own words before saving it, unless a rule still matches.
+- Planted text the model rewrites in its own words before saving it, unless a rule still matches
+  or the [model check](#a-models-reading-of-each-write-optional-060) is on.
 - Changes outside the observed shell interval remain visible at the next session or before the next
   observed edit. Background writes after a shell tool returns are outside that interval.
 - The ledger knows what the hooks saw. A change the agent makes with a shell command is recorded as
@@ -602,6 +603,78 @@ or a shell command that writes, moves or deletes a config file holding them.
 
 `agentdetox install codex` and `install cursor` print the hook configuration; `--apply` is refused
 for both until installing them has been verified on real installs.
+
+## A model's reading of each write (optional, 0.6.0)
+
+```bash
+agentdetox config judge ask      # or: record. Off again: agentdetox config judge off
+agentdetox doctor                # says whether the check is on and can reach a model
+```
+
+The rules read wordings someone has seen before. On texts written without sight of them they
+stop about a third, and none of those that say the same thing in other words. This check hands
+the text a write adds to memory, rules or a skill to a small model and asks what it would have
+the agent do: run something fetched from the network, read or send out secrets, weaken its own
+safeguards, set aside what you told it, hide what it does, or carry an instruction you would
+not see. On the same texts it flagged 89 of 90, and 60 of 60 written on purpose to get past a
+model (59 of 60 on a second such set, seen only after the setting was final); it also flagged
+5 of 210 short ordinary texts and 2 of 120 whole ordinary files
+([measurements, and what they do not say](../bench/ACCURACY.md#a-model-as-judge-2026-11-10)).
+
+It is off unless you turn it on, because of what it costs:
+
+- **A model call for every such write**, through the Claude Code you are logged in to (`claude`
+  must be on the path; any client's hooks can use it). Two to four seconds and a fraction of
+  a cent each, and a second such call for a text it flags. Other tool calls are not affected.
+- **The text being written is sent to the model.** It is text the agent was about to keep in its
+  own context, which the same provider reads in every later session.
+
+What keeps the check from becoming a way in:
+
+- The model is asked in a new session with no tools, no MCP servers, no skills and none of your
+  settings, in an empty folder, and nothing of the session is saved. The agent whose write is
+  being checked is not asked.
+- Only one of a few fixed words is taken from its answer. A flagged text is shown to it once
+  more, to ask which lines, and from that answer only the numbers of up to five lines are
+  taken. The sentence you see is AgentDetox's and the lines quoted are the text's own, so a
+  text cannot use the model to tell you, or the agent, anything. Numbers that are not lines
+  of the text are dropped; the flag stands without them.
+- It is asked after the rules, about what they let pass, and takes nothing away: what the
+  rules refuse stays refused and what they ask about is still asked, whatever the model says.
+- An answer that cannot be read counts as a flag. A call that fails (no client, not logged in,
+  no network, over 30 seconds) counts as no opinion: the write is decided by the other checks,
+  the failure is recorded, and `doctor` shows it.
+- It is asked without the reasoning step a model otherwise takes, which made its answer to a
+  borderline text change from one asking to the next. A text it flagged stays flagged without
+  being asked about again, until you allow its id. The last 5,000 flags are kept; a text whose
+  flag has dropped off that list is a new question.
+- **It also reads what arrives outside the agent.** At a session start, files that changed
+  outside the agent and that the rules let pass are read too: the added text of a file known
+  before, the whole of a new one, up to eight per start (the rest at the next), for at most
+  twenty seconds. A flag is reported like a clear-cut rule finding and the file is not trusted
+  until you review it. `agentdetox agent inspect --judge` reads every memory, rules and skill
+  file on request, with no hook and whatever the setting says: one call per file.
+- **It says which lines.** The question, the session notice, `review` and the preview of
+  `clean` name the line the model pointed at, so a flagged line in a long file can be removed
+  on its own. When it points at none, the finding is about the text as a whole.
+
+What it is not:
+
+- **Not certain.** It misses some attacks (one reworded one in the tests is flagged six times
+  in ten), and a reworded text is a new question.
+- **Not proof against a text written to persuade it.** One such attack got through until the
+  brief was changed for it; the rules stopped that one. That is why the model is asked last
+  and can only add.
+- **False flags are mostly notes about where a secret is kept**, and in the first tests more
+  often Chinese ones than English (4 of 51 against 1 of 203); a later set did not repeat that.
+- **It does not soften the rules.** On whole ordinary files the rules refuse about one in
+  twenty-five that the model calls fine (a vendor's install line, a quoted attack in a threat
+  model); those stay refused, in a write and at a session start.
+- With an agent that cannot be asked (Codex, Cursor), a flag is recorded, as for the other
+  configurable checks.
+- Run on macOS and on one Windows machine (the full check, real calls, the message for a
+  client that is not logged in). On Windows the client's login is the command-line one:
+  being logged in to the desktop app is not enough, and `doctor` says so.
 
 ## Contradiction detection (experimental)
 

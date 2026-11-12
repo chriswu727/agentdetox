@@ -30,7 +30,7 @@ from .persistence import guarded_sections
 _ATTRIBUTION = "present when inspected; when and by what it was written is unknown"
 
 
-def run(agents: list[str] | None, project: Path | None) -> dict:
+def run(agents: list[str] | None, project: Path | None, model: bool = False) -> dict:
     found = survey(agents, project)
     roots = watched_roots(project)
     accepted, handled = review.accepted_versions(), review.handled_findings()
@@ -53,6 +53,8 @@ def run(agents: list[str] | None, project: Path | None) -> dict:
                    if f.severity in ("medium", "high") and accepted.get(name) != digest
                    and (name, digest, finding_id(f)) not in handled]
         read.append((cf, data, digest, text, flagged))
+    if model:
+        read = _read_by_model(read, accepted, handled, unread)
     items: list[dict] = []
     trusted: list[ContextFile] = []
     digests: dict[str, str | None] = {}
@@ -120,6 +122,28 @@ def run(agents: list[str] | None, project: Path | None) -> dict:
                       files=len(read), review=review_ids)
     return {"files": len(read), "trusted": len(trusted), "items": items, "unread": unread, "linked": linked,
             "survey": found}
+
+
+def _read_by_model(read: list, accepted: dict, handled: set, unread: list[dict]) -> list:
+    """`read` with a finding added to each file a model flags: every memory, rules and skill
+    file the rules did not already stop, read whole. A file it gave no opinion on is left out
+    and listed as not read, so it gets no checkpoint and the command does not report success."""
+    waiting = [(cf, text) for cf, _, digest, text, flagged in read
+               if cf.kind != "config" and not any(f.severity == "high" for f in flagged)
+               and accepted.get(str(cf.path)) != digest]
+    found, undecided = engine.judged(waiting, "high")
+    flags = {f.doc_id: f for f in found}
+    out = []
+    for cf, data, digest, text, flagged in read:
+        name = str(cf.path)
+        if name in undecided:
+            unread.append({"path": name, "error": "the model gave no opinion"})
+            continue
+        finding = flags.get(name)
+        if finding is not None and (name, digest, finding_id(finding)) not in handled:
+            flagged = [*flagged, finding]
+        out.append((cf, data, digest, text, flagged))
+    return out
 
 
 def _digest(path: Path) -> str | None:

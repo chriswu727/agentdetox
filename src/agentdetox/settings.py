@@ -17,17 +17,18 @@ from pathlib import Path
 from .integrity import private_dir, store_dir, store_lock, write_private
 
 MODES = ("ask", "record", "off")
-DEFAULTS = {"suspicious": "ask", "copied": "ask", "contradiction": "record"}
+DEFAULTS = {"suspicious": "ask", "copied": "ask", "contradiction": "record", "judge": "off"}
 LABELS = {
     "suspicious": "suspicious writes",
     "copied": "copied from untrusted input",
     "contradiction": "contradictions",
+    "judge": "a model's reading of each write",
 }
 
 TEMPLATE = """\
 # AgentDetox settings. Change them here or with `agentdetox config <key> <value>`.
 # An environment variable (AGENTDETOX_SUSPICIOUS, AGENTDETOX_COPIED,
-# AGENTDETOX_CONTRADICTION) overrides the value here.
+# AGENTDETOX_CONTRADICTION, AGENTDETOX_JUDGE) overrides the value here.
 #
 # Each check is one of:
 #   "ask"     Claude Code asks you before the write (agents without an ask
@@ -49,6 +50,13 @@ copied = "{copied}"
 # New memory that contradicts existing memory (needs agentdetox[nli]). The model
 # still misreads terse notes, so the default only records.
 contradiction = "{contradiction}"
+
+# Have a small model read each write to agent memory, rules or skills and say whether it
+# would turn the agent against you. It reads meaning where the rules read wording, so it
+# catches what is said another way. Off by default, because every such write then costs
+# one short model call through your Claude Code login (two to four seconds, a fraction of
+# a cent) and sends the text being written to the model. It can only add a question.
+judge = "{judge}"
 """
 
 

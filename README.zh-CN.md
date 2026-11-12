@@ -24,8 +24,8 @@
 网页里的投毒内容可能成为明天的记忆。依赖的安装脚本也可能在智能体执行任务时修改 `CLAUDE.md`。
 AgentDetox 检查持久上下文的写入，记录变更及来源证据，让你查看差异并恢复先前版本。
 
-**0.5.0 已发布**至 [PyPI](https://pypi.org/project/agentdetox/0.5.0/) 和
-[GitHub](https://github.com/chriswu727/agentdetox/releases/tag/v0.5.0)。项目仍处于**预览阶段**：
+**0.6.0 已发布**至 [PyPI](https://pypi.org/project/agentdetox/0.6.0/) 和
+[GitHub](https://github.com/chriswu727/agentdetox/releases/tag/v0.6.0)。项目仍处于**预览阶段**：
 Claude Code 是受支持的集成，Codex 和 Cursor 钩子属于实验功能；OpenClaw 没有自己的钩子，写入时不会被实时检查，
 其文件可通过命令行检查，也会在其他客户端的会话开始时被比对。
 开发环境支持原生 Windows（Python 3.12 + Git Bash）以及 macOS/Linux。
@@ -159,7 +159,7 @@ AgentDetox 提供检查和恢复，**不构成安全边界，也不验证事实�
 
 ### 本地处理，历史记录仍需保护
 
-钩子和检测不会联网，没有遥测或账号。安装、插件的 `uvx` 回退和可选模型下载需要网络。
+钩子和检测不会联网，只有一个需要你主动开启的例外：可选的模型判读（`config judge`，或 `agent inspect --judge`）会通过你的 Claude Code 把它读取的文本发送给模型。没有遥测或账号。安装、插件的 `uvx` 回退和可选模型下载需要网络。
 文件副本和来源证据保存在 `~/.agentdetox`；配置文件副本可能包含密钥。备份时应包含整个存储及 `objects/`，
 删除历史前先查看保留策略。[隐私与存储内容（英文）→](PRIVACY.md)
 
@@ -169,6 +169,9 @@ AgentDetox 提供检查和恢复，**不构成安全边界，也不验证事实�
   会在各客户端实际存放（或迁移到）的位置查找 Claude Code、Codex、Cursor 和 OpenClaw 的记忆、规则与技能文件，
   并把被标记的内容记录为审核条目，因此无需任何钩子即可使用 `clean` 和 `restore`。它检查的是文件本身，
   不代表客户端一定会触发钩子，也不判断记忆内容是否属实。[集成矩阵（英文）](docs/user-guide.md#other-agents)。
+- **模型判读（0.6.0，默认关闭）：**`agentdetox config judge ask` 让一个小模型读取每次写入记忆、规则和技能的新增文本，
+  判断它会让代理做什么；它能发现规则的固定措辞漏掉的内容，并且只会增加询问，不会取消其他检查。
+  [代价与限制（英文）](docs/user-guide.md#a-models-reading-of-each-write-optional-060)。
 - **矛盾检测：**可选本地 NLI，因仍有误报，默认在后台记录。[配置与限制（英文）](docs/user-guide.md#contradiction-detection-experimental)。
 - **已有记忆库（0.5.0）：**`agentdetox library scan <文件夹>` 为你指定的文件夹建立清单，
   用逐文件规则检查其中的文本文件，中断后可继续，且从不把文件报告为“干净”；`clean M<ID>` 删除经审核的行并保留备份，
@@ -188,5 +191,5 @@ AgentDetox 提供检查和恢复，**不构成安全边界，也不验证事实�
 修改钩子或恢复流程前，请阅读[架构](docs/architecture.md)与[设计决策](docs/decisions.md)。
 离线回归不调用模型；真实智能体实验需要明确授权和会话次数上限。
 
-英文是默认文档语言。本页是中文入门，对应 0.5.0；详细指南、验证记录和发布说明以英文原文为准。
+英文是默认文档语言。本页是中文入门，对应 0.6.0；详细指南、验证记录和发布说明以英文原文为准。
 采用 [Apache-2.0](LICENSE) 许可证。

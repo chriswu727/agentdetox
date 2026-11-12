@@ -15,7 +15,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import __version__, allowlist, background, compat, daemon, events, review, settings, storage
+from . import __version__, allowlist, background, compat, daemon, events, judge, review, settings, storage
 from .consistency import NLI, NLI_MODEL
 from .context import claude_dir, home_dir
 from .install import (
@@ -45,6 +45,7 @@ def run(project: Path) -> list[Check]:
         claude = [Check("ok", f"Claude Code: not set up on this machine (no {claude_dir()}); its hooks are not checked")]
     checks += claude
     checks += _settings()
+    checks += _judge()
     checks += _nli()
     checks += _background()
     checks += _store()
@@ -238,6 +239,22 @@ def _settings() -> list[Check]:
         except (OSError, ValueError):
             checks.append(Check("warn", f"{path} is not valid JSON, so nothing is allowed until it is fixed"))
     return checks
+
+
+def _judge() -> list[Check]:
+    how = settings.mode("judge")
+    if how == "off":
+        return [Check("ok", "optional model check of each write is off; turn it on with `agentdetox config judge ask`")]
+    if judge.program() is None:
+        return [Check("fail", "the model check of each write is on, but Claude Code (the `claude` command) was not "
+                              "found, so no write is being read by a model; install it or set AGENTDETOX_JUDGE_COMMAND")]
+    if judge.logged_in() is False:
+        return [Check("fail", "the model check of each write is on, but Claude Code's command-line client is not "
+                              "logged in, so no write is being read by a model (the desktop app's login does not "
+                              "carry over); run `claude auth login` in a terminal")]
+    return [Check("ok", "a model reads each write to memory, rules and skills and "
+                        + ("asks you about what it flags" if how == "ask" else "records what it flags")
+                        + f" ({os.environ.get('AGENTDETOX_JUDGE_MODEL') or judge.MODEL}, through {judge.program()})")]
 
 
 def _nli() -> list[Check]:

@@ -11,10 +11,11 @@ import difflib
 import functools
 import hashlib
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import allowlist, budget, events, ledger, paths, shell, storage
+from . import allowlist, budget, events, judge, ledger, paths, shell, storage
 from .agentscan import scan_stored, scan_text
 from .allowlist import Flag, contradiction_flag, copy_flag, finding_flag, source_id
 from .consistency import (
@@ -56,7 +57,7 @@ GUARDRAILS = "guardrails"    # an agent changing its own hooks, MCP servers or p
 SHELL_WRITE = "shell-write"  # a shell command writing agent context past the write check
 DELETION = "deletion"        # an edit tool removing a memory, rules or skill file
 UNREAD = "unread"            # a write to agent context whose content could not be worked out
-SUSPICIOUS, COPIED, CONTRADICTION = "suspicious", "copied", "contradiction"
+SUSPICIOUS, COPIED, CONTRADICTION, JUDGE = "suspicious", "copied", "contradiction", "judge"
 
 
 @dataclass
@@ -143,10 +144,76 @@ def check_write(write: Write, project: Path, run: set[str], transcript: str | No
     if conflicts:
         signals.append(Signal(CONTRADICTION, _conflict_reason(cf, conflicts),
                               [contradiction_flag(c) for c in conflicts]))
+    if JUDGE in run and added.strip():
+        signals += _judged(cf, added)
     if write.unknown:
         signals.append(Signal(UNREAD, f"AgentDetox: only the text this write adds to the agent's {cf.kind} file "
                                       f"{short_path(str(path))} was checked, not the result: {printable(write.unknown)}."))
     return signals
+
+
+def _judged(cf: ContextFile, added: str) -> list[Signal]:
+    """What a model makes of the text a write adds, when it would stop it. Asked last, so
+    that it can only add to what the rules and the text's origin already say."""
+    found, _ = judged([(cf, added)], "medium")
+    if not found:
+        return []
+    cut = f" Only its first {judge.LIMIT} characters were read." if len(added) > judge.LIMIT else ""
+    line = f' It points at: "{printable(found[0].evidence[:120])}".' if found[0].evidence else ""
+    return [Signal(JUDGE, f"AgentDetox: a model read the text this write adds to the agent's {cf.kind} file "
+                          f"{short_path(str(cf.path))} and flagged it: {found[0].message.removeprefix(MODEL_FLAGGED)}."
+                          f"{line}{cut} Content like this, once saved, is obeyed in every later session.",
+                   [finding_flag(found[0])])]
+
+
+MODEL_FLAGGED = "a model flagged it: "
+JUDGED_AT_ONCE = 8      # texts a session start hands to the model; the rest wait for the next
+
+
+def judged(texts: list[tuple[ContextFile, str]], severity: str, *, limit: int | None = None,
+           timeout: float = judge.TIMEOUT) -> tuple[list[Finding], set[str]]:
+    """Findings for the texts a model flags, and the paths of those it gave no opinion on:
+    a call that failed, or a text past `limit`. A finding's evidence is the first line the
+    model pointed at, if it pointed at any. The model is asked about several at once.
+    A text allowed before is not sent; one flagged before is flagged still, unasked, since
+    asking again might get another answer and trying again must change nothing."""
+    order = {"instructions": 0, "skill": 1, "memory": 2}
+    waiting: list[tuple[ContextFile, str, Finding]] = []
+    found: list[Finding] = []
+    undecided: set[str] = set()
+    for cf, text in sorted(texts, key=lambda pair: order.get(pair[0].kind, 3)):
+        if not text.strip():
+            continue
+        finding = Finding(str(cf.path), str(cf.path), "judge", severity, "a model read this text as one that would "
+                          "turn the agent against you", anchor=text)
+        if not allowlist.unsuppressed([finding]):
+            continue
+        before = judge.remembered(finding_flag(finding).id)
+        if before is not None:
+            found.append(_flagged(finding, before))
+        elif limit is not None and len(waiting) >= limit:
+            undecided.add(str(cf.path))
+        else:
+            waiting.append((cf, text, finding))
+    if not waiting:
+        return found, undecided
+    with ThreadPoolExecutor(min(JUDGED_AT_ONCE, len(waiting))) as pool:
+        said = list(pool.map(lambda job: judge.opinion(job[1], job[0].kind, timeout), waiting))
+    # Recorded here, one at a time: the store is not written from several threads.
+    for (cf, _, finding), opinion in zip(waiting, said):
+        if opinion.flag is None:
+            events.record("hook_error", stage="judge", error=opinion.error[:300])
+            undecided.add(str(cf.path))
+        elif opinion.flag:
+            judge.remember(finding_flag(finding).id, opinion)
+            found.append(_flagged(finding, opinion))
+    return found, undecided
+
+
+def _flagged(finding: Finding, said: judge.Opinion) -> Finding:
+    finding.message = MODEL_FLAGGED + said.about
+    finding.evidence = said.lines[0] if said.lines else ""
+    return finding
 
 
 def _inside(folder: Path, project: Path) -> list[ContextFile]:

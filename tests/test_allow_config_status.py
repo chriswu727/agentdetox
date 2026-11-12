@@ -69,7 +69,8 @@ def web_transcript(path, url, page):
 def test_defaults_without_a_config_file():
     current, problems = settings.load()
     assert {s.key: (s.value, s.source) for s in current} == {
-        "suspicious": ("ask", "default"), "copied": ("ask", "default"), "contradiction": ("record", "default")}
+        "suspicious": ("ask", "default"), "copied": ("ask", "default"), "contradiction": ("record", "default"),
+        "judge": ("off", "default")}
     assert problems == []
 
 

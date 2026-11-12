@@ -1,6 +1,6 @@
 # Documentation
 
-AgentDetox **0.5.0** was released on 2026-11-10. English is the primary language for the README,
+AgentDetox **0.6.0** was released on 2026-11-12. English is the primary language for the README,
 user guide, policies, release notes and developer documentation. The
 [Simplified Chinese README](../README.zh-CN.md) covers installation, the review workflow and key
 limits; detailed references are maintained in English. Keep both READMEs aligned when behavior changes.
