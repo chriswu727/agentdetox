@@ -2,7 +2,7 @@
 
 [Documentation](README.md) · [Project home](../README.md) · [简体中文入门](../README.zh-CN.md)
 
-Applies to **AgentDetox 0.5.0**, released 2026-11-10. Claude Code is the supported integration;
+Applies to **AgentDetox 0.6.0**, released 2026-11-12. Claude Code is the supported integration;
 other integrations and optional semantic checks have the limits described below.
 
 [Install](#install) · [Review](#day-to-day) · [Limits](#what-it-does-not-catch) ·
@@ -441,7 +441,7 @@ folders only; see the [large-memory protocol](../bench/LARGE_MEMORY.md).
 - Detection is not a security boundary. An adaptive attacker who knows these rules can evade them,
   and a plausible-looking false fact with nothing to contradict passes.
 - Planted text the model rewrites in its own words before saving it, unless a rule still matches
-  or the [model check](#a-models-reading-of-each-write-optional-development-main) is on.
+  or the [model check](#a-models-reading-of-each-write-optional-060) is on.
 - Changes outside the observed shell interval remain visible at the next session or before the next
   observed edit. Background writes after a shell tool returns are outside that interval.
 - The ledger knows what the hooks saw. A change the agent makes with a shell command is recorded as
@@ -604,7 +604,7 @@ or a shell command that writes, moves or deletes a config file holding them.
 `agentdetox install codex` and `install cursor` print the hook configuration; `--apply` is refused
 for both until installing them has been verified on real installs.
 
-## A model's reading of each write (optional, development `main`)
+## A model's reading of each write (optional, 0.6.0)
 
 ```bash
 agentdetox config judge ask      # or: record. Off again: agentdetox config judge off
@@ -643,7 +643,9 @@ What keeps the check from becoming a way in:
   text is fine: a write the rules would refuse outright, for text you can read, is put to you
   as a question instead, since on whole ordinary files the rules refuse about one in
   twenty-five (a vendor's install line, a quoted attack in a threat model). Hidden text is
-  refused whatever the model says, and so is everything with an agent that cannot ask.
+  refused whatever the model says, and so is everything with an agent that cannot ask, a
+  text longer than the model is shown (16,000 characters), and every such write when the
+  setting is `record`.
 - An answer that cannot be read counts as a flag. A call that fails (no client, not logged in,
   no network, over 30 seconds) counts as no opinion: the write is decided by the other checks,
   the failure is recorded, and `doctor` shows it.

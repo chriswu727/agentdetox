@@ -3,7 +3,7 @@
 Notable changes to AgentDetox. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 before 1.0, a minor version may change commands, settings or the snapshot store.
 
-## [Unreleased]
+## [0.6.0] - 2026-11-12
 
 ### Added
 
@@ -16,7 +16,8 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
   `doctor`. With it on, a session start also reads what changed outside the agent, and
   `agentdetox agent inspect --judge` reads every memory, rules and skill file on request.
   A write the rules would refuse for readable text, which the model finds nothing against,
-  is asked about instead of refused. Measured with real calls: 89 of 90 texts of the blind set and 60 of 60 written to get past a
+  is asked about instead of refused (only with `ask`, never for hidden text or for more text
+  than the model is shown). Measured with real calls: 89 of 90 texts of the blind set and 60 of 60 written to get past a
   model were flagged (the rules alone: about a third), with 3 of 150 short ordinary texts and
   2 of 120 whole ordinary files. It costs a model call of two to four seconds per text and
   sends that text to the model
@@ -608,6 +609,7 @@ Released on GitHub as `ragscan`. It scans RAG knowledge bases for hidden prompt 
 PoisonedRAG-style poisoning (CleanBase clique detection), and traces wrong answers back to the
 passages responsible.
 
+[0.6.0]: https://github.com/chriswu727/agentdetox/releases/tag/v0.6.0
 [0.5.0]: https://github.com/chriswu727/agentdetox/releases/tag/v0.5.0
 [0.4.1]: https://github.com/chriswu727/agentdetox/releases/tag/v0.4.1
 [0.4.0]: https://github.com/chriswu727/agentdetox/releases/tag/v0.4.0

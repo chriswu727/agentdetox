@@ -251,6 +251,7 @@ def test_a_replacement_beside_a_deep_file_is_named_in_the_long_form():
     deep = "C:\\Users\\me\\" + "x" * 240 + "\\memory\\.agentdetox-restore-0123456789abcdef"
     assert safefs.extended(deep, windows=True) == "\\\\?\\" + deep
     assert safefs.extended("\\\\?\\" + deep, windows=True) == "\\\\?\\" + deep
+    assert safefs.extended("\\\\.\\C:\\a", windows=True) == "\\\\.\\C:\\a"
     assert safefs.extended("\\\\server\\share\\a.md", windows=True) == "\\\\?\\UNC\\server\\share\\a.md"
     assert safefs.extended("/home/me/a.md", windows=False) == "/home/me/a.md"
 

@@ -27,8 +27,8 @@ with source evidence, and lets you remove selected added lines or restore an ear
 with a backup either way. A cleanup changes the file, not what a running session has already read:
 start a new session in that client afterwards.
 
-**0.5.0 is published** on [PyPI](https://pypi.org/project/agentdetox/0.5.0/) and
-[GitHub](https://github.com/chriswu727/agentdetox/releases/tag/v0.5.0).
+**0.6.0 is published** on [PyPI](https://pypi.org/project/agentdetox/0.6.0/) and
+[GitHub](https://github.com/chriswu727/agentdetox/releases/tag/v0.6.0).
 The project is in **preview**: Claude Code is supported; Codex and Cursor hooks are experimental;
 OpenClaw has no hook of its own, so nothing is checked as it writes; its files are checked from the command
 line and at the session start of the other clients. Development supports native Windows with Python 3.12 and
@@ -196,10 +196,10 @@ store, including `objects/`, and review retention before deleting history.
   `clean` and `restore` work without any hook. It checks files, not whether a client delivers hook
   events or whether remembered text is true.
   [Integration matrix](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#other-agents).
-- **A model's reading (development `main`, off by default):** `agentdetox config judge ask` has a
+- **A model's reading (0.6.0, off by default):** `agentdetox config judge ask` has a
   small model read each write to memory, rules and skills for what it would make the agent do;
   it catches what the rules' wordings miss and can only add a question.
-  [What it costs and what it is not](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#a-models-reading-of-each-write-optional-development-main).
+  [What it costs and what it is not](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#a-models-reading-of-each-write-optional-060).
 - **Contradiction checks:** optional local NLI, recorded in the background by default because of
   false positives. [Setup and limits](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#contradiction-detection-experimental).
 - **Existing memory libraries (0.5.0):** `agentdetox library scan <folder>` inventories

@@ -110,7 +110,7 @@ def remembered(flag_id: str) -> Opinion | None:
     """The flag a text with this id was given before, or None."""
     try:
         flags = json.loads(_flags().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return None
     kept = flags.get(flag_id) if isinstance(flags, dict) else None
     # A category alone is how 0.5 development builds kept a flag.
@@ -125,7 +125,7 @@ def remember(flag_id: str, said: Opinion) -> None:
     with store_lock():
         try:
             flags = json.loads(_flags().read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
             flags = {}
         flags = {key: value for key, value in (flags if isinstance(flags, dict) else {}).items() if key != flag_id}
         flags[flag_id] = [said.category, list(said.lines)]
@@ -159,6 +159,13 @@ def logged_in() -> bool | None:
 def opinion(text: str, kind: str, timeout: float = TIMEOUT, point: bool = True) -> Opinion:
     """What the model makes of `text`, which is or is about to be in a file of `kind`, and,
     with `point`, which lines of a text it flags it points at."""
+    try:
+        return _opinion(text, kind, timeout, point)
+    except Exception as error:      # noqa: BLE001 - whatever goes wrong in asking is no opinion, never a way past the caller
+        return Opinion(None, error=f"{type(error).__name__}: {str(error)[:200]}")
+
+
+def _opinion(text: str, kind: str, timeout: float, point: bool) -> Opinion:
     client = program()
     if client is None:
         return Opinion(None, error="Claude Code was not found (the `claude` command)")
@@ -209,7 +216,7 @@ def _lines(client: str, shown: str, category: str, wait: float) -> tuple[str, ..
     start, end = (answer or "").find("{"), (answer or "").rfind("}")
     try:
         said = json.loads(answer[start:end + 1]) if answer and 0 <= start < end else None
-    except ValueError:
+    except (ValueError, RecursionError):
         return ()
     return _pointed(said.get("lines"), rows) if isinstance(said, dict) else ()
 
@@ -220,12 +227,13 @@ def _read(answer: str) -> Opinion:
     start, end = answer.find("{"), answer.rfind("}")
     try:
         said = json.loads(answer[start:end + 1]) if 0 <= start < end else None
-    except ValueError:
+    except (ValueError, RecursionError):
         said = None
     if isinstance(said, dict) and said.get("verdict") == "ok":
         return Opinion(False)
     if isinstance(said, dict) and said.get("verdict") == "flag":
-        return Opinion(True, said["category"] if said.get("category") in CATEGORIES else "other")
+        category = said.get("category")
+        return Opinion(True, category if isinstance(category, str) and category in CATEGORIES else "other")
     return Opinion(True)
 
 

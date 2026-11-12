@@ -28,6 +28,7 @@ from .engine import (
     OWN_STATE,
     PLANTED,
     SHELL_WRITE,
+    SOFTEN,
     SUSPICIOUS,
     UNREAD,
     USER_WRITTEN,
@@ -51,6 +52,8 @@ def checks_to_run(modes: dict[str, str]) -> set[str]:
     """The configurable checks a write check does. Contradictions in record mode are
     checked after the write, in the background, so the hook does not wait for the model."""
     run = {check for check in (SUSPICIOUS, COPIED, JUDGE) if modes[check] != "off"}
+    if modes[JUDGE] == "ask":
+        run.add(SOFTEN)
     return run | {CONTRADICTION} if modes[CONTRADICTION] == "ask" else run
 
 

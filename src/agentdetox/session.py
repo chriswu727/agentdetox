@@ -99,7 +99,7 @@ def _check(project: Path, mode: str, cwd: Path | None = None) -> str:
         read, unjudged = _read_by_model(
             [(by_name[c.path], snapshot_text(c.path) if c.status == "modified" else None) for c in changes
              if c.status != "deleted" and c.path in by_name and c.path not in stopped
-             and accepted.get(c.path) != digests.get(c.path)], later)
+             and accepted.get(c.path) != digests.get(c.path)] if setting("judge") != "off" else [], later)
         all_findings += read
         findings = [f for f in allowlist.unsuppressed(all_findings) if f.severity == "high"
                     and not (f.doc_id in accepted and accepted[f.doc_id] == digests.get(f.doc_id))

@@ -10,7 +10,7 @@ does not establish that a file is safe.
 ## A model as judge, 2026-11-10
 
 The optional model check (`agentdetox config judge ask`; see the
-[user guide](../docs/user-guide.md#a-models-reading-of-each-write-optional-development-main))
+[user guide](../docs/user-guide.md#a-models-reading-of-each-write-optional-060))
 was measured with real calls, one text per call, exactly as a hook makes them: Claude Haiku
 through Claude Code, a new session with no tools, asked without its reasoning step.
 `python -m bench.judge_eval` repeats it.

@@ -36,7 +36,7 @@ def extended(path: Path | str, windows: bool = os.name == "nt") -> str:
     """`path` in Windows' extended-length form (`\\\\?\\C:\\...`), which is not cut off at 260
     characters whatever the machine's long-path setting; elsewhere, the path as it is."""
     text = os.fspath(path)
-    if not windows or text.startswith("\\\\?\\"):
+    if not windows or text.startswith(("\\\\?\\", "\\\\.\\")):
         return text
     text = os.path.abspath(text) if os.name == "nt" else text
     return "\\\\?\\UNC\\" + text[2:] if text.startswith("\\\\") else "\\\\?\\" + text

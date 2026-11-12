@@ -59,6 +59,7 @@ SHELL_WRITE = "shell-write"  # a shell command writing agent context past the wr
 DELETION = "deletion"        # an edit tool removing a memory, rules or skill file
 UNREAD = "unread"            # a write to agent context whose content could not be worked out
 SUSPICIOUS, COPIED, CONTRADICTION, JUDGE = "suspicious", "copied", "contradiction", "judge"
+SOFTEN = "judge-softens"     # with the model check asking, not just recording: its "fine" may turn a refusal into a question
 
 
 @dataclass
@@ -128,7 +129,7 @@ def check_write(write: Write, project: Path, run: set[str], transcript: str | No
     findings = allowlist.unsuppressed(scan_text(str(path), str(path), added, cf.kind))
     if _worst(findings) == "high":
         signal = _planted(cf, findings, recent())
-        if signal.check == PLANTED and JUDGE in run and _model_finds_nothing(cf, added, findings):
+        if signal.check == PLANTED and SOFTEN in run and _model_finds_nothing(cf, added, findings):
             return [Signal(DISPUTED, _reason(cf, findings, "flagged") + " A model read the same text and found "
                                      "nothing against it, so you are asked, not refused; approve only if you "
                                      "expected this text.", signal.flags)]
@@ -168,7 +169,9 @@ def _model_finds_nothing(cf: ContextFile, added: str, findings: list[Finding]) -
     """Whether the model check, being on, reads the text the rules would refuse and says it
     is fine. Then the refusal becomes a question: the model still removes no question, and an
     agent that cannot ask still refuses. A text it flagged before, or gives no opinion on, stays refused."""
-    if any(f.detector not in _READABLE for f in findings if f.severity == "high") or not added.strip():
+    # Any finding about text a reader would not see, and any text longer than the model is
+    # shown, leaves the refusal as it is: the model's "fine" would be about something else.
+    if any(f.detector not in _READABLE for f in findings if f.severity != "low") or not added.strip() or len(added) > judge.LIMIT:
         return False
     own = Finding(str(cf.path), str(cf.path), "judge", "medium", "a model read this text as one that would turn "
                   "the agent against you", anchor=added)
