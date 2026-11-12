@@ -1,7 +1,7 @@
 # Agent memory poisoning benchmark, v0
 
-Historical detector evaluation from the 0.2 development period. The tables below retain their
-original protocol and measurements; they are not an overall accuracy score for 0.4.0. The
+These are historical measurements of an earlier design, from the 0.2 development period, and
+not claims about the current version. The
 [0.4.0 regression report](ACCURACY.md#existing-public-data-evaluation) separately records a
 rerun of the provenance split.
 

@@ -1,45 +1,62 @@
-# Native Windows development validation, 2026-11-09
+# Native Windows validation
 
-## Phase 1 CI follow-up
+## Current status
+
+For 0.6.0, on one real Windows machine: the full development check, which found that `clean`,
+`restore` and quarantine failed for a file in a folder deep enough to pass 260 characters
+(fixed in 0.6.0); the optional model check with real model calls; and the message for a
+command-line client that is not logged in (on Windows the `claude` command has its own login,
+apart from the desktop app's, and `doctor` says so). See the
+[changelog](../CHANGELOG.md) and the user guide's
+[model check section](user-guide.md#a-models-reading-of-each-write-optional).
+
+What is still open on Windows:
+
+- Hook latency is over budget in 7 of 12 cases, as last measured on 2026-11-09
+  ([HOOK_LATENCY.md](../bench/HOOK_LATENCY.md#complete-follow-up-suite)).
+- Applying a library cleanup (`clean M<ID>`) is refused, because the file's folder cannot be
+  held open; the preview works.
+- Shell analysis covers Git Bash (`/c/...` paths, `.exe` names), not PowerShell or cmd.exe.
+- Contradiction checks use background workers, not a resident model server; no real NLI
+  inference has been validated on Windows.
+- Ordinary paths beyond 260 characters depend on the host's long-path setting.
+
+## History: validation before 0.5.0
+
+A dated log from 2026-11-09, on the development branch that led to 0.5.0. Failures are kept.
+
+### Phase 1 CI follow-up
 
 The [CI run for runtime 6339eef](https://github.com/chriswu727/agentdetox/actions/runs/42769544127)
 passed both Linux jobs and macOS, but Windows reported `StoreLocked` in the existing
 `test_concurrent_writers_do_not_lose_entries`: one failure, 983 passes and 39 skips.
 The eight-process test, lock timeout, snapshot implementation and store implementation were
 unchanged from `de3aefc`. This failed invocation remains evidence; no timeout or assertion was
-relaxed. A subsequent full CI run is required before merge.
+relaxed.
 
-A native reproduction attempt used an isolated source archive under the auxiliary Windows
-host's temporary folder. It could not start: the existing `C:\src\agentdetox\.venv` Python
-trampoline reported a missing child interpreter, and `uv python find` rejected a managed-runtime
-mount point. No native test result was obtained and the existing checkout was not changed.
-The earlier completed native measurements below remain historical results, not proof that the
-current SSH environment is ready. The temporary diagnostic archive contains repository code only.
+A native reproduction attempt from an isolated source archive could not start: the existing
+virtual environment's Python launcher reported a missing child interpreter, and `uv python
+find` rejected a managed-runtime mount point. No native test result was obtained from it. The
+earlier native measurements below are historical results.
 
-## Earlier native run
+### Earlier native run
 
 This is a native Windows run, not WSL and not a reinterpretation of the November 5 macOS
-results. The checkout was freshly cloned to `C:\src\agentdetox`; fetch confirmed main at
-`f2165e6` before the changes on `windows-development`. No existing checkout or Mac `uv.lock`
-was overwritten. No model dependencies or weights were installed.
+results. The checkout was freshly cloned; fetch confirmed main at `f2165e6` before the changes
+on `windows-development`. No model dependencies or weights were installed.
 
-## Host and tools
+### Host and tools
 
 - Windows 11 Pro x64, build 26200; PowerShell 7.6.5.
 - AMD Ryzen 9 9900X3D, 12 cores / 24 threads; about 32 GiB installed RAM.
 - Initial C: free space about 123 GiB; about 16 GiB RAM available.
-- Git for Windows 2.55.0 (`C:\Program Files\Git\cmd\git.exe`), Git Bash 5.3.15
-  (`C:\Program Files\Git\bin\bash.exe`), uv 0.13.6, CPython 3.12.16 managed by uv.
-- Development interpreter: `C:\src\agentdetox\.venv\Scripts\python.exe`.
-- The candidate CLI is installed through uv at `C:\Users\yichen\.local\bin\agentdetox.exe`;
-  `uv tool update-shell` added that directory to the user PATH. Open a new terminal to use it.
-  This package installation did not register real user hooks.
-- Independent Claude CLI 2.1.317 installed through WinGet; the existing desktop Code
-  process uses 2.1.321. Both independently launched executables reported no CLI login.
-  The running desktop session was separately confirmed as `entrypoint=claude-desktop`;
-  its login/session was neither removed nor reused by extracting credentials.
+- Git for Windows 2.55.0, Git Bash 5.3.15, uv 0.13.6, CPython 3.12.16 managed by uv.
+- The candidate CLI was installed through `uv tool`. This package installation did not
+  register real user hooks.
+- Independent Claude CLI 2.1.317 installed through WinGet; the desktop app used 2.1.321. The
+  separately launched CLI reported no login; the desktop app's login does not carry over.
 
-## Completed offline checks
+### Completed offline checks
 
 - `scripts/check.py`: ruff and mypy pass; **875 passed, 31 skipped** on native Windows.
   Existing OS-specific/NLI skips remain; no new skip or relaxed assertion was added.
@@ -49,8 +66,8 @@ was overwritten. No model dependencies or weights were installed.
 - `agentdetox demo`, dependency audit, release-version consistency, and both Claude manifest
   validations pass. Claude's plugin-directory advisory reports a missing optional catalog icon;
   manifest validation itself succeeds.
-- Wheel and sdist build, strict twine check, and distribution contents check pass. These are
-  local candidate 0.4.1 artifacts, not a new publication or a replacement of published 0.4.1.
+- Wheel and sdist build, strict twine check, and distribution contents check pass. These were
+  local candidate artifacts, not a publication.
 - [45-case gallery](../bench/results/accuracy-windows-2026-11-09.json): gate passes, 45 exact
   restores, 16 benign/explicit-consent controls with no false block/question/finding. Two
   declared semantic misses remain.
@@ -70,7 +87,7 @@ was overwritten. No model dependencies or weights were installed.
   reinstalling this checkout with `update.py`, verified unchanged registration and healthy doctor,
   then uninstalled without losing another user's hook/settings. Temporary homes/stores were used.
 
-## Failures retained and what changed
+### Failures retained and what changed
 
 The first test run had 870 passed, 31 skipped and one failure: the host has
 `LongPathsEnabled=0`, so a >260-character fixture could not be created. The same deep path is
@@ -93,7 +110,7 @@ bytes while requiring every other byte to remain unchanged. Both failures remain
 A newly added archive regression test caught same-timestamp collisions on Windows. Unique ids
 now supplement UTC timestamps; earlier failed lab attempts cannot be overwritten by reruns.
 
-## Performance follow-up
+### Performance follow-up
 
 The first bounded optimization avoids repeatedly attempting to create existing store
 directories, while still repairing their permissions; delays optional NLI transport imports;
@@ -138,40 +155,12 @@ The host's installed candidate CLI was updated from this wheel with the existing
 The installed executable's demo passes, and all 38 installed Python source files match both
 the checked wheel and this checkout byte-for-byte.
 
-## Real Claude usage and remaining limits
+### Limits recorded then
 
-The prior authorization was 20 real acceptance sessions, with 13 already used on November 5
-according to the retained lab reports and their accounting in `lab/README.md`. This Windows
-work has used **0 acceptance sessions**, leaving **7**. CLI version/help/auth/manifest commands
-make no model calls. Independent Claude review has also used 0 sessions.
-
-Real Windows acceptance is pending a login usable by the standalone CLI. Desktop Claude Code
-is logged in and existing project sessions work; that does not authenticate independently launched
-CLI processes. Independent desktop review has not started: selecting this new repository prompted
-for workspace trust, which is separate from login. No review request or model call was sent.
-Once the lab CLI is available, run the five selected scenarios with an explicit cap:
-
-```powershell
-.\.venv\Scripts\python.exe -X utf8 -m lab.run remember edit-instructions safety-guidance postinstall-tamper long-context-write --arms agentdetox --jobs 1 --max-sessions 5 --keep
-```
-
-Reserve the remaining two sessions for diagnosed failures; do not silently reset the budget.
-Guardrail results, hook errors, history and user task completion must be reported separately.
-The isolated wheel tests do not establish real-client delivery or sustained everyday usability.
-
-Windows shell analysis covers Git Bash, including `/c/...` paths and `.exe` names. PowerShell and
-cmd.exe write syntax is not supported. Windows NLI still uses background workers rather than a
-resident Unix-socket service; no real NLI inference was validated. Existing semantic gaps remain.
-Absolute macOS latency budgets are not Windows guarantees; native measurements are recorded
-separately in [HOOK_LATENCY.md](../bench/HOOK_LATENCY.md).
-The initial native suite passes 5/12 budgets and fails 7/12, with all concurrency evidence
-assertions passing. An alternating 100-sample-per-version startup comparison also exceeds the
-100 ms budget on both old main and the candidate (P95 193.0 / 188.4 ms). Performance work remains;
-these results do not turn the migration into a completed Windows performance acceptance.
-
-## Delivery state
-
-[PR #46](https://github.com/chriswu727/agentdetox/pull/46) is a draft while real-client
-acceptance and the latency limits above remain unresolved. No release was made. The host's
-existing real settings, login and AgentDetox history were not replaced with Mac data, and all
-hook registration/uninstallation checks so far used isolated homes and stores.
+The isolated wheel tests did not establish real-client delivery or sustained everyday
+usability. Absolute macOS latency budgets are not Windows guarantees; native measurements are
+recorded separately in [HOOK_LATENCY.md](../bench/HOOK_LATENCY.md). The initial native suite
+passed 5/12 budgets and failed 7/12, with all concurrency evidence assertions passing. An
+alternating 100-sample-per-version startup comparison also exceeded the 100 ms budget on both
+old main and the candidate (P95 193.0 / 188.4 ms). All hook registration and uninstallation
+checks used isolated homes and stores.

@@ -1,7 +1,7 @@
 # Knowledge-base scanner benchmark
 
-Historical scanner comparison measured with AgentDetox 0.1, as labelled in the table. This is
-not a new comparison of 0.4.0 or the current versions of the other tools. The scanner remains
+These are historical measurements of an earlier design, taken with AgentDetox 0.1 as labelled
+in the table, and not claims about the current version or the other tools. The scanner remains
 available; see the [current user guide](../docs/user-guide.md#also-scanning-a-rag-knowledge-base).
 
 How `agentdetox scan` and `trace` do on published RAG poisoning and injection data. For agent memory,

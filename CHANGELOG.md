@@ -10,6 +10,15 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
 - `agent scan` with nothing flagged says so in its first line and how to check writes as they
   happen; clients that are not on the machine are listed in one line instead of one each.
 - The READMEs open with two commands that need nothing installed and a picture of the demo.
+- The hint after a clean scan and at the end of `demo` names the command that installs
+  (`agentdetox install claude-code --apply`); without `--apply` it only previews.
+- Documentation brought up to 0.6.0: the roadmap lists only open work, the privacy, security
+  and architecture pages cover the model check, and the measurements quoted agree across files.
+
+### Removed
+
+- Four functions nothing called, a benchmark script from the first release that needed data
+  the repository does not hold, and result files no document refers to.
 
 ## [0.6.0] - 2026-11-12
 
@@ -24,9 +33,10 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
   `doctor`. With it on, a session start also reads what changed outside the agent, and
   `agentdetox agent inspect --judge` reads every memory, rules and skill file on request.
   What the rules refuse stays refused whatever the model says. The last 5,000 flags are kept.
-  Measured with real calls: 89 of 90 texts of the blind set and 60 of 60 written to get past a
-  model were flagged (the rules alone: about a third), with 3 of 150 short ordinary texts and
-  2 of 120 whole ordinary files. It costs a model call of two to four seconds per text and
+  Measured with real calls as shipped: 208 of 210 attack texts were flagged (89 of 90 of the
+  blind set, and 60 of 60 and 59 of 60 of two sets written to get past a model; the rules alone
+  stop about a third), with 6 of 210 short ordinary texts and 3 of 120 whole ordinary files.
+  It costs a model call of two to four seconds per text and
   sends that text to the model
   ([measurements and what they do not say](bench/ACCURACY.md#a-model-as-judge-2026-11-10)).
 - The model check says which lines: a flagged text is shown to the model once more, numbered,

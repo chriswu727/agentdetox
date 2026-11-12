@@ -1,7 +1,8 @@
 # Large memory stores: baseline and acceptance protocol
 
-This is a development protocol, not a claim that AgentDetox already supports production
-libraries of 100,000 files. The published release remains 0.4.1. A large existing library
+This is a development protocol, not a claim that AgentDetox supports production libraries of
+100,000 files. `agentdetox library` shipped in 0.5.0; the measurements below were taken on
+the development builds that led to it. A large existing library
 needs inspection as well as change tracking: its first snapshot establishes an integrity
 baseline, not a clean-content verdict.
 
@@ -29,7 +30,7 @@ capabilities. The existing hook budgets and frozen accuracy galleries remain sep
 
 ## End-to-end library harness
 
-On development `main`, `agentdetox library` implements the file inventory described below.
+`agentdetox library` (0.5.0) implements the file inventory described below.
 A second harness drives it through the library module, in one process and a temporary store:
 
 ```bash
@@ -160,27 +161,23 @@ the 100k tier; the inventory completion measurement is recorded separately above
 
 These are small-file, repeated-template fixtures on a shared development host, with no NLI or
 cleanup. The reports record exact sizes, corpus hashes and family results. They establish a
-reproducible starting point; production support still requires the following work.
+reproducible starting point.
 
-- Test 1k, 10k and 100k files with byte distributions, long individual files, many statements,
-  duplicate notes, many unrelated projects, and English/Chinese controls. Record disk usage,
-  peak RSS, CPU time, throughput and cancellation latency, not just elapsed time.
-- Initial inventory must report inspected, suspicious, uninspected and failed counts. Keep
-  existing risky content reviewable. Do not convert an initial snapshot or scan failure into
-  a clean verdict; do not flood the user with one startup interruption per historical file.
-- Run full inspection in bounded background batches with progress and cancellation. Resume
-  after interruption, distinguish queued/running/failed/stale results, and bind results to
-  content hashes. Incremental work must rescan changed bytes and reconcile deletions; file
-  timestamps alone are insufficient. Measure ordinary hooks while this work runs.
-- Evaluate write prevention, existing-content detection and reviewed cleanup separately.
-  Include split instructions, diluted and paraphrased copies, poisoned consolidation,
-  delayed use, benign security guidance, and duplicates hiding contradiction candidates.
-  Keep tuning data separate from frozen held-out cases and report semantic misses.
-- Preview selected changes, preserve unrelated and newer edits, quarantine originals, verify
-  exact results, and rescan residual content. Refuse stale or ambiguous selections. Keep the
-  current cleanup size limit until a separately validated large-file strategy exists. Do not
-  automatically delete inferred descendants or claim already-loaded agent context was erased.
-- Database and vector-store adapters need their own stable IDs, version guards, permissions,
+The inventory counts, background scans with cancellation and resumption, hash-bound results,
+hook measurements during a scan and exact-version cleanup that this list once asked for
+shipped in 0.5.0 (see the [changelog](../CHANGELOG.md)). Production support still requires:
+
+- Corpora closer to real libraries: varied byte distributions, long individual files, many
+  statements per file, duplicate notes and many unrelated projects, with English and Chinese
+  controls, and a review of false positives on a real library.
+- Separate evaluation of write prevention, existing-content detection and reviewed cleanup on
+  split instructions, diluted and paraphrased copies, poisoned consolidation, delayed use,
+  benign security guidance, and duplicates hiding contradiction candidates. Keep tuning data
+  separate from frozen held-out cases and report semantic misses.
+- Checks that need context across files (contradictions, duplicates, source attribution),
+  which a library scan does not run.
+- Applying a library cleanup on Windows, which is refused today.
+- Database and vector-store adapters, with their own stable IDs, version guards, permissions,
   pagination, deletion and recovery tests; file scanning does not establish adapter support.
 
 ## Maintainer observation

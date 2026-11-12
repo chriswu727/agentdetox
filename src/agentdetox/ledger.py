@@ -124,12 +124,6 @@ def entries(path: str | None = None, limit: int | None = None) -> list[Entry]:
     return out
 
 
-def last_version(path: str) -> str | None:
-    """The stored copy the most recent change to `path` produced."""
-    history = entries(path, limit=1)
-    return history[-1].after if history else None
-
-
 def referenced() -> set[str]:
     """Every stored copy a recorded change needs. From the old-format ledger whenever the
     database does not hold the history yet (not created, or created and never migrated)."""

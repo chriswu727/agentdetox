@@ -28,8 +28,9 @@ Nothing, unless you do one of two things:
 Up to the first 16,000 characters of each text go to the model that the `claude` command on
 your machine is logged in to, under that account and its provider's terms; a flagged text is
 sent a second time. AgentDetox has no server in between and keeps no copy of the answer beyond
-a category and the flagged lines, in `judge-flags.json` in its store. Config files are never
-sent. `agentdetox config judge off` stops it.
+a category and the flagged lines, in `judge-flags.json` in its store. A call that fails records
+up to 200 characters of the client's output in a `hook_error` event in the event log. Config
+files are never sent. `agentdetox config judge off` stops it.
 
 ## What it reads
 
@@ -55,9 +56,10 @@ Everything lives in `~/.agentdetox` (or `AGENTDETOX_HOME`), private to your user
 | `quarantine/` | Unique recovery backups and manifests; never automatically deleted |
 | `events-fallback.jsonl` | Events written while SQLite was unavailable; retained until `health acknowledge fallback` moves them to an acknowledged archive |
 | `sqlite-migrated` | Marker preventing a deleted database from silently reimporting stale legacy files |
-| `background/` | On development `main`: durable contradiction jobs containing earlier text and captured bytes, retry metadata and retained failures; private files removed after completion or retention expiry |
-| `pending/` | Legacy contradiction jobs used by 0.4.1; the development worker adopts them into `background/` |
-| `library.sqlite3`, `library.inventory` | On development `main`, only after `agentdetox library scan`: for each folder you scanned, its path and filesystem identity, every candidate file's relative path, size, content hash and state, per-folder counts of excluded files by extension, run history, and for each finding its id, rule, severity, message, an excerpt of at most 200 characters and line numbers (at most 50 findings per file), and for each finding you dismissed its id, the content hash and detector it was dismissed for, the time and your note of at most 200 characters. No file content beyond those excerpts. The marker file lets a deleted inventory be reported as lost |
+| `background/` | Since 0.5.0: durable contradiction jobs containing earlier text and captured bytes, retry metadata and retained failures; private files removed after completion or retention expiry |
+| `pending/` | Legacy contradiction jobs used by 0.4.1; the worker since 0.5.0 adopts them into `background/` |
+| `judge-flags.json` | Since 0.6.0, only when the model check has flagged something: for each of the last 5,000 flagged texts, an id derived from it, the category and up to five of its lines the model pointed at, each cut to 300 characters |
+| `library.sqlite3`, `library.inventory` | Since 0.5.0, only after `agentdetox library scan`: for each folder you scanned, its path and filesystem identity, every candidate file's relative path, size, content hash and state, per-folder counts of excluded files by extension, run history, and for each finding its id, rule, severity, message, an excerpt of at most 200 characters and line numbers (at most 50 findings per file), and for each finding you dismissed its id, the content hash and detector it was dismissed for, the time and your note of at most 200 characters. No file content beyond those excerpts. The marker file lets a deleted inventory be reported as lost |
 | `library.log`, `library.lock` | The detached scan worker's start, finish and error lines, and the lock that allows one scan at a time |
 | `config.toml`, `allowlist.json` | Your settings and the ids you allowed |
 | `daemon.log`, `*.lock`, `nli.sock` | The model server's log, locks and socket |
@@ -66,7 +68,7 @@ Unfinished shell start states expire after 24 hours at the next observed shell s
 content referenced by a start state survives GC until completion or expiry. These copies can include
 configuration secrets under the same private-store permissions as other snapshots.
 
-On development `main`, background work is attempted at most three times before being retained
+Since 0.5.0, background work is attempted at most three times before being retained
 as failed. Waiting jobs expire seven days after enqueueing, and failed jobs seven days after
 their last modification, when a worker next prunes the queue. Expired waiting jobs produce an
 event; expiry does not mean a successful check. The queue caps waiting and failed jobs together

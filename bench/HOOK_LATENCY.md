@@ -1,6 +1,30 @@
 # Hook latency
 
-## Hardening complete, 2026-11-10
+## Current
+
+The newest Mac suite ([complete report](results/hooks-0.6.0-2026-11-11.json)) passes all 12
+cases within their budgets, with 100 samples per case on macOS 15.7.4 ARM64 and Python 3.13.13.
+P95 figures: ordinary Bash pre/post 109.1 ms (budget 200 ms); startup with 1,000 unchanged files
+121.7 ms (250 ms); four protected writes plus a Bash pair 235.5 ms (1,000 ms); the Bash pair with
+1,000 active and 1,000 unrelated memory files 252.2 ms (350 ms). It was measured on the 0.6.0
+branch at `f00eedc` with uncommitted changes, before that release's last commits; the file
+records its commit as dirty, so it is not a measurement of the released build. The optional
+model check was off: its call of two to four seconds per text is not in these figures.
+
+On Windows the latest complete suite, recorded on 2026-11-09 (below), still fails 7 of 12
+budgets.
+
+Run `python -m bench.hook_latency --samples 100 --output bench/results/local.json`.
+No model, network, or subscription calls are made. Each timing includes a fresh Python process,
+CLI parsing and hook execution. Each case has one untimed warmup; P95 uses the nearest-rank
+method. File changes are prepared outside timed sections. The 100-changed-file case begins with
+10,000 entries and accumulates another 100 records per sample.
+
+## History
+
+Dated runs, newest first. Each describes the build it measured at the time.
+
+### Hardening complete, 2026-11-10
 
 The [complete report](results/hooks-hardening-final-2026-11-10.json) measures `7369419`, the
 end of the hardening branch (store, install, other clients' shell paths, rule spellings, more
@@ -13,7 +37,7 @@ this one had medians within 3 ms of each other in every case, with this one the 
 1 to 3 ms per hook. About 1 ms of that is importing the larger rules. Windows failures below
 are not addressed by this run.
 
-## Prevention hardening, 2026-11-10
+### Prevention hardening, 2026-11-10
 
 The [complete report](results/hooks-hardening-2026-11-10.json) measures `d845926`, the branch
 that rewrites the shell command reader, asks when a context write cannot be checked, compares
@@ -26,16 +50,16 @@ file names its commit and command, as every result recorded from here on does
 (`scripts/check_evidence.py` checks that, and that the figures the READMEs quote are in a
 recorded result). Windows failures below are not addressed by this run.
 
-## Cross-client disinfection, 2026-11-10
+### Cross-client disinfection, 2026-11-10
 
-The [complete report](results/hooks-clients-2026-11-10.json) measures the unreleased cross-client
-change built on `928adad`: **12/12 original budgets pass**, with 100 samples per case and no
+The [complete report](results/hooks-clients-2026-11-10.json) measures the cross-client
+change built on `928adad`, before its release in 0.5.0: **12/12 original budgets pass**, with 100 samples per case and no
 concurrent builds or test runs. Ordinary Bash pre/post P95 is 118.4 ms; startup with 1,000
 unchanged files is 125.5 ms; the many-file Bash pair is 219.5 ms. See
 [validation and limits](../docs/client-validation.md). This is not a paired comparison and
 does not resolve the Windows failures below or measure model inference or complete client startup.
 
-## Scoped triage and dynamic trust guard, 2026-11-10
+### Scoped triage and dynamic trust guard, 2026-11-10
 
 The [complete report](results/hooks-triage-2026-11-10.json) measures runtime `6d5a761` after
 version-scoped library triage and the dynamic-argument trust guard: **12/12 original budgets
@@ -45,7 +69,7 @@ plus Bash pre/post is 273.4 ms. No tests, builds or other benchmarks ran alongsi
 This is an idle-library gate, distinct from the earlier scan-load run below. It excludes
 NLI inference and complete client startup, and does not resolve the Windows failures below.
 
-## Library scan load on Mac, 2026-11-10
+### Library scan load on Mac, 2026-11-10
 
 Runtime `eae840a` passed **12/12 original budgets** with 100 samples per case both
 [idle](results/hooks-library-idle-2026-11-10.json) and
@@ -57,7 +81,7 @@ selected P95 timings and limits. These sequential Mac measurements do not establ
 performance, production-scale support, NLI inference latency or complete client startup time.
 Earlier failures below remain part of the record.
 
-## Phase 1 Mac gate, 2026-11-09
+### Phase 1 Mac gate, 2026-11-09
 
 The [complete report](results/hooks-phase1-2026-11-09.json) measures runtime `6339eef`,
 100 samples per case and the original budgets: **12/12 pass**. It includes interpreter startup,
@@ -77,7 +101,7 @@ do not include the real Claude client's complete startup or the plugin's `uvx` f
 not a paired causal comparison against an earlier build. Windows latency failures below remain
 unresolved; a Mac pass does not establish Windows performance.
 
-## Windows filesystem and import follow-up, 2026-11-09
+### Windows filesystem and import follow-up, 2026-11-09
 
 The [alternating comparison](results/hooks-windows-io-paired-2026-11-09.json) uses
 `647c081` as the pre-optimization baseline, the same CPython 3.12.16 interpreter, separate
@@ -110,7 +134,7 @@ Reproduce against a chosen baseline with:
 The earlier Windows startup-only comparison below uses a different fixture and is not a
 direct numerical baseline for this run. All earlier failures remain retained.
 
-### Complete follow-up suite
+#### Complete follow-up suite
 
 The [full rerun](results/hooks-windows-io-2026-11-09.json) uses the runtime in `4ed9336`,
 100 samples per case and the original fixture/budgets. It still **passes 5/12 and fails 7/12**.
@@ -139,7 +163,7 @@ peak process memory, sustained CPU usage and long-term store growth remain unmea
 Startup and many-file checks still need work; these bounded changes do not establish a
 completed native Windows performance acceptance.
 
-## Native Windows development measurement, 2026-11-09
+### Native Windows development measurement, 2026-11-09
 
 The [first native Windows suite](results/hooks-windows-2026-11-09.json) used Windows 11
 build 26200, Ryzen 9 9900X3D, CPython 3.12.16, 100 samples per case and the same budgets.
@@ -182,72 +206,7 @@ This points to startup/import work as a useful next investigation; it is not a v
 engine optimization or evidence that Windows antivirus should be disabled. Large-file-set I/O
 also needs separate profiling. Real-client latency and `uvx` download/startup remain unmeasured.
 
-## Earlier macOS reference measurements
-
-Latest recorded suite: [0.4.1 release candidate, 2026-11-05](#041-release-candidate-2026-11-05). These are dated reference measurements, not timings of
-every later commit or of a full Claude plugin launch. They exclude `uvx` startup and downloads.
-
-Run `python -m bench.hook_latency --samples 100 --output bench/results/local.json`.
-No model, network, or subscription calls are made. Each timing includes a fresh Python process,
-CLI parsing and hook execution. Each case has one untimed warmup; P95 uses the nearest-rank
-method. File changes are prepared outside timed sections. The 100-changed-file case begins with
-10,000 entries and accumulates another 100 records per sample.
-
-Measured on macOS 15.7.4 ARM64, Python 3.12.13, on 2026-10-30. Results are machine-specific,
-not a cross-platform latency guarantee. The raw report is [results/hooks-2026-10-30.json](results/hooks-2026-10-30.json).
-
-| Case | Samples | P50 | P95 | Budget |
-|---|---:|---:|---:|---:|
-| Ordinary Bash pre-check | 100 | 63.1 ms | 78.0 ms | 100 ms |
-| Protected Edit, 50k history entries | 100 | 62.5 ms | 73.5 ms | 120 ms |
-| Protected Write, 3,889,915-byte transcript | 100 | 145.8 ms | 155.8 ms | 200 ms |
-| Session start, 1,000 unchanged files | 100 | 178.1 ms | 209.3 ms | 250 ms |
-| Session start, 100 changed / 1,000 files, initially 10k entries | 100 | 229.5 ms | 260.5 ms | 1,000 ms |
-
-All five measured P95 budgets passed. These cases exclude optional NLI inference and initial legacy
-migration. Ordinary hooks no longer import NumPy; file history lookup uses SQLite's path index.
-
-## Development baseline: shell observation, 2026-10-30
-
-That development checkout measured Bash pre-checks with fresh agent tool-use ids and the
-complete pre/post pair. The active-memory stress case has 1,000 files belonging to
-the current project plus 1,000 unrelated files, exercising the scope boundary. Each case has 100
-samples and one untimed warmup, with NLI disabled. Raw report:
-[results/hooks-self-use-2026-10-30.json](results/hooks-self-use-2026-10-30.json).
-
-| Case | P50 | P95 | Budget |
-|---|---:|---:|---:|
-| Ordinary Bash pre-check with observation capture | 59.1 ms | 63.8 ms | 100 ms |
-| Ordinary Bash pre + post | 118.6 ms | 120.6 ms | 200 ms |
-| Protected Edit, 50k history entries | 59.3 ms | 60.8 ms | 120 ms |
-| Protected Write, 3,889,915-byte transcript | 143.0 ms | 146.9 ms | 200 ms |
-| Session start, 1,000 unchanged files | 174.2 ms | 187.4 ms | 250 ms |
-| Session start, 100 changed / 1,000 files, initially 10k entries | 219.7 ms | 227.5 ms | 1,000 ms |
-| Bash pre + post, 1,000 active memory files and 1,000 unrelated | 223.5 ms | 237.9 ms | 350 ms |
-
-All seven measured P95 budgets passed. The two full-pair budgets are new and include two Python
-processes, durable start-state capture, scoped content reads and the end comparison. These are
-reference-machine measurements; the older five-case 0.3.0 report remains a separate baseline.
-
-## 0.4.0 release candidate, 2026-11-01
-
-100 samples per case, same machine and method, NLI off. Raw report:
-[results/hooks-2026-11-01.json](results/hooks-2026-11-01.json). Session start no longer re-stores
-files whose trusted version is unchanged (their stored copies are verified in full by the daily
-cleanup instead), so it is faster than in 0.3.0 despite watching more files and re-checking each
-version before trusting it. The shell check parses more forms at no measurable cost.
-
-| Case | P50 | P95 | Budget |
-|---|---:|---:|---:|
-| Bash pre-check | 58.5 ms | 61.9 ms | 100 ms |
-| Bash pre + post | 117.6 ms | 126.3 ms | 200 ms |
-| Protected Edit, 50k history entries | 58.5 ms | 60.0 ms | 120 ms |
-| Protected Write, 3,889,915-byte transcript | 141.2 ms | 145.5 ms | 200 ms |
-| Session start, 1,000 unchanged files | 133.9 ms | 139.2 ms | 250 ms |
-| Session start, 100 changed / 1,000 files, initially 10k entries | 187.7 ms | 215.1 ms | 1,000 ms |
-| Bash pre + post, 1,000 active memory files and 1,000 unrelated | 239.6 ms | 287.4 ms | 350 ms |
-
-## 0.4.1 release candidate, 2026-11-05
+### 0.4.1 release candidate, 2026-11-05
 
 100 samples per case on macOS 15.7.4 ARM64, Python 3.12.13, with one untimed warmup.
 All twelve measured P95 budgets passed. Raw report:
@@ -311,3 +270,62 @@ ran 100 samples each for unchanged-file SessionStart and the NLI queue frontend,
 and 79.1 ms respectively, both passing. This also covers the final newline-normalization fix in
 the NLI frontend. Every scenario has a passing 100-sample measurement, while the failed full
 reruns show why these shared-machine numbers cannot promise tail latency under contention.
+
+### 0.4.0 release candidate, 2026-11-01
+
+100 samples per case, same machine and method, NLI off. Raw report:
+[results/hooks-2026-11-01.json](results/hooks-2026-11-01.json). Session start no longer re-stores
+files whose trusted version is unchanged (their stored copies are verified in full by the daily
+cleanup instead), so it is faster than in 0.3.0 despite watching more files and re-checking each
+version before trusting it. The shell check parses more forms at no measurable cost.
+
+| Case | P50 | P95 | Budget |
+|---|---:|---:|---:|
+| Bash pre-check | 58.5 ms | 61.9 ms | 100 ms |
+| Bash pre + post | 117.6 ms | 126.3 ms | 200 ms |
+| Protected Edit, 50k history entries | 58.5 ms | 60.0 ms | 120 ms |
+| Protected Write, 3,889,915-byte transcript | 141.2 ms | 145.5 ms | 200 ms |
+| Session start, 1,000 unchanged files | 133.9 ms | 139.2 ms | 250 ms |
+| Session start, 100 changed / 1,000 files, initially 10k entries | 187.7 ms | 215.1 ms | 1,000 ms |
+| Bash pre + post, 1,000 active memory files and 1,000 unrelated | 239.6 ms | 287.4 ms | 350 ms |
+
+### Earlier macOS reference measurements
+
+These are dated reference measurements, not timings of every later commit or of a full Claude
+plugin launch. They exclude `uvx` startup and downloads.
+
+Measured on macOS 15.7.4 ARM64, Python 3.12.13, on 2026-10-30. Results are machine-specific,
+not a cross-platform latency guarantee. The raw report is [results/hooks-2026-10-30.json](results/hooks-2026-10-30.json).
+
+| Case | Samples | P50 | P95 | Budget |
+|---|---:|---:|---:|---:|
+| Ordinary Bash pre-check | 100 | 63.1 ms | 78.0 ms | 100 ms |
+| Protected Edit, 50k history entries | 100 | 62.5 ms | 73.5 ms | 120 ms |
+| Protected Write, 3,889,915-byte transcript | 100 | 145.8 ms | 155.8 ms | 200 ms |
+| Session start, 1,000 unchanged files | 100 | 178.1 ms | 209.3 ms | 250 ms |
+| Session start, 100 changed / 1,000 files, initially 10k entries | 100 | 229.5 ms | 260.5 ms | 1,000 ms |
+
+All five measured P95 budgets passed. These cases exclude optional NLI inference and initial legacy
+migration. Ordinary hooks no longer import NumPy; file history lookup uses SQLite's path index.
+
+### Development baseline: shell observation, 2026-10-30
+
+That development checkout measured Bash pre-checks with fresh agent tool-use ids and the
+complete pre/post pair. The active-memory stress case has 1,000 files belonging to
+the current project plus 1,000 unrelated files, exercising the scope boundary. Each case has 100
+samples and one untimed warmup, with NLI disabled. Raw report:
+[results/hooks-self-use-2026-10-30.json](results/hooks-self-use-2026-10-30.json).
+
+| Case | P50 | P95 | Budget |
+|---|---:|---:|---:|
+| Ordinary Bash pre-check with observation capture | 59.1 ms | 63.8 ms | 100 ms |
+| Ordinary Bash pre + post | 118.6 ms | 120.6 ms | 200 ms |
+| Protected Edit, 50k history entries | 59.3 ms | 60.8 ms | 120 ms |
+| Protected Write, 3,889,915-byte transcript | 143.0 ms | 146.9 ms | 200 ms |
+| Session start, 1,000 unchanged files | 174.2 ms | 187.4 ms | 250 ms |
+| Session start, 100 changed / 1,000 files, initially 10k entries | 219.7 ms | 227.5 ms | 1,000 ms |
+| Bash pre + post, 1,000 active memory files and 1,000 unrelated | 223.5 ms | 237.9 ms | 350 ms |
+
+All seven measured P95 budgets passed. The two full-pair budgets are new and include two Python
+processes, durable start-state capture, scoped content reads and the end comparison. These are
+reference-machine measurements; the older five-case 0.3.0 report remains a separate baseline.

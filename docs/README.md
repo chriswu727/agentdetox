@@ -3,7 +3,7 @@
 AgentDetox **0.6.0** was released on 2026-11-12. English is the primary language for the README,
 user guide, policies, release notes and developer documentation. The
 [Simplified Chinese README](../README.zh-CN.md) covers installation, the review workflow and key
-limits; detailed references are maintained in English. Keep both READMEs aligned when behavior changes.
+limits; detailed references are maintained in English.
 
 ## Use AgentDetox
 
@@ -31,9 +31,9 @@ not silently refreshed to describe current code.
 | [Large-memory protocol](../bench/LARGE_MEMORY.md) | Synthetic inventory baseline, the end-to-end library harness, and scale, cleanup and observation gates |
 | [Memory benchmark v0](../bench/MEMORY_BENCHMARK.md) | Historical public-data detector comparison and synthetic transcript evaluation |
 | [Knowledge-base benchmark](../bench/KB_BENCHMARK.md) | Historical scanner comparison on public RAG data |
-| [Real-agent lab](../lab/README.md) | Protocol, authorization, costs and outcome definitions |
+| [Real-agent lab](../lab/README.md) | Protocol, authorization, costs, outcome definitions and dated runs; the [0.6.0 candidate run](../lab/README.md#060-candidate-2026-11-11) passed 9 of 12 scenarios with AgentDetox only |
 | [Cross-client disinfection](client-validation.md) | 2026-11-10 file workflows, native-client checks, latency and known gaps |
-| [Latest recorded lab run](../lab/results/latest.md) | 0.5.0 candidate, 12 Claude Code scenarios with and without AgentDetox. 23 of 24 checks passed. |
+| [Last run of both lab arms](../lab/results/latest.md) | 0.5.0 candidate, 12 Claude Code scenarios with and without AgentDetox. 23 of 24 checks passed. |
 
 ## Develop and contribute
 

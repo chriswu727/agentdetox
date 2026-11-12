@@ -1,7 +1,7 @@
 # Cross-client disinfection validation, 2026-11-10
 
-This validates the unreleased development change built on `928adad`, not the published
-0.4.1 package. Claude Code (`claude-fable-5-2`, high effort) implemented it; Codex independently
+This validates the cross-client change built on `928adad`, before it was released in 0.5.0
+(merged as `6ccc798`). Claude Code (`claude-fable-5-2`, high effort) implemented it; Codex independently
 reviewed it, added adversarial tests and ran the checks below. The
 [user guide](user-guide.md#other-agents) describes the workflow and exact coverage.
 

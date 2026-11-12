@@ -444,30 +444,6 @@ def _redirection(tokens: list[str], i: int) -> tuple[int, str | None]:
     return 2, None if posixpath.normpath(nxt).startswith("/dev/") else nxt
 
 
-def _segments(tokens: list[str]) -> list[tuple[list[str], list[str]]]:
-    """Each simple command, with the files its output redirections write."""
-    out: list[tuple[list[str], list[str]]] = []
-    words: list[str] = []
-    redirects: list[str] = []
-    i = 0
-    while i < len(tokens):
-        tok = tokens[i]
-        used, target = _redirection(tokens, i)
-        if used:
-            if target is not None:
-                redirects.append(target)
-            i += used
-            continue
-        if tok in SEGMENT_BREAKS:
-            out.append((words, redirects))
-            words, redirects = [], []
-        else:
-            words.append(tok)
-        i += 1
-    out.append((words, redirects))
-    return [(w, r) for w, r in out if w or r]
-
-
 def _options(words: list[str], i: int, values: set[str]) -> tuple[list[tuple[str, str | None]], int]:
     """The options in `words[i]` with the value each takes, and how many words they use:
     `-u root`, `-uroot`, a bundle such as `-Eu root`, `--user root` and `--user=root`."""

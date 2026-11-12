@@ -890,7 +890,7 @@ def _print_findings(findings, header: str, fmt: str, allowed: int, extra: dict, 
            "Nothing flagged by the rules.")
           + (f"; {allowed} allowed and not shown (`agentdetox allow --list`)" if allowed else ""))
     if not shown and found is not None:
-        print("This checks the files as they are now. To check writes as they happen: `agentdetox install claude-code`.")
+        print("This checks the files as they are now. To check writes as they happen: `agentdetox install claude-code --apply`.")
     if shown:
         print("To review and remove flagged lines: `agentdetox agent inspect` records them as review items for "
               "`agentdetox clean`.\nFalse positive? `agentdetox allow <id>` stops it being reported.")

@@ -222,13 +222,6 @@ PLUGIN = "agentdetox"
 OWN_PLUGIN = "agentdetox@agentdetox"
 
 
-def claude_code_plugin(project: Path) -> str | None:
-    """The id of the AgentDetox plugin if Claude Code has it enabled for this project and it
-    is installed. Its hooks run in addition to any in settings: Claude Code does not merge
-    the two."""
-    return plugin_state(project)[0]
-
-
 def plugin_state(project: Path) -> tuple[str | None, str]:
     """(the plugin's id when its hooks can be counted on, what is wrong otherwise or besides).
 
