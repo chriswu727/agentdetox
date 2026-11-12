@@ -112,8 +112,12 @@ def remembered(flag_id: str) -> Opinion | None:
         flags = json.loads(_flags().read_text(encoding="utf-8"))
     except (OSError, ValueError, RecursionError):
         return None
-    kept = flags.get(flag_id) if isinstance(flags, dict) else None
-    # A category alone is how 0.5 development builds kept a flag.
+    return _kept(flags.get(flag_id)) if isinstance(flags, dict) else None
+
+
+def _kept(kept: object) -> Opinion | None:
+    """The flag a store entry holds, or None for an entry that is not one."""
+    # A category alone is how development builds kept a flag.
     category, lines = kept if isinstance(kept, list) and len(kept) == 2 else (kept, [])
     if not isinstance(category, str) or (category not in CATEGORIES and category != ""):
         return None
@@ -127,7 +131,10 @@ def remember(flag_id: str, said: Opinion) -> None:
             flags = json.loads(_flags().read_text(encoding="utf-8"))
         except (OSError, ValueError, RecursionError):
             flags = {}
-        flags = {key: value for key, value in (flags if isinstance(flags, dict) else {}).items() if key != flag_id}
+        # Entries that are not flags are dropped: a store someone filled with something else
+        # would otherwise be written back as it is, or fail to be.
+        flags = {key: value for key, value in (flags if isinstance(flags, dict) else {}).items()
+                 if key != flag_id and _kept(value) is not None}
         flags[flag_id] = [said.category, list(said.lines)]
         kept = dict(list(flags.items())[-REMEMBERED:])
         tmp = private_dir(store_dir()) / "judge-flags.json.tmp"
