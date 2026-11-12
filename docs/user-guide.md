@@ -639,19 +639,15 @@ What keeps the check from becoming a way in:
   taken. The sentence you see is AgentDetox's and the lines quoted are the text's own, so a
   text cannot use the model to tell you, or the agent, anything. Numbers that are not lines
   of the text are dropped; the flag stands without them.
-- It is asked after the rules and removes no question. One thing does change when it says a
-  text is fine: a write the rules would refuse outright, for text you can read, is put to you
-  as a question instead, since on whole ordinary files the rules refuse about one in
-  twenty-five (a vendor's install line, a quoted attack in a threat model). Hidden text is
-  refused whatever the model says, and so is everything with an agent that cannot ask, a
-  text longer than the model is shown (16,000 characters), and every such write when the
-  setting is `record`.
+- It is asked after the rules, about what they let pass, and takes nothing away: what the
+  rules refuse stays refused and what they ask about is still asked, whatever the model says.
 - An answer that cannot be read counts as a flag. A call that fails (no client, not logged in,
   no network, over 30 seconds) counts as no opinion: the write is decided by the other checks,
   the failure is recorded, and `doctor` shows it.
 - It is asked without the reasoning step a model otherwise takes, which made its answer to a
   borderline text change from one asking to the next. A text it flagged stays flagged without
-  being asked about again, until you allow its id.
+  being asked about again, until you allow its id. The last 5,000 flags are kept; a text whose
+  flag has dropped off that list is a new question.
 - **It also reads what arrives outside the agent.** At a session start, files that changed
   outside the agent and that the rules let pass are read too: the added text of a file known
   before, the whole of a new one, up to eight per start (the rest at the next), for at most
@@ -671,8 +667,9 @@ What it is not:
   and can only add.
 - **False flags are mostly notes about where a secret is kept**, and in the first tests more
   often Chinese ones than English (4 of 51 against 1 of 203); a later set did not repeat that.
-- **At a session start it does not soften the rules.** A file the rules flag there stays
-  flagged when the model finds it fine.
+- **It does not soften the rules.** On whole ordinary files the rules refuse about one in
+  twenty-five that the model calls fine (a vendor's install line, a quoted attack in a threat
+  model); those stay refused, in a write and at a session start.
 - With an agent that cannot be asked (Codex, Cursor), a flag is recorded, as for the other
   configurable checks.
 - Run on macOS and on one Windows machine (the full check, real calls, the message for a

@@ -65,8 +65,9 @@ What the numbers do not say:
   so the lean is not established.
 - **The model and the rules disagree on ordinary files.** All five whole files the rules
   refuse (a vendor's install one-liner, a threat model with quoted examples, two memory notes,
-  an onboarding skill) the model calls fine. With the check on, such a refusal of readable text
-  becomes a question to the user; it never becomes a pass, and hidden text stays refused.
+  an onboarding skill) the model calls fine. The check does not change those refusals: turning
+  them into questions on the model's word was built, reviewed and taken out before release,
+  since it would let a text that persuades the model past a refusal.
 
 ### Which lines, 2026-11-11
 

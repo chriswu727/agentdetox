@@ -52,14 +52,12 @@ from .provenance import (
 # What a signal is about. The last three are also the names of the user's settings.
 PLANTED = "planted"          # a clear-cut planted instruction
 USER_WRITTEN = "user-written"  # the same, in text the user typed or pasted themselves
-DISPUTED = "disputed"        # the same, in text a model read and found nothing against
 OWN_STATE = "own-state"      # a change to AgentDetox's own settings, allowlist or snapshots
 GUARDRAILS = "guardrails"    # an agent changing its own hooks, MCP servers or permissions
 SHELL_WRITE = "shell-write"  # a shell command writing agent context past the write check
 DELETION = "deletion"        # an edit tool removing a memory, rules or skill file
 UNREAD = "unread"            # a write to agent context whose content could not be worked out
 SUSPICIOUS, COPIED, CONTRADICTION, JUDGE = "suspicious", "copied", "contradiction", "judge"
-SOFTEN = "judge-softens"     # with the model check asking, not just recording: its "fine" may turn a refusal into a question
 
 
 @dataclass
@@ -128,12 +126,7 @@ def check_write(write: Write, project: Path, run: set[str], transcript: str | No
     added = _added_text(old, new)
     findings = allowlist.unsuppressed(scan_text(str(path), str(path), added, cf.kind))
     if _worst(findings) == "high":
-        signal = _planted(cf, findings, recent())
-        if signal.check == PLANTED and SOFTEN in run and _model_finds_nothing(cf, added, findings):
-            return [Signal(DISPUTED, _reason(cf, findings, "flagged") + " A model read the same text and found "
-                                     "nothing against it, so you are asked, not refused; approve only if you "
-                                     "expected this text.", signal.flags)]
-        return [signal]
+        return [_planted(cf, findings, recent())]
     signals = []
     medium = [f for f in findings if f.severity == "medium"]
     if medium and SUSPICIOUS in run:
@@ -157,32 +150,6 @@ def check_write(write: Write, project: Path, run: set[str], transcript: str | No
         signals.append(Signal(UNREAD, f"AgentDetox: only the text this write adds to the agent's {cf.kind} file "
                                       f"{short_path(str(path))} was checked, not the result: {printable(write.unknown)}."))
     return signals
-
-
-# Rules whose match is text a person can read. What they flag in an ordinary file (a vendor's
-# install line, a quoted attack in a threat model) a refusal gets wrong; hidden text is never
-# up for discussion, since nobody approving it could see it.
-_READABLE = {"persistence", "injection-phrase"}
-
-
-def _model_finds_nothing(cf: ContextFile, added: str, findings: list[Finding]) -> bool:
-    """Whether the model check, being on, reads the text the rules would refuse and says it
-    is fine. Then the refusal becomes a question: the model still removes no question, and an
-    agent that cannot ask still refuses. A text it flagged before, or gives no opinion on, stays refused."""
-    # Any finding about text a reader would not see, and any text longer than the model is
-    # shown, leaves the refusal as it is: the model's "fine" would be about something else.
-    if any(f.detector not in _READABLE for f in findings if f.severity != "low") or not added.strip() or len(added) > judge.LIMIT:
-        return False
-    own = Finding(str(cf.path), str(cf.path), "judge", "medium", "a model read this text as one that would turn "
-                  "the agent against you", anchor=added)
-    if judge.remembered(finding_flag(own).id) is not None:
-        return False
-    said = judge.opinion(added, cf.kind, point=False)    # refused either way: the rules name the line
-    if said.flag is None:
-        events.record("hook_error", stage="judge", error=said.error[:300])
-    elif said.flag:
-        judge.remember(finding_flag(own).id, said)
-    return said.flag is False
 
 
 def _judged(cf: ContextFile, added: str) -> list[Signal]:

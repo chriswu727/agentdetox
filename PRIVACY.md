@@ -1,17 +1,35 @@
 # Privacy
 
-AgentDetox runs on your machine and sends nothing anywhere. It has no telemetry, no account and
-no server.
+AgentDetox runs on your machine. It has no telemetry, no account and no server, and as
+installed it sends nothing anywhere. One optional check, off unless you turn it on, sends file
+text to a model through your own Claude Code; see "What the optional model check sends".
 
 ## Network access
 
-Hooks and checks make no network calls. Three commands download software, and only when you
+Hooks and checks make no network calls of their own; the optional model check, described
+below, has your Claude Code make one. Three commands download software, and only when you
 choose them:
 
 - `agentdetox fetch-models` downloads the contradiction model from Hugging Face.
 - `scan` with the `st` extra downloads its embedding model from Hugging Face on first use.
 - The Claude Code plugin, when no `agentdetox` command is installed, runs its pinned release
   through `uvx`, which downloads it from PyPI.
+
+## What the optional model check sends
+
+Nothing, unless you do one of two things:
+
+- `agentdetox config judge ask` or `record`: from then on, the text each write adds to the
+  agent's memory, rules and skill files is sent, and at a session start the added text (or the
+  whole, for a new file) of up to eight such files that changed outside the agent.
+- `agentdetox agent inspect --judge`: the whole text of every memory, rules and skill file in
+  scope is sent, one call per file, whatever the setting says.
+
+Up to the first 16,000 characters of each text go to the model that the `claude` command on
+your machine is logged in to, under that account and its provider's terms; a flagged text is
+sent a second time. AgentDetox has no server in between and keeps no copy of the answer beyond
+a category and the flagged lines, in `judge-flags.json` in its store. Config files are never
+sent. `agentdetox config judge off` stops it.
 
 ## What it reads
 

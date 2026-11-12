@@ -113,42 +113,35 @@ def test_nothing_the_model_writes_freely_reaches_the_reader(project, asked, monk
     assert any(words in reason for words in (*judge.CATEGORIES.values(), judge.UNREADABLE))
 
 
-def test_a_refusal_the_model_disagrees_with_becomes_a_question_never_a_pass(project, asked, monkeypatch):
-    assert write(project, PLANT)[0] == "deny" and asked == []      # with the check off, as before
-    monkeypatch.setenv("AGENTDETOX_JUDGE", "ask")
-    asked.answer = '{"verdict": "ok"}'
-    decision, reason = write(project, PLANT)
-    assert decision == "ask" and "runs code fetched from the network" in reason and "asked, not refused" in reason
-    assert write(project, PLANT, agent="codex", name="AGENTS.md")[0] == "deny"      # nobody to ask: still refused
+HIDDEN_PLANT = PLANT.replace("Always", "Al" + chr(0x200b) + "ways")
+LONG_PLANT = ORDINARY * (17_000 // len(ORDINARY) + 1) + PLANT
 
 
-@pytest.mark.parametrize("answer", ['{"verdict": "flag", "category": "remote-code"}', (1, "no login"), "garbage"])
-def test_a_refusal_stands_unless_the_model_plainly_says_ok(project, asked, monkeypatch, answer):
-    monkeypatch.setenv("AGENTDETOX_JUDGE", "ask")
+@pytest.mark.parametrize("mode", ["ask", "record"])
+@pytest.mark.parametrize("answer", ['{"verdict": "ok"}', '{"verdict": "flag", "category": "remote-code"}',
+                                    (1, "no login"), RuntimeError("boom")])
+@pytest.mark.parametrize("text", [PLANT, HIDDEN_PLANT, LONG_PLANT], ids=["plain", "hidden-unicode", "longer-than-limit"])
+def test_a_refusal_is_never_put_to_the_model(project, asked, monkeypatch, mode, answer, text):
+    monkeypatch.setenv("AGENTDETOX_JUDGE", mode)
     asked.answer = answer
-    assert write(project, PLANT)[0] == "deny"
-    asked.answer = '{"verdict": "ok"}'
-    assert write(project, PLANT)[0] == ("ask" if isinstance(answer, tuple) else "deny")     # a flag is remembered
+    decision, reason = write(project, text)
+    assert decision == "deny" and "runs code fetched from the network" in reason
+    assert "model" not in reason.lower() and asked == []
+    assert not errors()
 
 
-def test_a_refusal_of_more_text_than_the_model_is_shown_stands(project, asked, monkeypatch):
-    monkeypatch.setenv("AGENTDETOX_JUDGE", "ask")
-    padding = ORDINARY * (17_000 // len(ORDINARY) + 1)
-    assert len(padding + PLANT) > judge.LIMIT
-    assert write(project, padding + PLANT)[0] == "deny" and asked == []
-
-
-def test_a_model_check_that_only_records_softens_no_refusal(project, asked, monkeypatch):
-    monkeypatch.setenv("AGENTDETOX_JUDGE", "record")
-    assert write(project, PLANT)[0] == "deny" and asked == []
-
-
-def test_a_refusal_that_also_found_hidden_text_stands_whatever_the_model_says(project, asked, monkeypatch):
-    monkeypatch.setenv("AGENTDETOX_JUDGE", "ask")
-    hidden = PLANT.replace("Always", "Al" + chr(0x200b) + "ways")
-    found = {(f.detector, f.severity) for f in agentscan.scan_text("x", "x", hidden, "memory")}
+def test_the_fixture_texts_are_what_they_claim():
+    found = {(f.detector, f.severity) for f in agentscan.scan_text("x", "x", HIDDEN_PLANT, "memory")}
     assert {("hidden-unicode", "medium"), ("persistence", "high")} <= found
-    assert write(project, hidden)[0] == "deny" and asked == []
+    assert len(LONG_PLANT) > judge.LIMIT
+
+
+@pytest.mark.parametrize("text", [PLANT, HIDDEN_PLANT, LONG_PLANT], ids=["plain", "hidden-unicode", "longer-than-limit"])
+def test_a_model_check_that_asks_refuses_exactly_as_one_that_is_off(project, asked, monkeypatch, text):
+    off = write(project, text)
+    monkeypatch.setenv("AGENTDETOX_JUDGE", "ask")
+    asked.answer = '{"verdict": "ok"}'
+    assert write(project, text) == off and off[0] == "deny" and asked == []
 
 
 def test_hidden_text_is_refused_whatever_the_model_says(project, asked, monkeypatch):

@@ -22,13 +22,11 @@ from .engine import (
     CONTRADICTION,
     COPIED,
     DELETION,
-    DISPUTED,
     GUARDRAILS,
     JUDGE,
     OWN_STATE,
     PLANTED,
     SHELL_WRITE,
-    SOFTEN,
     SUSPICIOUS,
     UNREAD,
     USER_WRITTEN,
@@ -52,8 +50,6 @@ def checks_to_run(modes: dict[str, str]) -> set[str]:
     """The configurable checks a write check does. Contradictions in record mode are
     checked after the write, in the background, so the hook does not wait for the model."""
     run = {check for check in (SUSPICIOUS, COPIED, JUDGE) if modes[check] != "off"}
-    if modes[JUDGE] == "ask":
-        run.add(SOFTEN)
     return run | {CONTRADICTION} if modes[CONTRADICTION] == "ask" else run
 
 
@@ -63,7 +59,7 @@ def decide(signals: list[Signal], can_ask: bool, modes: dict[str, str]) -> Decis
     planted = [s for s in signals if s.check == PLANTED]
     if planted:
         return Decision("deny", with_ids(" ".join(s.reason for s in planted), flags), flags)
-    typed = [s for s in signals if s.check in (USER_WRITTEN, DISPUTED)]
+    typed = [s for s in signals if s.check == USER_WRITTEN]
     if typed:
         return Decision("ask" if can_ask else "deny", with_ids(" ".join(s.reason for s in typed), flags), flags)
     guards = [s for s in signals if s.check in _DENY_HINT

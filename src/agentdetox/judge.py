@@ -13,15 +13,16 @@ What keeps the question from becoming a way in:
 - The text is handed over as data, and the only answer taken is one of a few fixed words.
   Nothing the model writes freely reaches the user or the agent, so a text cannot use the
   judge to say something to them.
-- It never takes a question away. It is asked after the rules, and the most its "fine" can
-  do is turn their refusal of readable text into a question. An answer that cannot be read counts as a flag. A call
+- It never takes a question or a refusal away. It is asked after the rules, about what
+  they let pass, and its "fine" changes nothing. An answer that cannot be read counts as a flag. A call
   that fails (no client, no login, no network, too slow) counts as no opinion and is
   recorded, so `doctor` shows it.
 - It is asked without the reasoning a model otherwise does before it answers. With it, the
   same text got different answers from one asking to the next (an attack flagged twice in
   ten, an ordinary note five times), so a write could be tried again until the answer came
   out right. Without it the answers hardly vary, and come in half the time.
-- A text it has flagged stays flagged all the same, without being asked about again.
+- A text it has flagged stays flagged all the same, without being asked about again, for
+  as long as the flag is among the last few thousand kept (`REMEMBERED`).
 - Which lines of a flagged text carry the flag is a second question, put the same way, and
   only numbers are taken from the answer. What is quoted is the text's own line.
 """
@@ -163,16 +164,16 @@ def logged_in() -> bool | None:
     return said.get("loggedIn") if isinstance(said, dict) and isinstance(said.get("loggedIn"), bool) else None
 
 
-def opinion(text: str, kind: str, timeout: float = TIMEOUT, point: bool = True) -> Opinion:
-    """What the model makes of `text`, which is or is about to be in a file of `kind`, and,
-    with `point`, which lines of a text it flags it points at."""
+def opinion(text: str, kind: str, timeout: float = TIMEOUT) -> Opinion:
+    """What the model makes of `text`, which is or is about to be in a file of `kind`, and
+    which lines of a text it flags it points at."""
     try:
-        return _opinion(text, kind, timeout, point)
+        return _opinion(text, kind, timeout)
     except Exception as error:      # noqa: BLE001 - whatever goes wrong in asking is no opinion, never a way past the caller
         return Opinion(None, error=f"{type(error).__name__}: {str(error)[:200]}")
 
 
-def _opinion(text: str, kind: str, timeout: float, point: bool) -> Opinion:
+def _opinion(text: str, kind: str, timeout: float) -> Opinion:
     client = program()
     if client is None:
         return Opinion(None, error="Claude Code was not found (the `claude` command)")
@@ -185,7 +186,7 @@ def _opinion(text: str, kind: str, timeout: float, point: bool) -> Opinion:
         return Opinion(None, error=error)
     said = _read(answer)
     left = min(POINT_WAIT, timeout - (time.monotonic() - started))
-    if point and said.flag and said.category and left >= 1:
+    if said.flag and said.category and left >= 1:
         said.lines = _lines(client, shown, said.category, left)
     return said
 

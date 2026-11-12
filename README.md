@@ -182,7 +182,9 @@ whose 1k/10k/100k tiers are not current production-support guarantees.
 
 ### Local processing, sensitive history
 
-Hooks and checks make no network calls. There is no telemetry or account. Installation, the
+Hooks and checks make no network calls, with one exception you have to turn on: the optional
+model check (`config judge`, or `agent inspect --judge`) sends the text it reads to a model
+through your Claude Code. There is no telemetry or account. Installation, the
 plugin's `uvx` fallback and optional model downloads need network access. File copies and source
 evidence stay in `~/.agentdetox`; copies of config files can contain secrets. Back up the entire
 store, including `objects/`, and review retention before deleting history.
