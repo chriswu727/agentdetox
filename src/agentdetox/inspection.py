@@ -161,22 +161,25 @@ def coverage(found: Survey) -> list[dict]:
 
 def render_coverage(found: Survey, short=str) -> list[str]:
     """Which folders were looked in for each client, and what was not looked at."""
+    present = [c for c in found.clients if c.files or any(r["exists"] for r in c.roots if r["scope"] == "user")]
     lines = ["Looked in:"]
-    for c in found.clients:
+    for c in present:
         roots = ", ".join(f"{short(r['path'])}" + ("" if r["source"] in ("default", "default location", "project")
                                                   else f" ({r['source']})")
                           + ("" if r["exists"] else " [not present]") for r in c.roots)
         label = c.agent + ("" if c.verified else " (unverified)")
         lines.append(f"  {label:<24} {c.files} file(s) · {roots}")
+    missing = [c.agent + ("" if c.verified else " (unverified)") for c in found.clients if c not in present]
+    if missing:
+        lines.append(f"  not found on this machine: {', '.join(missing)}")
     if found.problems:
         lines.append("Not resolved (these were asked for and could not be looked at):")
         lines += [f"  {problem}" for problem in found.problems]
-    present = [c for c in found.clients if c.files or any(r["exists"] for r in c.roots if r["scope"] == "user")]
     limits = [f"  {c.agent}: {limit}" for c in present for limit in c.limits]
     absent = [c.agent for c in found.clients if c not in present and c.limits]
     if limits or absent:
         lines.append("Not covered by any file check:")
         lines += limits
     if absent:
-        lines.append(f"  ({', '.join(absent)}: not found on this machine; `--format json` lists the limits of each)")
+        lines.append("  (`--format json` lists the limits of the clients not found on this machine)")
     return lines

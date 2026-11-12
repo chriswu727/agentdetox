@@ -3,6 +3,14 @@
 Notable changes to AgentDetox. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 before 1.0, a minor version may change commands, settings or the snapshot store.
 
+## [Unreleased]
+
+### Changed
+
+- `agent scan` with nothing flagged says so in its first line and how to check writes as they
+  happen; clients that are not on the machine are listed in one line instead of one each.
+- The READMEs open with two commands that need nothing installed and a picture of the demo.
+
 ## [0.6.0] - 2026-11-12
 
 ### Added
