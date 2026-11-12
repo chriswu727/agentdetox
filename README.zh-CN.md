@@ -22,17 +22,33 @@
 ---
 
 网页里的投毒内容可能成为明天的记忆。依赖的安装脚本也可能在智能体执行任务时修改 `CLAUDE.md`。
-AgentDetox 检查持久上下文的写入，记录变更及来源证据，让你查看差异并恢复先前版本。
+写进记忆、规则或技能的内容，之后每个会话都会被照做。AgentDetox 检查这些持久上下文的写入，
+记录变更及来源证据，让你只删掉选中的新增行，或恢复先前版本，两种操作都会先备份。
+
+**十秒试用，无需安装**（需要 [uv](https://docs.astral.sh/uv/)）：
+
+```bash
+uvx agentdetox demo          # 在临时目录里看一次攻击被拦截、被发现、被撤销
+uvx agentdetox agent scan    # 只读：检查你的智能体已有的记忆、规则和技能
+```
+
+<p align="center">
+<img src="https://raw.githubusercontent.com/chriswu727/agentdetox/main/assets/demo.svg" alt="agentdetox demo 的节选输出：一次会执行网络下载代码的记忆写入被拦截；安装脚本对 CLAUDE.md 的修改被发现；文件恢复到先前版本，被篡改的副本保留在隔离区" width="880">
+</p>
+
+- **预防：**写入记忆、规则或技能的内容如果匹配已知攻击，在落盘前被拒绝；从智能体刚读过的网页或文件里照抄来的文本会先询问你。
+- **检测：**智能体之外发生的修改（安装脚本、其他工具）会在 shell 工具结束后和下次会话开始时被发现。
+- **清理：**查看差异和文本来源，只删除你选中的行，或恢复先前版本。任何删除都会先备份。清理改的是文件，
+  不影响正在运行的会话已经读入的内容：清理后请开启新会话。
+- **可选，默认关闭：**让一个小模型判断每次写入会让智能体做什么。在不参照规则写出的攻击文本上，
+  它标记了 210 条中的 208 条，而规则本身只能拦住约三分之一
+  （[测量与限制（英文）](bench/ACCURACY.md#a-model-as-judge-2026-11-10)）。
 
 **0.6.0 已发布**至 [PyPI](https://pypi.org/project/agentdetox/0.6.0/) 和
 [GitHub](https://github.com/chriswu727/agentdetox/releases/tag/v0.6.0)。项目仍处于**预览阶段**：
-Claude Code 是受支持的集成，Codex 和 Cursor 钩子属于实验功能；OpenClaw 没有自己的钩子，写入时不会被实时检查，
-其文件可通过命令行检查，也会在其他客户端的会话开始时被比对。
-开发环境支持原生 Windows（Python 3.12 + Git Bash）以及 macOS/Linux。
-Windows 已完成安装包生命周期的本机离线验证；真实客户端验收和长期日常使用验证分别记录，
-详见 [Windows 验证记录](docs/windows-validation.md)。
-原生 Windows 的延迟实测仍有多项超出既定预算；[性能记录](bench/HOOK_LATENCY.md)
-保留失败数据和优化前后的交替对照结果。
+Claude Code 是受支持的集成，Codex 和 Cursor 钩子属于实验功能；OpenClaw 的文件可通过命令行检查。
+支持 macOS、Linux 和原生 Windows（[各平台与客户端的状态（英文）](docs/user-guide.md#other-agents)）。
+它是一层检查与恢复，不是安全边界。
 
 <p align="center">
 <picture>
@@ -44,11 +60,6 @@ Windows 已完成安装包生命周期的本机离线验证；真实客户端验
 ## 快速开始
 
 需要 **Python 3.11+**。使用 [uv](https://docs.astral.sh/uv/) 或 `pipx` 安装：
-
-Windows 上请安装 Git for Windows，供 Claude 的 Bash 工具使用。下面的 CLI 命令可以从
-PowerShell 启动，但 AgentDetox 的 shell 写入分析支持 Git Bash 语法，尚不支持 PowerShell/cmd.exe
-语法。Windows 的可选 NLI 使用后台 worker，没有常驻模型服务。
-原生 Windows 开发命令见 [贡献指南](CONTRIBUTING.md#setup-and-checks)。
 
 ```bash
 uv tool install agentdetox
@@ -92,6 +103,13 @@ agentdetox install claude-code --apply
 agentdetox doctor
 agentdetox status
 ```
+
+Windows 上请安装 Git for Windows，供 Claude 的 Bash 工具使用。下面的 CLI 命令可以从
+PowerShell 启动，但 AgentDetox 的 shell 写入分析支持 Git Bash 语法，尚不支持 PowerShell/cmd.exe
+语法。Windows 的可选 NLI 使用后台 worker，没有常驻模型服务。
+原生 Windows 开发命令见 [贡献指南](CONTRIBUTING.md#setup-and-checks)。
+Windows 已完成安装包生命周期的本机离线验证；原生 Windows 的延迟实测仍有多项超出既定预算
+（[Windows 验证记录](docs/windows-validation.md)、[性能记录](bench/HOOK_LATENCY.md)）。
 
 `doctor` 会报告缺失、过时或重复的钩子。首次会话先扫描已有上下文，再记录恢复检查点。
 [完整安装、升级与卸载说明（英文）→](docs/user-guide.md#install)

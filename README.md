@@ -22,36 +22,44 @@ Protection for the memory, instructions, skills and config your coding agent tru
 ---
 
 A poisoned page can become tomorrow's memory. An install script can change `CLAUDE.md` while
-your agent is busy elsewhere. AgentDetox checks writes to persistent context, records changes
-with source evidence, and lets you remove selected added lines or restore an earlier version,
-with a backup either way. A cleanup changes the file, not what a running session has already read:
-start a new session in that client afterwards.
+your agent is busy elsewhere. Whatever lands in memory, rules or skills is obeyed in every later
+session. AgentDetox checks writes to that persistent context, records changes with source
+evidence, and lets you remove selected added lines or restore an earlier version, with a backup
+either way.
 
-**0.6.0 is published** on [PyPI](https://pypi.org/project/agentdetox/0.6.0/) and
-[GitHub](https://github.com/chriswu727/agentdetox/releases/tag/v0.6.0).
-The project is in **preview**: Claude Code is supported; Codex and Cursor hooks are experimental;
-OpenClaw has no hook of its own, so nothing is checked as it writes; its files are checked from the command
-line and at the session start of the other clients. Development supports native Windows with Python 3.12 and
-Git Bash, alongside macOS/Linux. Windows offline validation covers the installed-wheel lifecycle;
-real-client and sustained daily-use validation remain separate. See [Windows evidence](docs/windows-validation.md).
-Native Windows latency measurements still exceed several existing budgets; the
-[performance record](bench/HOOK_LATENCY.md) retains failures and paired optimization results.
+**Try it in ten seconds, with nothing installed** (needs [uv](https://docs.astral.sh/uv/)):
+
+```bash
+uvx agentdetox demo          # an attack is blocked, noticed and undone, in a throwaway folder
+uvx agentdetox agent scan    # read-only: check the memory, rules and skills your agents already have
+```
 
 <p align="center">
-<picture>
-<source media="(max-width: 600px)" srcset="https://raw.githubusercontent.com/chriswu727/agentdetox/main/assets/workflow-mobile.svg">
-<img src="https://raw.githubusercontent.com/chriswu727/agentdetox/main/assets/workflow.svg" alt="Check planned writes; notice context changes; review diffs and source evidence; restore an earlier version with a backup" width="880">
-</picture>
+<img src="https://raw.githubusercontent.com/chriswu727/agentdetox/main/assets/demo.svg" alt="Abridged output of agentdetox demo: a write to memory that runs code fetched from the network is blocked; an install script's change to CLAUDE.md is noticed; the earlier version is restored and the tampered copy kept in quarantine" width="880">
 </p>
+
+- **Prevent:** a write to memory, rules or skills that matches a known attack is refused before
+  it lands; text copied from a page or file the agent just read is asked about.
+- **Detect:** changes made outside the agent (an install script, another tool) are noticed after
+  the shell tool and at the next session start.
+- **Clean up:** review the diff and where the text came from, remove only the lines you choose,
+  or restore the earlier version. Nothing is deleted without a backup. A cleanup changes
+  the file, not what a running session has already read: start a new session afterwards.
+- **Optional, off by default:** a small model reads each write for what it would make the agent
+  do. On attack texts written without sight of the rules it flagged 208 of 210, where the rules
+  alone stop about a third
+  ([measurements and limits](https://github.com/chriswu727/agentdetox/blob/main/bench/ACCURACY.md#a-model-as-judge-2026-11-10)).
+
+**0.6.0 is published** on [PyPI](https://pypi.org/project/agentdetox/0.6.0/) and
+[GitHub](https://github.com/chriswu727/agentdetox/releases/tag/v0.6.0). The project is in
+**preview**: Claude Code is supported; Codex and Cursor hooks are experimental; OpenClaw files
+are checked from the command line. macOS, Linux and native Windows
+([status by platform and client](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#other-agents)).
+It is a layer of checks and recovery, [not a security boundary](#evidence-and-limits).
 
 ## Quick start
 
 Requires **Python 3.11+**. Install with [uv](https://docs.astral.sh/uv/) or `pipx`:
-
-On Windows, install Git for Windows for Claude's Bash tool. PowerShell can launch these CLI
-commands, but AgentDetox's shell-write analysis supports Git Bash syntax; PowerShell/cmd.exe
-syntax is not supported. Windows uses background NLI workers, without a resident model server.
-Native development commands are in [CONTRIBUTING.md](CONTRIBUTING.md#setup-and-checks).
 
 ```bash
 uv tool install agentdetox
@@ -97,10 +105,25 @@ agentdetox doctor
 agentdetox status
 ```
 
+On Windows, install Git for Windows for Claude's Bash tool. PowerShell can launch these CLI
+commands, but AgentDetox's shell-write analysis supports Git Bash syntax; PowerShell/cmd.exe
+syntax is not supported. Windows uses background NLI workers, without a resident model server.
+Native development commands are in [CONTRIBUTING.md](CONTRIBUTING.md#setup-and-checks).
+Windows offline validation covers the installed-wheel lifecycle; native Windows latency still
+exceeds several budgets ([Windows evidence](docs/windows-validation.md),
+[performance record](bench/HOOK_LATENCY.md)).
+
 `doctor` reports missing, outdated or duplicate hooks. The first session scans existing context
 before recording recovery checkpoints. [Installation, upgrades and removal →](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#install)
 
 ## How it works
+
+<p align="center">
+<picture>
+<source media="(max-width: 600px)" srcset="https://raw.githubusercontent.com/chriswu727/agentdetox/main/assets/workflow-mobile.svg">
+<img src="https://raw.githubusercontent.com/chriswu727/agentdetox/main/assets/workflow.svg" alt="Check planned writes; notice context changes; review diffs and source evidence; restore an earlier version with a backup" width="880">
+</picture>
+</p>
 
 1. **Before a write:** check planned Write/Edit content and recognized shell writes. High-risk
    rule matches are denied; flagged text you supplied yourself asks instead, except hidden text. Changes to hooks,
