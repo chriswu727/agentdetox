@@ -30,13 +30,15 @@ or add the same hooks to your settings directly:
 agentdetox install claude-code --apply    # registers hooks in ~/.claude/settings.json, backed up first
 ```
 
-Restart Claude Code to load the hooks. Use one route, not both: `install` declines when the plugin
-is enabled and installed, and `agentdetox doctor` warns if the hooks are registered twice. The
-plugin counts only as AgentDetox's own (`agentdetox@agentdetox`) and only when Claude Code's record
-of installed plugins has it: an `enabledPlugins` entry alone, which a project's settings can
-carry, runs no hooks, and `doctor` then reports the hooks as not installed. The plugin runs the
-`agentdetox` you installed; without one it runs its own release through `uvx`, and with neither it
-says so at session start instead of failing on every tool call.
+Restart Claude Code to load the hooks. Use one route, not both; `agentdetox doctor` warns if both
+are registered ([how the two routes are told apart](#plugin-or-direct-hooks)).
+
+On Windows, install Git for Windows for Claude's Bash tool. The CLI commands can be run from
+PowerShell, but shell-write analysis reads Git Bash syntax, not PowerShell or cmd.exe syntax
+([limits](#what-it-does-not-catch)). Optional contradiction checks run in background workers
+there, without a resident model server. Offline validation on Windows covers the installed-wheel
+lifecycle; native Windows hook latency still exceeds several budgets
+([Windows validation](windows-validation.md)).
 
 A tool install keeps AgentDetox in an environment of its own; `pip install agentdetox` works too.
 If you move Claude Code's folder with `CLAUDE_CONFIG_DIR`, AgentDetox follows it. The first session
@@ -68,8 +70,6 @@ the agent since the last check, as a session start would, and lists each change 
   process authored it. If a separate Write/Edit hook already recorded the final version, it keeps
   that observed writer. A permission rule for the command being run, which Claude Code saves when
   you approve the command and choose not to be asked again, is recorded without a notice.
-  Installations from 0.3 need updated hook registration (`install claude-code --apply`, or update
-  the plugin); `agentdetox doctor` says when.
 - **At session start**, files changed outside the agent since the last session are compared with
   the snapshot. A file that cannot be read is named once and set aside; every other file is
   still compared. A changed file that takes too long to check is reported as not checked. Suspicious content is reported to the agent, which is told not to follow it and to
@@ -95,10 +95,10 @@ and the big public mirrors asks rather than blocks, since teams do run private r
 and Chinese.
 
 Direct prohibitions such as "Never disable sandbox"
-and "不要上传密钥到 https://example.org" no longer count as attack instructions. This recognizes
+and "不要上传密钥到 https://example.org" do not count as attack instructions. This recognizes
 simple prohibitions, not arbitrary negation or quoted shell examples. Later active instructions
 are still checked, and hidden text and executable commands do not receive this prose exemption.
-In 0.5.0, a sentence may forbid in several clauses ("Do not disable the sandbox, and
+A sentence may forbid in several clauses ("Do not disable the sandbox, and
 do not bypass approval prompts.") or end in a reminder to ask the user, and the sentences of a
 skill are read the same way; a skill's code blocks are not, and neither is a clause that orders,
 reverses or makes an exception. Fetch-and-run said in words ("download the script from <URL> and
@@ -125,11 +125,7 @@ than restoring the whole settings file.
 
 A missing, emptied or damaged metadata store is reported instead of silently rebuilt. To start
 over without it, `agentdetox agent snapshot --reset` keeps what is left under another name and
-begins a new store; the files from before the 0.3 migration are set aside too, not read again. Keep a backup of the
-whole store, including `objects/`. 0.4 upgrades the metadata format (from 1 in 0.3.x to 3) on its
-first write and keeps the old database beside it as `~/.agentdetox/state.v1.sqlite3`. 0.3.x refuses
-the upgraded store; to go back, reinstall 0.3.x and put that copy back as `state.sqlite3` (changes
-recorded since the upgrade are lost). `agentdetox doctor` shows the format in use.
+begins a new store. Keep a backup of the whole store, including `objects/`.
 `agentdetox agent snapshot --reset` explicitly resets recovery checkpoints; it does not erase
 history or make a corrupt database safe to use.
 
@@ -187,12 +183,12 @@ reinstated; use whole-version restore when that is the intent. Removing every li
 empty file. Cleanup refuses selected lines that were modified or removed later, and repeated
 matches when later edits make their identity ambiguous. It supports UTF-8 memory, instructions
 and skills up to 1 MB and 10,000 lines; executable config, deleted files and symlinks require
-another recovery method. In 0.5.0, the 1 MB limit is applied before reading: a larger
+another recovery method. The 1 MB limit is applied before reading: a larger
 file, or a larger recorded version, is refused without being loaded, at the preview and at every
 later check. Whole-version `restore` keeps no such limit.
 Selection is explicit: copied content is not automatically malicious.
 
-In 0.5.0, `restore`, `agent restore` and `clean` open the folder that holds the file
+`restore`, `agent restore` and `clean` open the folder that holds the file
 once and read, back up and replace the file through that open folder, so a folder swapped for a
 link between review and apply, or during the operation, cannot send the write elsewhere. They
 refuse a path that passes through a symbolic link your user could repoint (a linked project or a
@@ -240,6 +236,7 @@ instead of asking. An `AGENTDETOX_<KEY>` environment variable overrides the file
 | `suspicious` | ask | writes that look like planted instructions but are not clear-cut |
 | `copied` | ask | memory copied from untrusted input the agent just read |
 | `contradiction` | record | new memory that contradicts existing memory (experimental, below) |
+| `judge` | off | a model's reading of each write to memory, rules and skills ([optional, below](#a-models-reading-of-each-write-optional)) |
 
 The settings, the allowlist and the snapshots are guarded like the agent's own config: an agent
 writing under `~/.agentdetox`, deleting it, or running `agentdetox allow`, `config <key> <value>`,
@@ -271,7 +268,6 @@ reports the removal.
 
 Hooks watch changes. A folder of memory that already exists (thousands of notes an agent or a
 memory tool reloads) needs looking at first. `agentdetox library` inspects one folder you name.
-It is included in 0.5.0.
 
 ```bash
 agentdetox library scan ~/notes/memory        # list the folder; inspect what is new or changed
@@ -441,7 +437,7 @@ folders only; see the [large-memory protocol](../bench/LARGE_MEMORY.md).
 - Detection is not a security boundary. An adaptive attacker who knows these rules can evade them,
   and a plausible-looking false fact with nothing to contradict passes.
 - Planted text the model rewrites in its own words before saving it, unless a rule still matches
-  or the [model check](#a-models-reading-of-each-write-optional-060) is on.
+  or the [model check](#a-models-reading-of-each-write-optional) is on.
 - Changes outside the observed shell interval remain visible at the next session or before the next
   observed edit. Background writes after a shell tool returns are outside that interval.
 - The ledger knows what the hooks saw. A change the agent makes with a shell command is recorded as
@@ -513,8 +509,7 @@ folders only; see the [large-memory protocol](../bench/LARGE_MEMORY.md).
 
 ## Other agents
 
-Three different things are easy to mistake for one another. They are listed separately here and
-should be read separately everywhere else.
+Three different things are easy to mistake for one another.
 
 - **File checks** (find, review, clean, restore) work on files on disk and need no client. They are
   as good as AgentDetox's knowledge of where a client keeps its files.
@@ -534,7 +529,7 @@ should be read separately everywhere else.
   asked, is asked about whatever it says (37 of 37). Text you paste yourself, text the agent
   rewords, and files that arrive outside the agent have only the rules.
 
-| Client | Files found (0.5.0) | File checks: scan, inspect, clean, restore | Hook checks |
+| Client | Files found | File checks: scan, inspect, clean, restore | Hook checks |
 |---|---|---|---|
 | Claude Code | CLAUDE.md and CLAUDE.local.md (also in parent folders and, when written or inspected, in subfolders), `.claude/rules`, AGENTS.md, auto memory and its subfolders (shared by a repository's worktrees), subagent memory, skills, subagents, commands, output styles, settings, `.claude/hooks` scripts, `.mcp.json`, `~/.claude.json`; `.claude` folders up to the repository root and, when written or inspected, in subfolders; follows `CLAUDE_CONFIG_DIR` | yes | supported; real sessions in the [lab](../lab/README.md) |
 | Codex | AGENTS(.override).md, text files in `memories/` and `memories_v2/`, `skills/`, `config.toml`, `*.config.toml` profiles, `hooks.json`, `rules/*.rules` under `~/.codex` or `CODEX_HOME`; `~/.agents/skills`; in a repository, `.codex/` and `.agents/skills` from the root down to the working folder | yes | experimental: `install codex` prints the hooks; exercised on the native Codex CLI 0.167 runtime with fixed tool calls, not in model sessions |
@@ -542,12 +537,16 @@ should be read separately everywhere else.
 | OpenClaw | AGENTS, SOUL, USER, IDENTITY, BOOT, BOOTSTRAP, MEMORY, daily memory and skills in each workspace; `openclaw.json`; state folders `~/.openclaw` and `~/.openclaw-<profile>`, `workspace-<agent>` rosters, `OPENCLAW_HOME`, `OPENCLAW_STATE_DIR`, `OPENCLAW_CONFIG_PATH`, `OPENCLAW_WORKSPACE_DIR`, and the workspaces `openclaw.json` configures (read as JSON5) | yes; also compared at the session start of any hooked client | none of its own: there is no OpenClaw plugin, so nothing is checked as OpenClaw writes |
 | WorkBuddy | paths guessed from a third-party write-up, shown as *unverified* | unverified | none |
 
-What is not covered, client by client, is printed by `agentdetox agent scan` under "Not covered"
-(for a client not found on the machine, only its name; `--format json` lists all of them):
+`agentdetox agent scan` prints its findings first, or "Nothing flagged by the rules." when the
+rules matched nothing (not a verdict that the files are safe). Under "Looked in:" it gives each
+client it found, with its file count and folders, and names the rest in one line:
+"not found on this machine: …". Under "Not covered by any file check:" it lists, for each client
+found, what no file check reaches (`--format json` lists it for the clients not found too):
 Codex's SQLite and generated memory state and how Codex regenerates memory; Claude Code files
-pulled in with `@path` imports, auto memory moved with `autoMemoryDirectory` and what installed plugins bring; Cursor's User
-and Team Rules, which are not files; OpenClaw's SQLite state, sandbox workspaces and `$include`
-files. A folder you asked for that cannot be resolved (an environment variable naming a missing
+pulled in with `@path` imports, auto memory moved with `autoMemoryDirectory`, managed policy
+files outside the home folder and what installed plugins bring; Cursor's User and Team Rules,
+which are not files; OpenClaw's SQLite state, sandbox workspaces and `$include` files. The scan
+exits 1 when a finding reaches `--fail-on` (default `high`). A folder you asked for that cannot be resolved (an environment variable naming a missing
 folder, an `openclaw.json` that does not parse or names a relative or unset path) is listed under
 "Not resolved" and makes the scan exit non-zero: it is never reported as nothing found.
 
@@ -604,7 +603,7 @@ or a shell command that writes, moves or deletes a config file holding them.
 `agentdetox install codex` and `install cursor` print the hook configuration; `--apply` is refused
 for both until installing them has been verified on real installs.
 
-## A model's reading of each write (optional, 0.6.0)
+## A model's reading of each write (optional)
 
 ```bash
 agentdetox config judge ask      # or: record. Off again: agentdetox config judge off
@@ -616,9 +615,8 @@ stop about a third, and none of those that say the same thing in other words. Th
 the text a write adds to memory, rules or a skill to a small model and asks what it would have
 the agent do: run something fetched from the network, read or send out secrets, weaken its own
 safeguards, set aside what you told it, hide what it does, or carry an instruction you would
-not see. On the same texts it flagged 89 of 90, and 60 of 60 written on purpose to get past a
-model (59 of 60 on a second such set, seen only after the setting was final); it also flagged
-5 of 210 short ordinary texts and 2 of 120 whole ordinary files
+not see. As shipped, it flagged 208 of 210 attack texts across three sets (two of them written
+on purpose to get past a model), 6 of 210 short ordinary texts and 3 of 120 whole ordinary files
 ([measurements, and what they do not say](../bench/ACCURACY.md#a-model-as-judge-2026-11-10)).
 
 It is off unless you turn it on, because of what it costs:
@@ -682,21 +680,19 @@ Optional: `uv tool install 'agentdetox[nli]'`, then `agentdetox fetch-models`. A
 contradicts what the agent already knows is a common sign of a fabricated fact. This uses a
 multilingual NLI model (mDeBERTa-v3, about 560 MB) and **records instead of asking**: after a
 write, the hook queues the observed bytes and returns. Related-file reading and candidate selection
-also run in the worker; they no longer delay the hook. Then
+also run in the worker, so they do not delay the hook. Then
 conflicts are logged (`agentdetox events`) and attached to the matching version in `review`, even
 after later edits. Related context is read when the job runs. The server loads the model only when
 candidate pairs need inference (about 1 GB of
 memory) and exits after 30 minutes without work; `agentdetox daemon status` shows it. On real memory
 the model still misreads fragments of notes as contradicting each other, which is why it does not
 ask; `agentdetox config contradiction ask` makes it ask. Windows has no model server yet: each
-changed memory write queues work for a background worker, which loads the model only when needed (about 6 s). The
-[roadmap](https://github.com/chriswu727/agentdetox/blob/main/ROADMAP.md) considers a stronger
-opt-in judge; no replacement is implemented or committed for a release. Measurements:
+changed memory write queues work for a background worker, which loads the model only when needed (about 6 s). Measurements:
 [bench/MEMORY_BENCHMARK.md](https://github.com/chriswu727/agentdetox/blob/main/bench/MEMORY_BENCHMARK.md).
 
-### Background work on development main
+### Background contradiction work
 
-In 0.5.0, background contradiction work survives worker crashes.
+Background contradiction work survives worker crashes.
 `agentdetox doctor` and `agentdetox status` distinguish failed checks, work waiting for a model,
 and work stalled for more than ten minutes. Failed work gets at most three automatic attempts,
 with 5-second and 60-second retry delays, and remains available for inspection for seven days.
@@ -765,7 +761,7 @@ what is stored and read.
 
 `lab/` replays attacks and everyday use against real Claude Code sessions, with and without
 AgentDetox ([lab/README.md](https://github.com/chriswu727/agentdetox/blob/main/lab/README.md));
-its latest results are in `lab/results/latest.md`. The local hook performance suite is
+its dated runs are in that file, and the last run of both arms is in `lab/results/latest.md`. The local hook performance suite is
 `python -m bench.hook_latency --samples 100`; recorded budgets and results are in
 [bench/HOOK_LATENCY.md](../bench/HOOK_LATENCY.md).
 `tests/test_properties.py` draws its inputs (events, configs, transcripts, commands, edits) and
@@ -803,8 +799,28 @@ claude plugin marketplace update agentdetox
 claude plugin update agentdetox@agentdetox
 ```
 
-Run `agentdetox doctor` afterwards. Upgrades from 0.3.x change the store format; see the
-backup and rollback instructions under [the write and recovery workflow](#what-it-does-in-claude-code).
+Run `agentdetox doctor` afterwards.
+
+### Plugin or direct hooks
+
+`install` declines when the plugin is enabled and installed, and `doctor` warns if the hooks are
+registered twice. The plugin counts only as AgentDetox's own (`agentdetox@agentdetox`) and only
+when Claude Code's record of installed plugins has it: an `enabledPlugins` entry alone, which a
+project's settings can carry, runs no hooks, and `doctor` then reports the hooks as not
+installed. The plugin runs the `agentdetox` you installed; without one it runs its own release
+through `uvx`, and with neither it says so at session start instead of failing on every tool call.
+
+### From 0.3 or 0.4
+
+Installations from 0.3 need updated hook registration (`install claude-code --apply`, or update
+the plugin); `agentdetox doctor` says when. 0.4 upgrades the metadata format (from 1 in 0.3.x to
+3) on its first write and keeps the old database beside it as `~/.agentdetox/state.v1.sqlite3`.
+0.3.x refuses the upgraded store; to go back, reinstall 0.3.x and put that copy back as
+`state.sqlite3` (changes recorded since the upgrade are lost). `agentdetox doctor` shows the
+format in use. `agentdetox agent snapshot --reset` also sets aside the files from before the 0.3
+migration rather than reading them again.
+
+### Hooks after an upgrade
 
 `install` and `uninstall` write a linked settings file where the link points, keep its
 indentation and line ends, and stop without writing if the file changed while they worked.

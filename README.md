@@ -22,36 +22,42 @@ Protection for the memory, instructions, skills and config your coding agent tru
 ---
 
 A poisoned page can become tomorrow's memory. An install script can change `CLAUDE.md` while
-your agent is busy elsewhere. AgentDetox checks writes to persistent context, records changes
-with source evidence, and lets you remove selected added lines or restore an earlier version,
-with a backup either way. A cleanup changes the file, not what a running session has already read:
-start a new session in that client afterwards.
+your agent is busy elsewhere. Whatever lands in memory, rules or skills is obeyed in every later
+session. AgentDetox checks writes to that persistent context, records changes with source
+evidence, and lets you remove selected added lines or restore an earlier version, with a backup
+either way.
 
-**0.6.0 is published** on [PyPI](https://pypi.org/project/agentdetox/0.6.0/) and
-[GitHub](https://github.com/chriswu727/agentdetox/releases/tag/v0.6.0).
-The project is in **preview**: Claude Code is supported; Codex and Cursor hooks are experimental;
-OpenClaw has no hook of its own, so nothing is checked as it writes; its files are checked from the command
-line and at the session start of the other clients. Development supports native Windows with Python 3.12 and
-Git Bash, alongside macOS/Linux. Windows offline validation covers the installed-wheel lifecycle;
-real-client and sustained daily-use validation remain separate. See [Windows evidence](docs/windows-validation.md).
-Native Windows latency measurements still exceed several existing budgets; the
-[performance record](bench/HOOK_LATENCY.md) retains failures and paired optimization results.
+**Try it in ten seconds, with nothing installed** (needs [uv](https://docs.astral.sh/uv/)):
+
+```bash
+uvx agentdetox demo          # an attack is blocked, noticed and undone, in a throwaway folder
+uvx agentdetox agent scan    # read-only: check the memory, rules and skills your agents already have
+```
 
 <p align="center">
-<picture>
-<source media="(max-width: 600px)" srcset="https://raw.githubusercontent.com/chriswu727/agentdetox/main/assets/workflow-mobile.svg">
-<img src="https://raw.githubusercontent.com/chriswu727/agentdetox/main/assets/workflow.svg" alt="Check planned writes; notice context changes; review diffs and source evidence; restore an earlier version with a backup" width="880">
-</picture>
+<img src="https://raw.githubusercontent.com/chriswu727/agentdetox/main/assets/demo.svg" alt="Abridged output of agentdetox demo: a write to memory that runs code fetched from the network is blocked; an install script's change to CLAUDE.md is noticed; the earlier version is restored and the tampered copy kept in quarantine" width="880">
 </p>
+
+- **Prevent:** a write to memory, rules or skills that matches a known attack is refused before
+  it lands; text copied from a page or file the agent just read is asked about.
+- **Detect:** changes made outside the agent (an install script, another tool) are noticed after
+  the shell tool and at the next session start.
+- **Clean up:** review the diff and where the text came from, remove only the lines you choose,
+  or restore the earlier version. Nothing is deleted without a backup. A cleanup changes
+  the file, not what a running session has already read: start a new session afterwards.
+- **Optional, off by default:** a small model reads each write for what it would make the agent
+  do. On attack texts written without sight of the rules it flagged 208 of 210, where the rules
+  alone stop about a third
+  ([measurements and limits](https://github.com/chriswu727/agentdetox/blob/main/bench/ACCURACY.md#a-model-as-judge-2026-11-10)).
+
+**0.6.0 is published** on [PyPI](https://pypi.org/project/agentdetox/0.6.0/) and
+[GitHub](https://github.com/chriswu727/agentdetox/releases/tag/v0.6.0). It is a **preview**,
+and a layer of checks and recovery, [not a security boundary](#evidence-and-limits).
+[Integration matrix →](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#other-agents)
 
 ## Quick start
 
 Requires **Python 3.11+**. Install with [uv](https://docs.astral.sh/uv/) or `pipx`:
-
-On Windows, install Git for Windows for Claude's Bash tool. PowerShell can launch these CLI
-commands, but AgentDetox's shell-write analysis supports Git Bash syntax; PowerShell/cmd.exe
-syntax is not supported. Windows uses background NLI workers, without a resident model server.
-Native development commands are in [CONTRIBUTING.md](CONTRIBUTING.md#setup-and-checks).
 
 ```bash
 uv tool install agentdetox
@@ -97,10 +103,20 @@ agentdetox doctor
 agentdetox status
 ```
 
+On Windows, install Git for Windows: shell-write analysis reads Git Bash syntax, not PowerShell
+or cmd.exe ([Windows validation](docs/windows-validation.md)).
+
 `doctor` reports missing, outdated or duplicate hooks. The first session scans existing context
 before recording recovery checkpoints. [Installation, upgrades and removal →](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#install)
 
 ## How it works
+
+<p align="center">
+<picture>
+<source media="(max-width: 600px)" srcset="https://raw.githubusercontent.com/chriswu727/agentdetox/main/assets/workflow-mobile.svg">
+<img src="https://raw.githubusercontent.com/chriswu727/agentdetox/main/assets/workflow.svg" alt="Check planned writes; notice context changes; review diffs and source evidence; restore an earlier version with a backup" width="880">
+</picture>
+</p>
 
 1. **Before a write:** check planned Write/Edit content and recognized shell writes. High-risk
    rule matches are denied; flagged text you supplied yourself asks instead, except hidden text. Changes to hooks,
@@ -133,12 +149,10 @@ grant permanent trust to a source. Recovery restores a **whole recorded version*
 undo benign additions. For a newly added config entry, removing it with the tool that added it
 is often preferable to restoring the whole settings file.
 
-`agentdetox clean C42` lists added lines.
-Use `agentdetox clean C42 --lines 3,5-7` to preview removing only the lines you selected from
-memory, instructions or skills, while keeping other content and non-conflicting later edits.
-Run the exact apply command printed by that preview; a changed file invalidates it. Cleanup
-backs up the current file and rescans the result. It does not automatically select copied text,
-restore overwritten text or judge factual correctness. The terminal review also offers this action.
+`agentdetox clean C42` lists the lines a change added to memory, instructions or skills;
+`agentdetox clean C42 --lines 3,5-7` previews removing only those, keeping everything else.
+Run the exact apply command printed by that preview. Cleanup backs up the file and rescans it;
+it does not choose lines for you, restore overwritten text or judge whether text is true.
 [Review, settings and recovery details →](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#day-to-day)
 
 <a id="what-it-does-not-catch"></a>
@@ -151,32 +165,31 @@ paths may escape pre-execution checks; scoped post-tool observation can detect p
 afterwards. Detached background writes need later reconciliation. Hooks fail open on errors,
 which remain visible in `doctor` and `status`; a write to agent context that could not be checked asks instead. Code running as your user can alter the hooks or store.
 
+The measurements below are dated runs on authored or synthetic cases, not real-world accuracy
+or production-support guarantees.
+
 - **Offline regression gallery:** authored prevention, monitoring and byte-exact recovery cases,
-  plus a separate 21-case acceptance set with three explicit semantic misses. These are not
-  real-world accuracy estimates.
+  plus a separate 21-case acceptance set with three explicit semantic misses.
   [Protocol and results](https://github.com/chriswu727/agentdetox/blob/main/bench/ACCURACY.md).
-- **Claude Code release-candidate lab, 2026-11-10.** Across 12 scenarios with and without
-  AgentDetox, 23 of 24 scenario/arm checks passed. The remaining check required a verbatim
-  edit that the smaller models did not complete. AgentDetox stayed quiet in all seven attempts
-  at that scenario. The lab recorded no hook errors or landed attacks.
-  [Results and retries](https://github.com/chriswu727/agentdetox/blob/main/lab/README.md#hardening-run-2026-11-10).
-- **Development latency, 2026-11-10:** 100 samples per case on one Mac, no NLI inference.
-  The latest run, on the 0.5.0 release candidate, passed all 12 original
-  budgets: Bash pre/post P95 **126.7 ms**; startup with 1,000 unchanged files **132.6 ms**; four
-  concurrent writes plus a Bash pair **293.6 ms**. Earlier scan-load measurements and Windows budget failures remain retained.
-  [Method, raw data and limits](https://github.com/chriswu727/agentdetox/blob/main/bench/HOOK_LATENCY.md).
+- **Claude Code lab:** on the 0.5.0 candidate (2026-11-10), 12 scenarios run with and without
+  AgentDetox passed 23 of 24 checks. On the 0.6.0 candidate (2026-11-11), with AgentDetox only,
+  9 of 12 passed: in one run of five, a later memory write naming a non-default registry got
+  through after the first had been asked about; the other two failures were the client's or the
+  model's own.
+  [Results](https://github.com/chriswu727/agentdetox/blob/main/lab/README.md#060-candidate-2026-11-11).
+- **Hook latency, 2026-11-11:** 100 samples per case on one Mac, no NLI inference, on the 0.6.0
+  candidate before its last commits. All 12 budgets passed: Bash pre/post P95 **109.1 ms**;
+  startup with 1,000 unchanged files **121.7 ms**; four concurrent writes plus a Bash pair
+  **235.5 ms**.
+  [Raw data](https://github.com/chriswu727/agentdetox/blob/main/bench/results/hooks-0.6.0-2026-11-11.json) ·
+  [method and limits](https://github.com/chriswu727/agentdetox/blob/main/bench/HOOK_LATENCY.md).
 - **100k synthetic inventory, 2026-11-10:** full/incremental inspection, cancellation/resumption
   and scoped dismissal/reopening passed. About 419 MB of notes took **316 s** for first inspection,
-  **15.3 s** unchanged, with **46.8 MB** process peak RSS. Known semantic misses remain explicit;
-  these are local module measurements, not production-support or real-world accuracy claims.
+  **15.3 s** unchanged, with **46.8 MB** process peak RSS.
   [Protocol and raw report](https://github.com/chriswu727/agentdetox/blob/main/bench/LARGE_MEMORY.md#100k-completion-and-scoped-triage).
 
 Source matching is evidence of copied text, not proof of malicious intent or human authorship.
 An empty rescan does not certify a file as safe.
-In 0.5.0, `agentdetox library` inspects an existing folder of memory files and
-cleans reviewed lines; it is measured against a separate
-[scale protocol](https://github.com/chriswu727/agentdetox/blob/main/bench/LARGE_MEMORY.md),
-whose 1k/10k/100k tiers are not current production-support guarantees.
 [Full limitations](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#what-it-does-not-catch) ·
 [Threat model](https://github.com/chriswu727/agentdetox/blob/main/SECURITY.md)
 
@@ -192,19 +205,19 @@ store, including `objects/`, and review retention before deleting history.
 
 ## More workflows
 
-- **Other agents:** experimental Codex and Cursor hooks; no OpenClaw plugin, and Cursor has not been run. In 0.5.0,
+- **Other agents:** experimental Codex and Cursor hooks; no OpenClaw plugin, and Cursor has not been run.
   `agentdetox agent inspect` finds the memory, rules and skill files of Claude Code, Codex, Cursor and
   OpenClaw where each client keeps or relocates them and records what is flagged as review items, so
   `clean` and `restore` work without any hook. It checks files, not whether a client delivers hook
   events or whether remembered text is true.
   [Integration matrix](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#other-agents).
-- **A model's reading (0.6.0, off by default):** `agentdetox config judge ask` has a
+- **A model's reading (off by default):** `agentdetox config judge ask` has a
   small model read each write to memory, rules and skills for what it would make the agent do;
   it catches what the rules' wordings miss and can only add a question.
-  [What it costs and what it is not](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#a-models-reading-of-each-write-optional-060).
+  [What it costs and what it is not](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#a-models-reading-of-each-write-optional).
 - **Contradiction checks:** optional local NLI, recorded in the background by default because of
   false positives. [Setup and limits](https://github.com/chriswu727/agentdetox/blob/main/docs/user-guide.md#contradiction-detection-experimental).
-- **Existing memory libraries (0.5.0):** `agentdetox library scan <folder>` inventories
+- **Existing memory libraries:** `agentdetox library scan <folder>` inventories
   a folder you choose, inspects its text files with the per-file rules, resumes after interruption
   and never calls a file clean; `clean M<ID>` removes reviewed lines with a backup, and
   `library dismiss` sets a false positive aside for one file's exact bytes without allowlisting it.

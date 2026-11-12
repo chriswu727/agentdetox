@@ -45,13 +45,14 @@ On one real user's memory the NLI model called many unrelated notes contradictor
 low enough to be quiet left little recall. So contradiction checks run after the write, in a
 background model server, and are logged. Trade-off: some conflicting claims may be noticed after
 they persist; a novel false fact can
-pass entirely. A stronger opt-in judge is a roadmap consideration, not an implemented replacement
-or a commitment to enable prompting by default.
+pass entirely. The optional model check (ADR 22) reads what a write would make the agent do; it
+does not judge whether a claim is true, so it does not replace this check.
 
 ## ADR 6: Local only
 
-Nothing is sent anywhere: no telemetry, no cloud checks. Trade-off: no shared threat data and no
-usage numbers; measuring false positives depends on users choosing to share their counts.
+Nothing is sent anywhere unless the user turns on the model check (ADR 22): no telemetry, and no
+other cloud check. Trade-off: no shared threat data and no usage numbers; measuring false
+positives depends on users choosing to share their counts.
 
 ## ADR 7: Where text came from, not a classifier
 
@@ -59,6 +60,9 @@ AgentDetox does not run an injection classifier on what the agent reads. Models 
 much of that, and others build classifiers. It judges a write by its origin: what the user said,
 what the agent read, what changed outside it. Trade-off: planted text that the model rewrites and
 no rule matches gets through until origin tracking covers paraphrase.
+
+This still holds for what the agent reads. For what it writes to memory, rules and skills, the
+optional model check (ADR 22) is a classifier, off by default and asked only after the rules.
 
 ## ADR 8: One model server per store
 
@@ -238,3 +242,25 @@ such a file stays suspicious; no history of ended dismissals is kept; nothing is
 the event log, because that would take the store lock hooks wait on; and since the inspection
 code is part of the detector id, conclusions from the build before this one are stale after
 upgrading and must be scanned before anything in them can be dismissed.
+
+## ADR 22: A model reads context writes, last, and may only add a question
+
+The rules read wordings someone has seen before; on a blind set they stopped about a third of
+attacks and no paraphrase. So an optional check (`agentdetox config judge ask` or `record`)
+hands the text a write adds to memory, rules or a skill to a small model, through the user's
+own `claude` command, in a session with no tools, no MCP servers and none of the user's
+settings. It is asked after the rules, and only about what they did not refuse. Its answer can add a
+question or a record; it never removes one, and what the rules refuse stays refused. Only a
+closed category is taken from the answer, and for a flagged text, in a second call, line
+numbers; nothing the model writes freely reaches the user or the agent. It is asked without a
+reasoning step, because with one the same text got different answers from one asking to the
+next, and a write could be retried until it passed. A flagged text stays flagged without being
+asked again while its flag is among the last 5,000 kept.
+
+Not chosen: letting the model turn a rule's refusal into a question. It was built, reviewed and
+taken out before release, because a text written to persuade the model would then get past a
+refusal. Trade-offs: it is off by default, because each such write costs a model call of a few
+seconds and its text leaves the machine for the user's model provider; it is a classifier
+judged on sets the same model family wrote, so its misses and false flags outside them are not
+known ([measurements](../bench/ACCURACY.md#a-model-as-judge-2026-11-10)); and a call that fails
+counts as no opinion, recorded for `doctor`, not as a refusal.

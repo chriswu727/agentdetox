@@ -76,7 +76,9 @@ Out of scope; see the [full limitations](docs/user-guide.md#what-it-does-not-cat
   the volume is no way around a check.
 - **No imports from the project.** Background processes and the `python -m` hook fallback start
   Python with `-I`, so a repository cannot plant an `agentdetox` package for the hook to import.
-- **Local checks.** Hooks and checks make no network calls. Installation, the plugin's `uvx`
+- **Local checks.** Hooks and checks make no network calls, except the optional model check
+  (`agentdetox config judge`, off by default), which sends the text a write adds to memory,
+  rules or skills to a model through the user's own `claude` command. Installation, the plugin's `uvx`
   fallback and optional model downloads require network access. The fallback fetches a release
   pinned by version, not by hash. See [PRIVACY.md](PRIVACY.md).
 - **The shell check reads, it does not run.** A command is checked before it runs by parsing it

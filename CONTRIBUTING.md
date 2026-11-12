@@ -144,9 +144,10 @@ See [docs/architecture.md](docs/architecture.md) for how the pieces fit.
 - Hooks fail open, and the failure shows up in `doctor` and `status`. A write to agent context
   that could not be checked asks instead: never let an error in a check become an allow for the
   thing it checks.
-- Nothing leaves the machine; see [PRIVACY.md](PRIVACY.md).
+- Nothing leaves the machine unless the user turns on the model check (`judge`, off by
+  default); see [PRIVACY.md](PRIVACY.md). No other check may send anything.
 - No rule may cost more than its input's length. A rule is a pattern run over text someone else
   chose; `python -m bench.rule_cost` builds hostile inputs from the rules themselves and fails
   when one grows faster than linearly. Run it after adding or changing a rule.
 - The hook path stays fast: no model loading in a hook unless the user chose `ask` for
-  contradictions, and no network.
+  contradictions, and no network unless the user turned on the model check.

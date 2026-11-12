@@ -31,7 +31,7 @@ def run() -> int:
         print(f"\nThe demo did not go as expected: {e}\nPlease report this; `agentdetox doctor` may say more.")
         return 1
     print("\nAll of this ran in a temporary folder that is now deleted; nothing else was read or changed.\n"
-          "To protect Claude Code for real: agentdetox install claude-code")
+          "To protect Claude Code for real: agentdetox install claude-code --apply")
     return 0
 
 

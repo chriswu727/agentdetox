@@ -10,7 +10,6 @@ import os
 import re
 import time
 import uuid
-from collections import Counter
 from pathlib import Path
 
 from . import allowlist, cleanup, events, judge, ledger, storage
@@ -99,22 +98,6 @@ def list_changes(since: str | None = None, all_changes: bool = False) -> list[di
         if db is None:
             return []
         return [dict(r) for r in db.execute('SELECT * FROM changes' + where + ' ORDER BY id DESC LIMIT 200', args)]
-
-
-def render_list(rows: list[dict], summary: bool = False) -> str:
-    if not rows:
-        return 'No changes in this period.' if summary else 'Nothing needs attention. Use `agentdetox review --since 7d` for recent changes.'
-    counts = Counter(row['review_state'] for row in rows)
-    lines = [f"{len(rows)} changes shown: " + ', '.join(f'{n} {state}' for state, n in sorted(counts.items())),
-             'Recent context changes:' if summary else 'Changes needing attention:']
-    for row in rows:
-        data = json.loads(row['data'])
-        operation = ('deleted' if row['after_hash'] is None else 'added' if row['before_hash'] is None
-                     else 'inspected' if data.get('method') == INSPECTION else 'modified')
-        lines.append(f"C{row['id']}  {row['review_state']:<10} {operation:<8} {short_path(row['path'])}")
-        lines.append(f"    {data.get('actor') or data.get('origin', 'unknown')} · {row['ts']}")
-    lines.append('Open a change: agentdetox review C<ID> (showing up to 200 changes).')
-    return '\n'.join(lines)
 
 
 def page(*, since: str | None = None, all_changes: bool = False, project: Path | None = None,

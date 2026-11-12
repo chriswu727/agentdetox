@@ -245,7 +245,9 @@ def test_scan_says_where_it_looked_and_what_it_cannot_see(env, capsys):
     assert main(['agent', 'scan', '--project', str(project)]) == 0
     out = capsys.readouterr().out
     assert 'Looked in:' in out and 'workbuddy (unverified)' in out and 'unverified guesses' in out
-    assert "SQLite and generated memory" not in out and '(claude-code, codex, cursor, openclaw: not found on this machine' in out
+    assert "SQLite and generated memory" not in out and 'not found on this machine: claude-code, codex, cursor, openclaw' in out
+    assert out.index('Nothing flagged by the rules.') < out.index('agentdetox install claude-code') < out.index('Looked in:')
+    assert '0 high' not in out and '.codex' not in out
     (home / '.codex').mkdir()
     (home / '.openclaw').mkdir()
     assert main(['agent', 'scan', '--project', str(project)]) == 0

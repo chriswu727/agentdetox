@@ -2,8 +2,11 @@
 
 AgentDetox is a command-line program that agents run as hooks. Each hook call is a new process
 that reads one event as JSON on stdin and answers on stdout. A small entry point routes hooks
-without importing the command UI. State lives in `~/.agentdetox`; a
-background model server is the only long-lived process, and only when contradiction checks are on.
+without importing the command UI. State lives in `~/.agentdetox`. Two kinds of process outlive
+a command: the background model server (or, on Windows, its job-queue workers), only when
+contradiction checks are on, and a library scan worker started with `library scan --background`,
+which exits when its scan ends or is cancelled. The optional model check starts the user's
+`claude` command for each text it asks about and waits for it.
 
 ## A hook call
 
@@ -16,7 +19,7 @@ adapters.py   which event, which project, which files or shell command
    ▼
 engine.py     checks a planned write or a shell command and returns Signals
    │          (planted, user-written, own-state, guardrails, shell-write,
-   │           suspicious, copied, contradiction)
+   │           deletion, unread, suspicious, copied, contradiction, judge)
    ▼
 policy.py     turns Signals into one Decision: allow, ask or deny,
    │          from the user's settings and whether the agent can ask
@@ -67,7 +70,14 @@ Optional contradiction record jobs carry the observed bytes to the worker. Relat
 candidate selection and inference happen there; findings attach to the matching recorded hash,
 even if the file was edited again before the job ran. Related context is read at processing time.
 
-On development `main`, `background.py` persists jobs before waking the worker. Files are private,
+The optional model check (0.6.0, off by default) is `judge.py`. With it on, `engine.py` asks it
+about the text a write adds to memory, rules or a skill when the rules did not refuse it, and
+`session.py` asks it about files that changed outside the agent. Its answer can only add a
+`judge` signal beside the others; it removes no question and no refusal. See
+[ADR 22](decisions.md#adr-22-a-model-reads-context-writes-last-and-may-only-add-a-question) and
+[PRIVACY.md](../PRIVACY.md#what-the-optional-model-check-sends).
+
+Since 0.5.0, `background.py` persists jobs before waking the worker. Files are private,
 written through a temporary file, flushed and atomically renamed. Directory sync is used where
 supported; hardware power-loss durability is not certified. The process holding the daemon lock
 owns execution. Attempts are persisted before work; successful processing removes the job and
@@ -84,6 +94,7 @@ left an I/O-blocked job queued. This queue carries contradiction checks only; li
 | `adapters.py` | Agent hook protocols: events, file changes, reply formats |
 | `engine.py` | The checks; knows nothing about agents or settings |
 | `policy.py` | Block, ask or record |
+| `entrypoint.py` | The installed command: routes a hook call to `hooks.py` without importing the command UI |
 | `hooks.py` | Entry point for hook calls; fails open, except that an unchecked write to context asks |
 | `observation.py` | Scoped shell start states, end comparison, immediate review findings and notices |
 | `session.py` | The session-start check |
@@ -91,9 +102,12 @@ left an I/O-blocked job queued. This queue carries contradiction checks only; li
 | `shell.py` | What a shell command writes or deletes, and whether it changes AgentDetox |
 | `paths.py` | Which file a path names: comparison by device and file number, not by spelling |
 | `persistence.py` | Rules for agent footholds, and the security-relevant parts of config files |
+| `agentscan.py` | Runs the rule modules over one context text by file kind; the scan behind `agent scan` |
+| `findings.py` | The finding record, severities and stable finding ids |
 | `hidden.py` | Hidden text and injection phrasing |
 | `budget.py` | The time one piece of text may be checked for, looked at between rules |
 | `provenance.py` | Reading the session transcript: copied text, and text the user wrote |
+| `judge.py` | The optional model check: asks the user's `claude` command about a text in a session with no tools, reads back a category and line numbers, keeps the last 5,000 flags |
 | `consistency.py` | Splitting memory into statements and finding contradictions with an NLI model |
 | `daemon.py` | The model server (Unix socket), or a job queue where there is none (Windows) |
 | `background.py` | Durable job files, attempts, retention and background health |
@@ -103,6 +117,8 @@ left an I/O-blocked job queued. This queue carries contradiction checks only; li
 | `storage.py` | SQLite schema, transactional legacy migration, indexed metadata and references |
 | `review.py` | Diff, exact-version accept, finding dismissal, recovery journal and retention |
 | `cleanup.py` | Explicit added-line selection and conflict-checked mapping onto current text |
+| `review_ui.py` | The terminal review loop, over the same version-checked actions as the commands |
+| `compat.py` | What differs between POSIX and Windows: file locks, program names, hook quoting |
 | `ledger.py` | Each change with its origin, the versions before and after, and `blame` |
 | `allowlist.py`, `events.py`, `settings.py` | Allowed ids, the event log, the settings file |
 | `install.py`, `doctor.py`, `status.py`, `demo.py`, `cli.py` | Installing hooks, health, the commands |

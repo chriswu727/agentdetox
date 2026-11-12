@@ -4,16 +4,16 @@
 
 # AgentDetox
 
-### 检查智能体保存的内容，发现变更，恢复先前版本。
+### 保护智能体的记忆：拦截已知风险的写入，发现可疑变更，清理不想要的指令。
 
-为编程智能体跨会话信任的记忆、指令、技能和配置提供检查、监测与恢复。
+为编程智能体跨会话信任的记忆、指令、技能和配置提供保护。
 
 [![PyPI](https://img.shields.io/pypi/v/agentdetox?color=16836b)](https://pypi.org/project/agentdetox/)
 [![CI](https://github.com/chriswu727/agentdetox/actions/workflows/ci.yml/badge.svg)](https://github.com/chriswu727/agentdetox/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/pypi/pyversions/agentdetox)](https://pypi.org/project/agentdetox/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-[快速开始](#快速开始) · [工作方式](#工作方式) · [验证与边界](#验证与边界) · [文档索引](docs/README.md)
+[快速开始](#快速开始) · [工作方式](#工作方式) · [验证与边界](#验证与边界) · [文档索引](docs/README.md) · [交互演示](https://yichenwu.dev/projects/agentdetox)
 
 [English (primary)](README.md) · **简体中文**
 
@@ -22,17 +22,32 @@
 ---
 
 网页里的投毒内容可能成为明天的记忆。依赖的安装脚本也可能在智能体执行任务时修改 `CLAUDE.md`。
-AgentDetox 检查持久上下文的写入，记录变更及来源证据，让你查看差异并恢复先前版本。
+写进记忆、规则或技能的内容，之后每个会话都会被照做。AgentDetox 检查这些持久上下文的写入，
+记录变更及来源证据，让你只删掉选中的新增行，或恢复先前版本，两种操作都会先备份。
+
+**十秒试用，无需安装**（需要 [uv](https://docs.astral.sh/uv/)）：
+
+```bash
+uvx agentdetox demo          # 在临时目录里看一次攻击被拦截、被发现、被撤销
+uvx agentdetox agent scan    # 只读：检查你的智能体已有的记忆、规则和技能
+```
+
+<p align="center">
+<img src="https://raw.githubusercontent.com/chriswu727/agentdetox/main/assets/demo.svg" alt="agentdetox demo 的节选输出：一次会执行网络下载代码的记忆写入被拦截；安装脚本对 CLAUDE.md 的修改被发现；文件恢复到先前版本，被篡改的副本保留在隔离区" width="880">
+</p>
+
+- **预防：**写入记忆、规则或技能的内容如果匹配已知攻击，在落盘前被拒绝；从智能体刚读过的网页或文件里照抄来的文本会先询问你。
+- **检测：**智能体之外发生的修改（安装脚本、其他工具）会在 shell 工具结束后和下次会话开始时被发现。
+- **清理：**查看差异和文本来源，只删除你选中的行，或恢复先前版本。任何删除都会先备份。清理改的是文件，
+  不影响正在运行的会话已经读入的内容：清理后请开启新会话。
+- **可选，默认关闭：**让一个小模型判断每次写入会让智能体做什么。在不参照规则写出的攻击文本上，
+  它标记了 210 条中的 208 条，而规则本身只能拦住约三分之一
+  （[测量与限制（英文）](bench/ACCURACY.md#a-model-as-judge-2026-11-10)）。
 
 **0.6.0 已发布**至 [PyPI](https://pypi.org/project/agentdetox/0.6.0/) 和
-[GitHub](https://github.com/chriswu727/agentdetox/releases/tag/v0.6.0)。项目仍处于**预览阶段**：
-Claude Code 是受支持的集成，Codex 和 Cursor 钩子属于实验功能；OpenClaw 没有自己的钩子，写入时不会被实时检查，
-其文件可通过命令行检查，也会在其他客户端的会话开始时被比对。
-开发环境支持原生 Windows（Python 3.12 + Git Bash）以及 macOS/Linux。
-Windows 已完成安装包生命周期的本机离线验证；真实客户端验收和长期日常使用验证分别记录，
-详见 [Windows 验证记录](docs/windows-validation.md)。
-原生 Windows 的延迟实测仍有多项超出既定预算；[性能记录](bench/HOOK_LATENCY.md)
-保留失败数据和优化前后的交替对照结果。
+[GitHub](https://github.com/chriswu727/agentdetox/releases/tag/v0.6.0)。项目处于**预览阶段**，
+是一层检查与恢复，[不是安全边界](#验证与边界)。
+[集成矩阵（英文）→](docs/user-guide.md#other-agents)
 
 <p align="center">
 <picture>
@@ -44,11 +59,6 @@ Windows 已完成安装包生命周期的本机离线验证；真实客户端验
 ## 快速开始
 
 需要 **Python 3.11+**。使用 [uv](https://docs.astral.sh/uv/) 或 `pipx` 安装：
-
-Windows 上请安装 Git for Windows，供 Claude 的 Bash 工具使用。下面的 CLI 命令可以从
-PowerShell 启动，但 AgentDetox 的 shell 写入分析支持 Git Bash 语法，尚不支持 PowerShell/cmd.exe
-语法。Windows 的可选 NLI 使用后台 worker，没有常驻模型服务。
-原生 Windows 开发命令见 [贡献指南](CONTRIBUTING.md#setup-and-checks)。
 
 ```bash
 uv tool install agentdetox
@@ -93,6 +103,9 @@ agentdetox doctor
 agentdetox status
 ```
 
+Windows 上请安装 Git for Windows：shell 写入分析读取 Git Bash 语法，不支持 PowerShell 或 cmd.exe
+（[Windows 验证记录（英文）](docs/windows-validation.md)）。
+
 `doctor` 会报告缺失、过时或重复的钩子。首次会话先扫描已有上下文，再记录恢复检查点。
 [完整安装、升级与卸载说明（英文）→](docs/user-guide.md#install)
 
@@ -103,7 +116,7 @@ agentdetox status
 2. **写入或 shell 工具结束后记录：**保存版本与来源证据。shell 工具成功或失败都会触发限定范围的比较，
    并为上下文变更发出审核提示。这只能说明变更发生在该工具运行期间，不能证明具体由哪个进程写入。
 3. **会话开始时核对：**检查智能体之外的修改。命中规则的内容会持续提示，直到完成审核；新增的可执行配置提示一次，随后仍留在审核列表中。
-4. **审核时处理：**查看差异和证据，接受该确切版本、忽略单条发现，或恢复到某次变更之前。
+4. **审核时处理：**查看差异和证据，接受该确切版本、忽略单条发现、删除选中的新增行，或恢复到某次变更之前。
    恢复会检查文件是否又被修改，并先备份当前文件。
 
 Claude 上下文覆盖 `CLAUDE.md`、父目录指令、自动记忆、规则、技能、子智能体、命令、输出风格、
@@ -123,11 +136,10 @@ agentdetox restore C42 --apply           # 备份当前文件后执行恢复
 `C42` 是示例编号，请替换为自己的审核列表中显示的编号。接受版本或忽略发现，都不会永久信任某个来源。
 恢复针对**整个历史版本**，可能同时撤销其中的正常修改。对于新增配置项，使用原先添加它的工具移除，通常比恢复整个配置文件更合适。
 
-`agentdetox clean C42` 列出此次变更新增的行。
-使用 `agentdetox clean C42 --lines 3,5-7` 预览仅删除自己选中的记忆、指令或技能文本，保留其他内容和无冲突的后续修改。
-审核后执行预览输出的完整应用命令；文件发生新变化时，旧预览会失效。清除会先备份当前文件，再扫描结果。
-清除只修改磁盘上的文件，不会改变已在运行的会话中已读入的内容：请在相应客户端开启新会话后再依赖清除结果。
-它不会自动把复制来的内容当作投毒，也不会恢复被覆盖的旧文本或判断事实真伪。终端交互审核也提供此操作。
+`agentdetox clean C42` 列出此次变更在记忆、指令或技能中新增的行；
+`agentdetox clean C42 --lines 3,5-7` 预览仅删除这些行，其余内容保持不变。
+执行预览输出的完整应用命令。清除会先备份文件，再重新扫描；
+它不会替你选择要删的行，也不会恢复被覆盖的旧文本或判断内容真伪。
 [审核、设置与恢复细节（英文）→](docs/user-guide.md#day-to-day)
 
 ## 验证与边界
@@ -137,24 +149,25 @@ AgentDetox 提供检查和恢复，**不构成安全边界，也不验证事实�
 工具返回后的后台写入需要稍后核对。钩子自身出错时会放行操作，错误保留在 `doctor` 和 `status` 中；但如果出错时正在检查的是对智能体上下文的写入，则改为询问。
 以当前用户身份运行的代码可以修改钩子或存储。
 
+以下是针对人工编写或合成案例的定期测量，不代表真实世界准确率，也不是生产规模支持承诺。
+
 - **离线回归集：**人工编写的防范、监测和逐字节恢复案例，另有 21 个独立编写的验收案例，
-  保留其中三个明确的语义漏检；不代表真实世界准确率。
-  [方法与结果](bench/ACCURACY.md)。
-- **Claude Code 候选版实测，2026-11-10。** 12 个场景分别在启用和未启用 AgentDetox 时运行，
-  24 组检查通过 23 组。剩余一组要求逐字写入指定文本，较小模型未完成。该场景的 7 次尝试中，
-  AgentDetox 均未打断用户。实验未记录到钩子错误或攻击成功。[结果与重试记录](lab/README.md#hardening-run-2026-11-10)。
-- **开发版延迟，2026-11-10：**单台 Mac、不含 NLI 推理、每项 100 个样本，预防加固之后（0.5.0 候选版）的最新测量通过原有 12 项预算。
-  Bash 前后钩子合计 P95 **126.7 ms**；启动检查 1,000 份未变化文件 **132.6 ms**；
-  四路并发写入加 Bash 前后检查 **293.6 ms**。此前的扫描负载测量和 Windows 超预算记录仍保留。
-  [方法、原始数据和限制](bench/HOOK_LATENCY.md)。
+  保留其中三个明确的语义漏检。
+  [方法与结果（英文）](bench/ACCURACY.md)。
+- **Claude Code 实测：**在 0.5.0 候选版上（2026-11-10），12 个场景分别在启用和未启用 AgentDetox 时运行，
+  24 组检查通过 23 组。在 0.6.0 候选版上（2026-11-11），只运行启用 AgentDetox 的一组，12 个场景通过 9 个：
+  五次运行中有一次，指向非默认软件包源的记忆写入被询问之后，后一次仍提到该源的记忆写入未经询问就通过了；
+  另外两项失败分别源于客户端本身和模型本身。
+  [结果（英文）](lab/README.md#060-candidate-2026-11-11)。
+- **钩子延迟，2026-11-11：**单台 Mac、不含 NLI 推理、每项 100 个样本，在 0.6.0 候选版最后几次提交之前测量，
+  12 项预算全部通过。Bash 前后钩子合计 P95 **109.1 ms**；启动检查 1,000 份未变化文件 **121.7 ms**；
+  四路并发写入加 Bash 前后检查 **235.5 ms**。
+  [原始数据](bench/results/hooks-0.6.0-2026-11-11.json) · [方法与限制（英文）](bench/HOOK_LATENCY.md)。
 - **十万文件合成库存，2026-11-10：**全量与增量检查、取消续扫、限定版本的忽略与撤销均通过验收。
   约 419 MB 笔记首次检查 **316 秒**，未变化增量检查 **15.3 秒**，进程峰值内存 **46.8 MB**。
-  已知语义漏检仍保留；这是本地模块测量，不代表生产规模支持或真实世界准确率。
-  [方法与原始报告](bench/LARGE_MEMORY.md#100k-completion-and-scoped-triage)。
+  [方法与原始报告（英文）](bench/LARGE_MEMORY.md#100k-completion-and-scoped-triage)。
 
 来源匹配只能提供文本复制证据，不能证明恶意意图或作者身份。恢复后扫描没有发现，也不能证明文件安全。
-0.5.0 的 `agentdetox library` 可检查已有的记忆文件夹并清理经审核的行，
-按照独立的[规模验收标准](bench/LARGE_MEMORY.md)测量；其中 1 千、1 万、10 万文件档位并非当前生产支持承诺。
 [完整限制（英文）](docs/user-guide.md#what-it-does-not-catch) · [威胁模型（英文）](SECURITY.md)
 
 ### 本地处理，历史记录仍需保护
@@ -165,15 +178,15 @@ AgentDetox 提供检查和恢复，**不构成安全边界，也不验证事实�
 
 ## 更多用法
 
-- **其他智能体：**Codex、Cursor 的实验性钩子；没有 OpenClaw 插件，Cursor 尚未实际运行验证。在 0.5.0 中，`agentdetox agent inspect`
+- **其他智能体：**Codex、Cursor 的实验性钩子；没有 OpenClaw 插件，Cursor 尚未实际运行验证。`agentdetox agent inspect`
   会在各客户端实际存放（或迁移到）的位置查找 Claude Code、Codex、Cursor 和 OpenClaw 的记忆、规则与技能文件，
   并把被标记的内容记录为审核条目，因此无需任何钩子即可使用 `clean` 和 `restore`。它检查的是文件本身，
   不代表客户端一定会触发钩子，也不判断记忆内容是否属实。[集成矩阵（英文）](docs/user-guide.md#other-agents)。
-- **模型判读（0.6.0，默认关闭）：**`agentdetox config judge ask` 让一个小模型读取每次写入记忆、规则和技能的新增文本，
-  判断它会让代理做什么；它能发现规则的固定措辞漏掉的内容，并且只会增加询问，不会取消其他检查。
-  [代价与限制（英文）](docs/user-guide.md#a-models-reading-of-each-write-optional-060)。
+- **模型判读（默认关闭）：**`agentdetox config judge ask` 让一个小模型读取每次写入记忆、规则和技能的新增文本，
+  判断它会让智能体做什么；它能发现规则的固定措辞漏掉的内容，并且只会增加询问，不会取消其他检查。
+  [代价与限制（英文）](docs/user-guide.md#a-models-reading-of-each-write-optional)。
 - **矛盾检测：**可选本地 NLI，因仍有误报，默认在后台记录。[配置与限制（英文）](docs/user-guide.md#contradiction-detection-experimental)。
-- **已有记忆库（0.5.0）：**`agentdetox library scan <文件夹>` 为你指定的文件夹建立清单，
+- **已有记忆库：**`agentdetox library scan <文件夹>` 为你指定的文件夹建立清单，
   用逐文件规则检查其中的文本文件，中断后可继续，且从不把文件报告为“干净”；`clean M<ID>` 删除经审核的行并保留备份，
   `library dismiss` 可只针对某个文件的当前内容搁置一条误报，而不将其加入全局允许列表。
   [记忆库指南（英文）](docs/user-guide.md#inspecting-a-library-of-memory-files)。

@@ -886,8 +886,11 @@ def _print_findings(findings, header: str, fmt: str, allowed: int, extra: dict, 
         if f.evidence:
             print(f"       > {printable(' '.join(f.evidence.split())[:160])}")
     counts = Counter(f.severity for f in shown)
-    print(("\n" if shown else "") + f"{counts['high']} high, {counts['medium']} medium, {counts['low']} low"
+    print(("\n" + f"{counts['high']} high, {counts['medium']} medium, {counts['low']} low" if shown else
+           "Nothing flagged by the rules.")
           + (f"; {allowed} allowed and not shown (`agentdetox allow --list`)" if allowed else ""))
+    if not shown and found is not None:
+        print("This checks the files as they are now. To check writes as they happen: `agentdetox install claude-code --apply`.")
     if shown:
         print("To review and remove flagged lines: `agentdetox agent inspect` records them as review items for "
               "`agentdetox clean`.\nFalse positive? `agentdetox allow <id>` stops it being reported.")
