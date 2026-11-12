@@ -625,7 +625,7 @@ It is off unless you turn it on, because of what it costs:
 
 - **A model call for every such write**, through the Claude Code you are logged in to (`claude`
   must be on the path; any client's hooks can use it). Two to four seconds and a fraction of
-  a cent each. Other tool calls are not affected.
+  a cent each, and a second such call for a text it flags. Other tool calls are not affected.
 - **The text being written is sent to the model.** It is text the agent was about to keep in its
   own context, which the same provider reads in every later session.
 
@@ -634,8 +634,11 @@ What keeps the check from becoming a way in:
 - The model is asked in a new session with no tools, no MCP servers, no skills and none of your
   settings, in an empty folder, and nothing of the session is saved. The agent whose write is
   being checked is not asked.
-- Only one of a few fixed words is taken from its answer. The sentence you see is AgentDetox's,
-  so a text cannot use the model to tell you, or the agent, anything.
+- Only one of a few fixed words is taken from its answer. A flagged text is shown to it once
+  more, to ask which lines, and from that answer only the numbers of up to five lines are
+  taken. The sentence you see is AgentDetox's and the lines quoted are the text's own, so a
+  text cannot use the model to tell you, or the agent, anything. Numbers that are not lines
+  of the text are dropped; the flag stands without them.
 - It is asked after the rules and removes no question. One thing does change when it says a
   text is fine: a write the rules would refuse outright, for text you can read, is put to you
   as a question instead, since on whole ordinary files the rules refuse about one in
@@ -653,6 +656,9 @@ What keeps the check from becoming a way in:
   twenty seconds. A flag is reported like a clear-cut rule finding and the file is not trusted
   until you review it. `agentdetox agent inspect --judge` reads every memory, rules and skill
   file on request, with no hook and whatever the setting says: one call per file.
+- **It says which lines.** The question, the session notice, `review` and the preview of
+  `clean` name the line the model pointed at, so a flagged line in a long file can be removed
+  on its own. When it points at none, the finding is about the text as a whole.
 
 What it is not:
 
@@ -667,7 +673,9 @@ What it is not:
   flagged when the model finds it fine.
 - With an agent that cannot be asked (Codex, Cursor), a flag is recorded, as for the other
   configurable checks.
-- Tested on macOS. On Windows the call has not been run.
+- Run on macOS and on one Windows machine (the full check, real calls, the message for a
+  client that is not logged in). On Windows the client's login is the command-line one:
+  being logged in to the desktop app is not enough, and `doctor` says so.
 
 ## Contradiction detection (experimental)
 

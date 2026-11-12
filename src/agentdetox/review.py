@@ -13,7 +13,7 @@ import uuid
 from collections import Counter
 from pathlib import Path
 
-from . import allowlist, cleanup, events, ledger, storage
+from . import allowlist, cleanup, events, judge, ledger, storage
 from .agentscan import scan_stored, scan_text
 from .context import classify, claude_memory_dir, display_path, is_hook_script, short_path
 from .findings import finding_id, printable
@@ -304,13 +304,16 @@ def detail(change_id: str, restoring: bool = False) -> str:
     if not evidence:
         lines.append(f"  {data.get('attribution', 'unknown')} ({data.get('method', 'legacy')})")
     where: dict[str, int] = {}
+    model = _model_lines(after, row['id'])
     if found:
         lines.append('This records a version found as it was, not a change: AgentDetox has no earlier version of '
                      'the file, so there is no diff and nothing to restore.')
         # With no diff to show them, the flagged lines themselves.
         where = _flagged_lines(Path(row['path']), after)
         text = after.split('\n')
-        lines += [f"{n:>5}  {printable(text[n - 1])}" for n in sorted(set(where.values()))]
+        lines += [f"{n:>5}  {printable(text[n - 1])}"
+                  for n in sorted(set(where.values()) | {n for numbers in model.values() for n in numbers})]
+    where = {**{flag: numbers[0] for flag, numbers in model.items()}, **where}
     lines += [printable(line) for line in
               difflib.unified_diff(before.splitlines(), after.splitlines(), fromfile='before', tofile='after', lineterm='')]
     with storage.connection() as db:
@@ -387,14 +390,33 @@ def finding_lines(text: str, findings: list) -> dict[str, int]:
     lines = [" ".join(normalize(line).split()) for line in text.split("\n")]
     where: dict[str, int] = {}
     for finding in findings:
-        if finding.detector == "judge":
-            continue    # read as a whole: the model named no line
-        wanted = next((" ".join(normalize(part).split()) for part in finding.anchor.split("\n") if part.strip()), "")
+        # A model reads a text whole; the line it pointed at, if any, is the finding's evidence.
+        named = finding.evidence if finding.detector == "judge" else finding.anchor
+        wanted = next((" ".join(normalize(part).split()) for part in named.split("\n") if part.strip()), "")
         if not wanted:
             continue
         hits = [i for i, line in enumerate(lines, 1) if wanted in line]
         if len(hits) == 1:
             where[finding_id(finding)] = hits[0]
+    return where
+
+
+def _model_lines(text: str, change: int | None) -> dict[str, list[int]]:
+    """Finding id to the lines of `text` a model pointed at, for the findings of a change
+    that a model made and that can still be placed."""
+    if change is None:
+        return {}
+    with storage.connection() as db:
+        ids = [r['flag_id'] for r in db.execute('SELECT flag_id FROM findings WHERE change_id=?', (change,))] if db else []
+    lines = [" ".join(normalize(line).split()) for line in text.split("\n")]
+    where: dict[str, list[int]] = {}
+    for flag_id in ids:
+        said = judge.remembered(flag_id)
+        for quoted in said.lines if said else ():
+            wanted = " ".join(normalize(quoted).split())
+            hits = [i for i, line in enumerate(lines, 1) if wanted and wanted in line]
+            if len(hits) == 1:
+                where.setdefault(flag_id, []).append(hits[0])
     return where
 
 
@@ -505,9 +527,11 @@ def clean_version(pin, kind: str, versions, label: str, source: dict, lines: str
     residual, warning = _residual_text(path, target, kind, cleanup=True)
     flagged: list[int] = []
     if not plan.selected:
-        # Nothing chosen yet: say which of the listed lines the rules flag, and warn of nothing.
+        # Nothing chosen yet: say which of the listed lines are flagged, and warn of nothing.
         warning = ''
-        flagged = sorted(set(_flagged_lines(path, after.decode('utf-8'), kind).values()) & set(plan.added))
+        text = after.decode('utf-8')
+        pointed = {n for numbers in _model_lines(text, source.get('change')).values() for n in numbers}
+        flagged = sorted((set(_flagged_lines(path, text, kind).values()) | pointed) & set(plan.added))
     result = dict(change=label, path=str(path), current_hash=digest, flagged=flagged,
                   added=[{'line': n, 'text': _cleanup_line(text)}
                          for n, text in plan.added.items()],
@@ -589,7 +613,7 @@ def render_cleanup(data: dict) -> str:
         lines += [f"{item['line']:>5}  {printable(item['text'])}" for item in data['added']]
         flagged = ','.join(map(str, data.get('flagged') or []))
         lines += ['This change has no added lines to clean.'] if not data['added'] else [
-            f"The rules flag line {flagged}. Preview removing only that: agentdetox clean {data['change']} --lines {flagged}"
+            f"Flagged: line {flagged}. Preview removing only that: agentdetox clean {data['change']} --lines {flagged}"
             if flagged else
             "Choose only unwanted lines by the numbers above, singly or as ranges: "
             f"agentdetox clean {data['change']} --lines <numbers>"]

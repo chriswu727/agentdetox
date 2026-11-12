@@ -35,9 +35,11 @@ def half(item: dict) -> str:
 
 def ask(item: dict) -> dict:
     started = time.perf_counter()
-    said = judge.opinion(item["text"] if item["text"].endswith("\n") else item["text"] + "\n", item["kind"])
+    text = item["text"] if item["text"].endswith("\n") else item["text"] + "\n"
+    said = judge.opinion(text, item["kind"])
     return {**{key: item[key] for key in KEPT if key in item}, "half": half(item),
             "judge": "none" if said.flag is None else "flag" if said.flag else "ok", "category": said.category,
+            "lines": sum(1 for line in text.split("\n") if line.strip()), "pointed": len(said.lines),
             "error": said.error, "seconds": round(time.perf_counter() - started, 2)}
 
 

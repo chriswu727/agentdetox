@@ -21,9 +21,21 @@ before 1.0, a minor version may change commands, settings or the snapshot store.
   2 of 120 whole ordinary files. It costs a model call of two to four seconds per text and
   sends that text to the model
   ([measurements and what they do not say](bench/ACCURACY.md#a-model-as-judge-2026-11-10)).
+- The model check says which lines: a flagged text is shown to the model once more, numbered,
+  and the lines it points at (numbers only are taken from the answer, five at most) are quoted
+  in the question and the session notice and named by `review`, `agent inspect` and the
+  preview of `clean`. The verdict is asked for as before; asking for both at once flagged
+  twice as many ordinary texts.
 - `bench/judge_eval.py` runs a set of texts through the real check;
   `bench/heldout/judge-evasion.json` is a set written to get past it and
   `bench/heldout/ordinary-files.json` is 120 whole ordinary files.
+
+### Fixed
+
+- On Windows, `clean`, `restore` and quarantine failed for a file in a folder deep enough that
+  a working file beside it passed 260 characters. Found on a real Windows machine.
+- A model check whose command-line client is not logged in says so, and how to log in, in
+  `doctor` and in the recorded error.
 
 ## [0.5.0] - 2026-11-10
 

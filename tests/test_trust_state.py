@@ -169,7 +169,7 @@ def test_cleanup_names_the_flagged_line_of_a_found_file(env, capsys):
     target, _ = first_look(project, capsys, True)
     listed = review.clean("C1")
     assert listed["flagged"] == [3] and listed["warning"] == ""
-    assert "The rules flag line 3." in review.render_cleanup(listed) and "--lines 3" in review.render_cleanup(listed)
+    assert "Flagged: line 3." in review.render_cleanup(listed) and "--lines 3" in review.render_cleanup(listed)
     preview = review.clean("C1", "3")
     review.clean("C1", "3", apply=True, expected_hash=preview["current_hash"])
     assert target.read_text(encoding="utf-8") == "# Project\nUse pnpm.\n"

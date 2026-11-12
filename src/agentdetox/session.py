@@ -308,9 +308,6 @@ def _read_by_model(candidates: list[tuple[ContextFile, str | None]],
         return [], set()
     found, undecided = engine.judged(texts, "high" if how == "ask" else "medium", limit=engine.JUDGED_AT_ONCE,
                                      timeout=JUDGE_WAIT)
-    for finding in found:
-        finding.message = f"a model flagged it: {finding.evidence}"
-        finding.evidence = ""
     return found, undecided
 
 

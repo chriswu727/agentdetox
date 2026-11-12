@@ -174,11 +174,11 @@ def _model_finds_nothing(cf: ContextFile, added: str, findings: list[Finding]) -
                   "the agent against you", anchor=added)
     if judge.remembered(finding_flag(own).id) is not None:
         return False
-    said = judge.opinion(added, cf.kind)
+    said = judge.opinion(added, cf.kind, point=False)    # refused either way: the rules name the line
     if said.flag is None:
         events.record("hook_error", stage="judge", error=said.error[:300])
     elif said.flag:
-        judge.remember(finding_flag(own).id, said.category)
+        judge.remember(finding_flag(own).id, said)
     return said.flag is False
 
 
@@ -189,18 +189,22 @@ def _judged(cf: ContextFile, added: str) -> list[Signal]:
     if not found:
         return []
     cut = f" Only its first {judge.LIMIT} characters were read." if len(added) > judge.LIMIT else ""
+    line = f' It points at: "{printable(found[0].evidence[:120])}".' if found[0].evidence else ""
     return [Signal(JUDGE, f"AgentDetox: a model read the text this write adds to the agent's {cf.kind} file "
-                          f"{short_path(str(cf.path))} and flagged it: {found[0].evidence}.{cut} Content like this, "
-                          "once saved, is obeyed in every later session.", [finding_flag(found[0])])]
+                          f"{short_path(str(cf.path))} and flagged it: {found[0].message.removeprefix(MODEL_FLAGGED)}."
+                          f"{line}{cut} Content like this, once saved, is obeyed in every later session.",
+                   [finding_flag(found[0])])]
 
 
+MODEL_FLAGGED = "a model flagged it: "
 JUDGED_AT_ONCE = 8      # texts a session start hands to the model; the rest wait for the next
 
 
 def judged(texts: list[tuple[ContextFile, str]], severity: str, *, limit: int | None = None,
            timeout: float = judge.TIMEOUT) -> tuple[list[Finding], set[str]]:
     """Findings for the texts a model flags, and the paths of those it gave no opinion on:
-    a call that failed, or a text past `limit`. The model is asked about several at once.
+    a call that failed, or a text past `limit`. A finding's evidence is the first line the
+    model pointed at, if it pointed at any. The model is asked about several at once.
     A text allowed before is not sent; one flagged before is flagged still, unasked, since
     asking again might get another answer and trying again must change nothing."""
     order = {"instructions": 0, "skill": 1, "memory": 2}
@@ -216,8 +220,7 @@ def judged(texts: list[tuple[ContextFile, str]], severity: str, *, limit: int | 
             continue
         before = judge.remembered(finding_flag(finding).id)
         if before is not None:
-            finding.evidence = judge.Opinion(True, before).about
-            found.append(finding)
+            found.append(_flagged(finding, before))
         elif limit is not None and len(waiting) >= limit:
             undecided.add(str(cf.path))
         else:
@@ -232,10 +235,15 @@ def judged(texts: list[tuple[ContextFile, str]], severity: str, *, limit: int | 
             events.record("hook_error", stage="judge", error=opinion.error[:300])
             undecided.add(str(cf.path))
         elif opinion.flag:
-            judge.remember(finding_flag(finding).id, opinion.category)
-            finding.evidence = opinion.about
-            found.append(finding)
+            judge.remember(finding_flag(finding).id, opinion)
+            found.append(_flagged(finding, opinion))
     return found, undecided
+
+
+def _flagged(finding: Finding, said: judge.Opinion) -> Finding:
+    finding.message = MODEL_FLAGGED + said.about
+    finding.evidence = said.lines[0] if said.lines else ""
+    return finding
 
 
 def _inside(folder: Path, project: Path) -> list[ContextFile]:

@@ -68,6 +68,30 @@ What the numbers do not say:
   an onboarding skill) the model calls fine. With the check on, such a refusal of readable text
   becomes a question to the user; it never becomes a pass, and hidden text stays refused.
 
+### Which lines, 2026-11-11
+
+A flag on a long file is little use without the line. Asking for line numbers in the same
+answer as the verdict was tried first and dropped: with the lines numbered and the numbers
+asked for, the model flagged more of everything (short ordinary texts 9 of 210 against 5, whole
+ordinary files 4 of 120 against 2; three of the texts that changed were asked about ten times
+each way and flagged 8 to 10 times numbered, 0 as before). So the verdict is asked for exactly
+as before, and only a flagged text is shown again, numbered, in a second call that is asked for
+nothing but line numbers. Numbers that are not lines of the text are dropped.
+
+Rerun on all four sets that way
+([held-out](results/judge-lines-heldout-2026-11-11.json),
+[evasion](results/judge-lines-evasion-2026-11-11.json),
+[second set](results/judge-lines-second-set-2026-11-11.json),
+[whole files](results/judge-lines-ordinary-files-2026-11-11.json)): 208 of 210 attacks, 6 of 210
+short ordinary texts and 3 of 120 whole files flagged. Two verdicts differ from the earlier runs,
+both on ordinary texts and both from an unchanged question (one of them was flagged 6 times in 10
+before). All 217 flags came with at least one valid line. A flagged text takes about 3.6 seconds
+(median) against 2.4 for one that is not.
+
+Not measured: whether the lines are the right ones. Nine attacks buried in longer texts or
+split over several lines were looked at by hand and all pointed where a person would; that is
+a spot check, and the sets are mostly short.
+
 ## Blind held-out set, 2026-11-10
 
 The galleries below and `bench/rule_variants.py` hold cases written by people who knew the

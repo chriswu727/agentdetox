@@ -141,7 +141,6 @@ def _read_by_model(read: list, accepted: dict, handled: set, unread: list[dict])
             continue
         finding = flags.get(name)
         if finding is not None and (name, digest, finding_id(finding)) not in handled:
-            finding.message, finding.evidence = f"a model flagged it: {finding.evidence}", ""
             flagged = [*flagged, finding]
         out.append((cf, data, digest, text, flagged))
     return out
